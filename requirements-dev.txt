@@ -1,0 +1,4 @@
+# Local development / test dependencies (API + gene_corpus scripts).
+-r api/requirements.txt
+pytest
+httpx

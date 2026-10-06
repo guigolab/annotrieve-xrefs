@@ -1,0 +1,31 @@
+services:
+
+  annotrieve-xrefs-nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    restart: always
+    volumes:
+      - ./logs:/var/log/nginx
+    ports:
+      - "95:80"
+    depends_on:
+      - annotrieve-xrefs-api
+
+  annotrieve-xrefs-api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: annotrieve-xrefs-api
+    restart: always
+    command: uvicorn main:app --host 0.0.0.0 --port 5000 --reload
+    volumes:
+      - ./api:/home/appuser/app
+      - ./gene_corpus:/home/appuser/gene_corpus:ro
+      - ${GENE_CORPUS_HOST_DIR:-./data/gene_corpus}:/data/gene_corpus:ro
+    environment:
+      - GENE_CORPUS_DIR=/data/gene_corpus
+      - PYTHONPATH=/home/appuser
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
+    ports:
+      - "5003:5000"

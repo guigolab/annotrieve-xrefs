@@ -1,0 +1,96 @@
+proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=xrefs_cache:10m max_size=10g inactive=60m;
+
+map $http_x_forwarded_for $real_client_ip {
+    ~^([^,\s]+) $1;
+    default $remote_addr;
+}
+
+log_format analytics_json escape=json '{'
+    '"time":"$time_iso8601",'
+    '"uri":"$request_uri",'
+    '"method":"$request_method",'
+    '"ip":"$real_client_ip",'
+    '"user_agent":"$http_user_agent",'
+    '"referer":"$http_referer",'
+    '"status":$status,'
+    '"request_time":$request_time'
+'}';
+
+server {
+    gzip on;
+    gzip_types
+        text/plain
+        application/json
+        application/javascript
+        text/css
+        image/svg+xml;
+
+    listen 80;
+
+    error_log /var/log/nginx/error.log warn;
+    access_log off;
+
+    add_header X-Content-Type-Options "nosniff" always;
+
+    location = /annotrieve-xrefs {
+        return 301 /annotrieve-xrefs/api/v1/;
+    }
+
+    location = /annotrieve-xrefs/ {
+        return 301 /annotrieve-xrefs/api/v1/;
+    }
+
+    # Health is not cached (Compose / Traefik probes).
+    location = /annotrieve-xrefs/api/v1/health {
+        access_log /var/log/nginx/api.log analytics_json;
+
+        rewrite ^/annotrieve-xrefs/api/v1/?(.*)$ /$1 break;
+        proxy_pass http://annotrieve-xrefs-api:5000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin $http_origin;
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
+
+        add_header Cache-Control "no-store" always;
+    }
+
+    location /annotrieve-xrefs/api/v1/ {
+        access_log /var/log/nginx/api.log analytics_json;
+
+        rewrite ^/annotrieve-xrefs/api/v1/?(.*)$ /$1 break;
+        proxy_pass http://annotrieve-xrefs-api:5000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin $http_origin;
+        client_max_body_size 1M;
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+
+        proxy_buffering on;
+        proxy_buffer_size 4k;
+        proxy_buffers 8 4k;
+        proxy_busy_buffers_size 8k;
+
+        proxy_cache xrefs_cache;
+        proxy_cache_methods GET HEAD;
+        proxy_cache_key "$scheme$request_method$host$request_uri";
+        proxy_cache_lock on;
+        proxy_cache_lock_timeout 10s;
+        proxy_cache_lock_age 30s;
+        proxy_cache_background_update on;
+        proxy_cache_revalidate on;
+
+        proxy_cache_valid 200 24h;
+        proxy_cache_valid 301 302 10m;
+        proxy_cache_valid 404 1m;
+        proxy_cache_bypass $http_cache_control;
+        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+    }
+}
