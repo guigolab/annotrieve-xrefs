@@ -37,7 +37,8 @@ python -m gene_corpus.merge --work-dir DIR \
 `--taxonomy-tsv` is Annotrieve’s flattened taxonomy export (`taxid`,
 `parent_taxid` columns; e.g. `/annotrieve/files/taxonomy/flattened-tree.tsv`).
 Merge streams `gene_hit`, upserts `xref_meta` (`n_annotations`, `n_loci`), and
-fills `annotation_lineage`. Peak SQLite heap is soft-capped at 2 GiB.
+fills `annotation_lineage`. Peak SQLite heap is soft-capped at 512 MiB.
+Interrupted merges can continue with `--resume` / `--resume-after-key`.
 
 ## Tests
 

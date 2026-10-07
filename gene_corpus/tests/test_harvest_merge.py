@@ -513,6 +513,7 @@ def test_schema_has_sidecar_tables() -> None:
         }
         assert "gene_hit" in tables
         assert "annotation_lineage" in tables
+        assert "merge_done" in tables
         assert "xref_hit" not in tables
         ver = conn.execute(
             "SELECT value FROM meta WHERE key='schema_version'"
@@ -815,4 +816,322 @@ def test_merge_cli_discovers_meta_shards() -> None:
             "SELECT COUNT(*) FROM annotation_lineage"
         ).fetchone()[0]
         assert n_lineage >= 5
+        done = {
+            int(r[0])
+            for r in conn.execute("SELECT annotation_key FROM merge_done")
+        }
+        assert done == {1, 2}
+        conn.close()
+
+
+def _two_shard_merge_fixture(root: Path) -> tuple[Path, Path]:
+    """per_gff + taxonomy for the standard two-shard merge case."""
+    per_gff = root / "per_gff"
+    _seed_merge_shard(
+        per_gff,
+        "a",
+        genes=[
+            (0, "chr1", 1, 10),
+            (1, "chr1", 20, 30),
+            (2, "chr1", 40, 50),
+        ],
+        xrefs=[
+            (0, "go", "GO:0008150"),
+            (1, "go", "GO:0008150"),
+            (2, "go", "GO:0008150"),
+            (0, "symbol", "tp53"),
+        ],
+        tier_a=[("go", "GO:0008150", 3), ("symbol", "tp53", 1)],
+        taxid="9606",
+        with_meta=True,
+    )
+    _seed_merge_shard(
+        per_gff,
+        "b",
+        genes=[(0, "chr2", 1, 5)],
+        xrefs=[(0, "go", "GO:0008150")],
+        tier_a=[("go", "GO:0008150", 1)],
+        taxid="10090",
+        with_meta=True,
+    )
+    tax_tsv = _write_taxonomy_tsv(root / "taxonomy.tsv")
+    return per_gff, tax_tsv
+
+
+def test_merge_resume_after_partial() -> None:
+    """Interrupt after key 1; resume finishes with same totals as one-shot."""
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        per_gff, tax_tsv = _two_shard_merge_fixture(root)
+        parents = load_parent_map(tax_tsv)
+
+        db = root / "db.sqlite"
+        conn = connect_for_build(db)
+        init_schema(conn)
+        seed_annotations(
+            conn,
+            [_ann_row(1, "a", taxid=9606), _ann_row(2, "b", taxid=10090)],
+        )
+        # First pass: only process key 1 by pre-marking key 2 as... no —
+        # merge both, then strip key 2 and resume_after_key=1.
+        merge_shards_into_db(conn, per_gff, taxonomy_parents=parents)
+        gold_hit = conn.execute("SELECT COUNT(*) FROM gene_hit").fetchone()[0]
+        gold_meta = conn.execute(
+            "SELECT namespace, accession, n_annotations, n_loci FROM xref_meta "
+            "ORDER BY namespace, accession"
+        ).fetchall()
+        assert gold_hit == 5
+
+        conn.execute("DELETE FROM merge_done WHERE annotation_key = 2")
+        conn.execute("DELETE FROM gene_hit WHERE annotation_key = 2")
+        conn.execute(
+            """
+            UPDATE xref_meta
+            SET n_annotations = 1, n_loci = 3
+            WHERE namespace = 'go' AND accession = 'GO:0008150'
+            """
+        )
+        conn.execute("DELETE FROM namespace_stats")
+        conn.execute("DELETE FROM annotation_lineage")
+        conn.commit()
+
+        n_hit, n_meta, n_lineage = merge_shards_into_db(
+            conn,
+            per_gff,
+            taxonomy_parents=parents,
+            resume=True,
+            resume_after_key=1,
+        )
+        assert n_hit == gold_hit
+        assert n_meta == 2
+        assert n_lineage > 0
+        meta = conn.execute(
+            "SELECT namespace, accession, n_annotations, n_loci FROM xref_meta "
+            "ORDER BY namespace, accession"
+        ).fetchall()
+        assert meta == gold_meta
+        done = {
+            int(r[0])
+            for r in conn.execute("SELECT annotation_key FROM merge_done")
+        }
+        assert done == {1, 2}
+        conn.close()
+
+
+def test_merge_resume_after_key_self_heals_duplicate() -> None:
+    """Low resume-after-key re-probes present keys without double-counting."""
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        per_gff, tax_tsv = _two_shard_merge_fixture(root)
+        parents = load_parent_map(tax_tsv)
+        db = root / "db.sqlite"
+        conn = connect_for_build(db)
+        init_schema(conn)
+        seed_annotations(
+            conn,
+            [_ann_row(1, "a", taxid=9606), _ann_row(2, "b", taxid=10090)],
+        )
+        merge_shards_into_db(conn, per_gff, taxonomy_parents=parents)
+        gold_meta = conn.execute(
+            "SELECT namespace, accession, n_annotations, n_loci FROM xref_meta "
+            "ORDER BY namespace, accession"
+        ).fetchall()
+        gold_hit = conn.execute("SELECT COUNT(*) FROM gene_hit").fetchone()[0]
+
+        conn.execute("DELETE FROM merge_done")
+        conn.commit()
+
+        # after_key=0: no prefix seed, skip MAX; re-probe both → IntegrityError path
+        n_hit, _n_meta, _n_lineage = merge_shards_into_db(
+            conn,
+            per_gff,
+            taxonomy_parents=parents,
+            resume=True,
+            resume_after_key=0,
+        )
+        assert n_hit == gold_hit
+        meta = conn.execute(
+            "SELECT namespace, accession, n_annotations, n_loci FROM xref_meta "
+            "ORDER BY namespace, accession"
+        ).fetchall()
+        assert meta == gold_meta
+        conn.close()
+
+
+def test_is_gene_hit_duplicate_matches_only_gene_hit_pk() -> None:
+    from gene_corpus.sql.merge import _is_gene_hit_duplicate
+
+    assert _is_gene_hit_duplicate(
+        sqlite3.IntegrityError(
+            "UNIQUE constraint failed: gene_hit.namespace, gene_hit.accession"
+        )
+    )
+    assert not _is_gene_hit_duplicate(
+        sqlite3.IntegrityError("NOT NULL constraint failed: gene_hit.seqid")
+    )
+    assert not _is_gene_hit_duplicate(
+        sqlite3.IntegrityError("UNIQUE constraint failed: xref_meta.namespace")
+    )
+
+
+def test_merge_resume_other_integrity_error_aborts() -> None:
+    """Resume must not mark a shard done for non-duplicate IntegrityErrors."""
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        per_gff, tax_tsv = _two_shard_merge_fixture(root)
+        parents = load_parent_map(tax_tsv)
+        db = root / "db.sqlite"
+        conn = connect_for_build(db)
+        init_schema(conn)
+        seed_annotations(
+            conn,
+            [_ann_row(1, "a", taxid=9606), _ann_row(2, "b", taxid=10090)],
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER gene_hit_boom BEFORE INSERT ON gene_hit
+            BEGIN SELECT RAISE(ABORT, 'boom'); END
+            """
+        )
+        conn.commit()
+        with pytest.raises(sqlite3.IntegrityError, match="boom"):
+            merge_shards_into_db(
+                conn,
+                per_gff,
+                taxonomy_parents=parents,
+                resume=True,
+                resume_after_key=0,
+            )
+        done = conn.execute("SELECT COUNT(*) FROM merge_done").fetchone()[0]
+        assert done == 0
+        conn.close()
+
+
+def test_merge_cli_resume_requires_db() -> None:
+    from gene_corpus.merge_cli import main as merge_main
+
+    with tempfile.TemporaryDirectory() as d:
+        work = Path(d)
+        (work / "per_gff").mkdir()
+        tax_tsv = _write_taxonomy_tsv(work / "taxonomy.tsv")
+        _seed_merge_shard(
+            work / "per_gff",
+            "a",
+            genes=[(0, "chr1", 1, 10)],
+            xrefs=[(0, "go", "GO:0008150")],
+            tier_a=[("go", "GO:0008150", 1)],
+            with_meta=True,
+        )
+        assert (
+            merge_main(
+                [
+                    "--work-dir",
+                    str(work),
+                    "--taxonomy-tsv",
+                    str(tax_tsv),
+                    "--resume",
+                ]
+            )
+            == 1
+        )
+
+
+def test_merge_cli_resume_continues() -> None:
+    from gene_corpus.merge_cli import main as merge_main
+
+    with tempfile.TemporaryDirectory() as d:
+        work = Path(d)
+        per_gff, tax_tsv = _two_shard_merge_fixture(work)
+        assert (
+            merge_main(
+                ["--work-dir", str(work), "--taxonomy-tsv", str(tax_tsv)]
+            )
+            == 0
+        )
+        conn = connect_for_build(work / "gene_corpus.sqlite")
+        conn.execute("DELETE FROM merge_done WHERE annotation_key = 2")
+        conn.execute("DELETE FROM gene_hit WHERE annotation_key = 2")
+        conn.execute(
+            """
+            UPDATE xref_meta
+            SET n_annotations = 1, n_loci = 3
+            WHERE namespace = 'go' AND accession = 'GO:0008150'
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        assert (
+            merge_main(
+                [
+                    "--work-dir",
+                    str(work),
+                    "--taxonomy-tsv",
+                    str(tax_tsv),
+                    "--resume",
+                    "--resume-after-key",
+                    "1",
+                ]
+            )
+            == 0
+        )
+        conn = connect_for_build(work / "gene_corpus.sqlite")
+        assert conn.execute("SELECT COUNT(*) FROM gene_hit").fetchone()[0] == 5
+        meta = conn.execute(
+            "SELECT n_annotations, n_loci FROM xref_meta "
+            "WHERE namespace='go' AND accession='GO:0008150'"
+        ).fetchone()
+        assert meta == (2, 4)
+        conn.close()
+
+
+def test_merge_cli_resume_after_key_requires_resume() -> None:
+    from gene_corpus.merge_cli import main as merge_main
+
+    with tempfile.TemporaryDirectory() as d:
+        work = Path(d)
+        (work / "per_gff").mkdir()
+        tax_tsv = _write_taxonomy_tsv(work / "taxonomy.tsv")
+        assert (
+            merge_main(
+                [
+                    "--work-dir",
+                    str(work),
+                    "--taxonomy-tsv",
+                    str(tax_tsv),
+                    "--resume-after-key",
+                    "1",
+                ]
+            )
+            == 1
+        )
+
+
+def test_merge_checkpoints_wal_periodically(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    def _spy(conn: sqlite3.Connection) -> None:
+        calls.append(conn)
+
+    monkeypatch.setattr("gene_corpus.sql.merge.checkpoint_wal", _spy)
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        per_gff, tax_tsv = _two_shard_merge_fixture(root)
+        parents = load_parent_map(tax_tsv)
+        db = root / "db.sqlite"
+        conn = connect_for_build(db)
+        init_schema(conn)
+        seed_annotations(
+            conn,
+            [_ann_row(1, "a", taxid=9606), _ann_row(2, "b", taxid=10090)],
+        )
+        merge_shards_into_db(
+            conn,
+            per_gff,
+            taxonomy_parents=parents,
+            checkpoint_every=1,
+        )
+        # One checkpoint per newly committed shard (+ possible trailing).
+        assert len(calls) >= 2
         conn.close()

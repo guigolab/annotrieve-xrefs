@@ -1,8 +1,8 @@
 """
 Global SQLite schema for annotrieve-xrefs serve (sidecar locked).
 
-Tables: annotation, annotation_lineage, gene_hit, xref_meta, namespace_stats.
-``xref_hit`` is not written.
+Tables: annotation, annotation_lineage, gene_hit, xref_meta, namespace_stats,
+merge_done (build progress). ``xref_hit`` is not written.
 
 Incremental attach (``sql.attach`` / ``gene_corpus.sync``):
   1. INSERT annotation row with next annotation_key
@@ -15,14 +15,15 @@ Incremental attach (``sql.attach`` / ``gene_corpus.sync``):
 from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
 
 SCHEMA_VERSION = 1
 
 # Negative cache_size is KiB.
 _DEFAULT_BUILD_CACHE_SIZE = -131072  # 128 MiB
-# Cap SQLite heap so large sorts spill to temp files (sidecar RAM budget).
-_SOFT_HEAP_LIMIT = 2 * 1024 * 1024 * 1024  # 2 GiB
+# Cap SQLite heap so large sorts spill to temp files (NFS / sidecar RAM).
+_SOFT_HEAP_LIMIT = 512 * 1024 * 1024  # 512 MiB
 
 _TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -75,6 +76,10 @@ CREATE TABLE IF NOT EXISTS namespace_stats (
     namespace TEXT PRIMARY KEY,
     accession_count INTEGER NOT NULL
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS merge_done (
+    annotation_key INTEGER PRIMARY KEY
+) WITHOUT ROWID;
 """
 
 _INDEXES_SQL = """
@@ -101,6 +106,14 @@ def connect_for_build(path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA temp_store=FILE")
     conn.execute(f"PRAGMA soft_heap_limit={_SOFT_HEAP_LIMIT}")
     return conn
+
+
+def checkpoint_wal(conn: sqlite3.Connection) -> None:
+    """Truncate WAL into the main DB file (bounds WAL growth on NFS)."""
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error as exc:
+        print(f"merge warn: wal_checkpoint failed: {exc}", file=sys.stderr)
 
 
 def init_schema(conn: sqlite3.Connection) -> None:

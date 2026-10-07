@@ -4,6 +4,12 @@ Merge CLI: scan per_gff shards → global gene_corpus.sqlite.
     python -m gene_corpus.merge \\
         --work-dir /data/gene_corpus_build \\
         --taxonomy-tsv /path/to/flattened-tree.tsv
+
+    # Resume an interrupted merge (NFS-safe; does not wipe the DB):
+    python -m gene_corpus.merge \\
+        --work-dir /data/gene_corpus_build \\
+        --taxonomy-tsv /path/to/flattened-tree.tsv \\
+        --resume --resume-after-key 14050
 """
 from __future__ import annotations
 
@@ -83,6 +89,27 @@ def _seed_rows_from_shards(per_gff_root: Path) -> list[dict]:
     return rows
 
 
+def _validate_annotation_seed(
+    conn: sqlite3.Connection, seed_rows: list[dict]
+) -> None:
+    """Ensure DB annotation keys match a fresh shard rescan (no key shift)."""
+    existing = conn.execute(
+        "SELECT annotation_key, annotation_id FROM annotation "
+        "ORDER BY annotation_key"
+    ).fetchall()
+    expected = [
+        (int(r["annotation_key"]), str(r["annotation_id"])) for r in seed_rows
+    ]
+    got = [(int(k), str(aid)) for k, aid in existing]
+    if got != expected:
+        raise ValueError(
+            "resume annotation mismatch: DB keys/ids do not match shard rescan "
+            f"(db={len(got)} shards_ready={len(expected)}). "
+            "Refusing to resume (re-run without --resume only if you intend "
+            "to wipe and rebuild)."
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -106,6 +133,24 @@ def build_parser() -> argparse.ArgumentParser:
             "used to fill annotation_lineage"
         ),
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "continue an interrupted merge without wiping gene_corpus.sqlite; "
+            "skips annotation_keys already in merge_done"
+        ),
+    )
+    parser.add_argument(
+        "--resume-after-key",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "with --resume: treat annotation_keys 1..N as done (safe floor "
+            "from merge.log, e.g. 14050); avoids scanning gene_hit on NFS"
+        ),
+    )
     return parser
 
 
@@ -115,6 +160,18 @@ def main(argv: list[str] | None = None) -> int:
     per_gff_root = work_dir / "per_gff"
     db_path = work_dir / "gene_corpus.sqlite"
     taxonomy_tsv: Path = args.taxonomy_tsv
+    resume: bool = bool(args.resume)
+    resume_after_key: int | None = args.resume_after_key
+
+    if resume_after_key is not None and not resume:
+        print(
+            "--resume-after-key requires --resume",
+            file=sys.stderr,
+        )
+        return 1
+    if resume_after_key is not None and resume_after_key < 0:
+        print("--resume-after-key must be >= 0", file=sys.stderr)
+        return 1
 
     if not per_gff_root.is_dir():
         print(f"per_gff directory missing: {per_gff_root}", file=sys.stderr)
@@ -139,26 +196,49 @@ def main(argv: list[str] | None = None) -> int:
         print("no shards with complete meta to merge", file=sys.stderr)
         return 1
 
-    for path in (
-        db_path,
-        Path(str(db_path) + "-wal"),
-        Path(str(db_path) + "-shm"),
-    ):
-        if path.exists():
-            path.unlink()
+    if resume:
+        if not db_path.is_file():
+            print(
+                f"resume failed: gene_corpus.sqlite missing: {db_path}",
+                file=sys.stderr,
+            )
+            return 1
+        conn = connect_for_build(db_path)
+        init_schema(conn)
+        try:
+            _validate_annotation_seed(conn, seed_rows)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            conn.close()
+            return 1
+        print(
+            f"resume: validated {len(seed_rows)} annotations → {db_path}",
+            file=sys.stderr,
+            flush=True,
+        )
+    else:
+        for path in (
+            db_path,
+            Path(str(db_path) + "-wal"),
+            Path(str(db_path) + "-shm"),
+        ):
+            if path.exists():
+                path.unlink()
 
-    conn = connect_for_build(db_path)
-    init_schema(conn)
-    seed_annotations(conn, seed_rows)
-    print(
-        f"seeded {len(seed_rows)} annotations from shards → {db_path}",
-        file=sys.stderr,
-    )
+        conn = connect_for_build(db_path)
+        init_schema(conn)
+        seed_annotations(conn, seed_rows)
+        print(
+            f"seeded {len(seed_rows)} annotations from shards → {db_path}",
+            file=sys.stderr,
+        )
 
     n_hit, n_meta, n_lineage = merge_shards_into_db(
         conn,
         per_gff_root,
         taxonomy_parents=parents,
+        resume=resume,
+        resume_after_key=resume_after_key,
     )
     conn.close()
     print(

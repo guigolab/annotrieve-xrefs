@@ -32,7 +32,7 @@ services:
     container_name: annotrieve-xrefs-api
     restart: always
     volumes:
-      - ${GENE_CORPUS_HOST_DIR}:/data/gene_corpus:ro
+      - /data/annotrieve/gene_corpus:/data/gene_corpus:ro
     environment:
       - GENE_CORPUS_DIR=/data/gene_corpus
       - PYTHONPATH=/home/appuser

@@ -36,6 +36,7 @@ from gene_corpus.sql.per_gff import (
 )
 from gene_corpus.sql.schema import (
     SCHEMA_VERSION,
+    checkpoint_wal,
     connect_for_build,
     create_indexes,
     init_schema,
@@ -47,6 +48,7 @@ __all__ = [
     "annotation_id_exists",
     "attach_shard",
     "build_tier_a_counts",
+    "checkpoint_wal",
     "connect_for_build",
     "connect_per_gff",
     "create_indexes",
