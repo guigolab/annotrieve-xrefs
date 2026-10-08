@@ -16,9 +16,10 @@ services:
       - "traefik.http.routers.annotrieve-xrefs-nginx.tls=true"
       - "traefik.http.routers.annotrieve-xrefs-nginx.entrypoints=web_https"
       - "traefik.http.services.annotrieve-xrefs-nginx.loadBalancer.server.port=80"
-      - "traefik.http.middlewares.annotrieve-xrefs-ratelimit.ratelimit.average=5000"
-      - "traefik.http.middlewares.annotrieve-xrefs-ratelimit.ratelimit.period=1m"
-      - "traefik.http.middlewares.annotrieve-xrefs-ratelimit.ratelimit.burst=2000"
+      - "traefik.http.middlewares.annotrieve-xrefs-ratelimit.ratelimit.average=3"
+      - "traefik.http.middlewares.annotrieve-xrefs-ratelimit.ratelimit.period=1s"
+      - "traefik.http.middlewares.annotrieve-xrefs-ratelimit.ratelimit.burst=9"
+      - "traefik.http.middlewares.annotrieve-xrefs-ratelimit.ratelimit.sourcecriterion.ipstrategy.depth=0"
       - "traefik.http.routers.annotrieve-xrefs-nginx.middlewares=annotrieve-xrefs-ratelimit"
     networks:
       - monstre

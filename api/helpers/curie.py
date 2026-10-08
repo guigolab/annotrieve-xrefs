@@ -28,6 +28,10 @@ _GO_DIGITS_RE = re.compile(r"(?i)^(?:go[:_]?)?(\d{1,7})$")
 class CurieError(ValueError):
     """Raised when a CURIE cannot be parsed or the prefix is unknown."""
 
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
 
 def normalize_go_accession(raw: str) -> str | None:
     """Return ``GO:`` + 7 digits, or None if *raw* is not a GO id."""
@@ -78,15 +82,18 @@ def parse_curie(raw: str) -> tuple[str, str]:
     """
     text = (raw or "").strip()
     if ":" not in text:
-        raise CurieError("CURIE must contain a colon")
+        raise CurieError("CURIE must contain a colon", code="missing_colon")
     prefix, accession = text.split(":", 1)
     if not prefix.strip():
-        raise CurieError("empty CURIE prefix")
+        raise CurieError("empty CURIE prefix", code="empty_prefix")
     if not accession.strip():
-        raise CurieError("empty CURIE accession")
+        raise CurieError("empty CURIE accession", code="empty_accession")
     namespace = resolve_namespace(prefix)
     if namespace is None:
-        raise CurieError(f"unknown CURIE prefix: {prefix}")
+        raise CurieError(
+            f"unknown CURIE prefix: {prefix}",
+            code="unknown_prefix",
+        )
     return namespace, normalize_accession(namespace, accession)
 
 

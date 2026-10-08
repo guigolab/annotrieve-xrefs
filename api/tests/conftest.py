@@ -167,12 +167,41 @@ def _init_shard(path: Path) -> None:
         );
         """
     )
-    conn.execute(
+    conn.executemany(
         """
         INSERT INTO gene VALUES
-        (10, 'gene-TP53', 'gene', 'NC_000017.11', 7661779, 7687550, -1,
-         'protein_coding', 'TP53', 'tumor protein p53', 'description', 0)
-        """
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                10,
+                "gene-TP53",
+                "gene",
+                "NC_000017.11",
+                7661779,
+                7687550,
+                -1,
+                "protein_coding",
+                "TP53",
+                "tumor protein p53",
+                "description",
+                0,
+            ),
+            (
+                20,
+                "gene-BRCA1",
+                "gene",
+                "NC_000017.11",
+                43044295,
+                43125483,
+                -1,
+                "protein_coding",
+                "BRCA1",
+                "BRCA1 DNA repair associated",
+                "description",
+                0,
+            ),
+        ],
     )
     conn.executemany(
         "INSERT INTO gene_xref VALUES (?, ?, ?, ?, ?, ?)",
@@ -180,6 +209,7 @@ def _init_shard(path: Path) -> None:
             (10, "symbol", "tp53", "TP53", "attr", 0),
             (10, "alias", "tp53", "p53", "attr", 0),
             (10, "go", "GO:0008150", None, "attr", 2),
+            (20, "symbol", "brca1", "BRCA1", "attr", 0),
         ],
     )
     conn.commit()
