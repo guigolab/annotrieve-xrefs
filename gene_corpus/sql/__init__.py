@@ -34,6 +34,10 @@ from gene_corpus.sql.per_gff import (
     tier_a_counts_n,
     write_shard_meta,
 )
+from gene_corpus.sql.repair_quotes import (
+    recompute_xref_meta_from_state,
+    repair_wrapped_accessions,
+)
 from gene_corpus.sql.schema import (
     SCHEMA_VERSION,
     checkpoint_wal,
@@ -69,7 +73,9 @@ __all__ = [
     "read_seed_row_from_shard",
     "read_shard_meta",
     "rebuild_namespace_stats",
+    "recompute_xref_meta_from_state",
     "refresh_lineage_if_taxonomy_changed",
+    "repair_wrapped_accessions",
     "seed_annotations",
     "seed_row_from_shard_meta",
     "shard_dir",

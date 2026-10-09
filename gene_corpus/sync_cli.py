@@ -5,6 +5,11 @@ Sync CLI: harvest new annotations and incrementally attach into gene_corpus.sqli
         --work-dir /data/gene_corpus \\
         --files-root /data/annotrieve/files \\
         --taxonomy-tsv /data/annotrieve/files/taxonomy/flattened-tree.tsv
+
+TODO: Quote-wrapped symbol/alias accessions already present in
+gene_corpus.sqlite are cleaned with ``python -m gene_corpus.repair`` for the
+time being. Sync/attach does not rewrite historical keys; harvest
+``normalize_symbol`` only prevents new wrapped accessions.
 """
 from __future__ import annotations
 

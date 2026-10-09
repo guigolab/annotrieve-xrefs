@@ -60,5 +60,18 @@ def alias_ok(
     return symbol_ok(text, locus_tag=locus_tag, feature_id=feature_id)
 
 
+def strip_wrapping_quotes(value: str) -> str:
+    """
+    Remove one matching pair of wrapping ASCII quotes if present.
+
+    GFF3 says attribute values should not be quoted, but some producers wrap
+    Name/gene in ``'...'`` or ``"..."``. One layer only.
+    """
+    text = value or ""
+    if len(text) >= 3 and text[0] == text[-1] and text[0] in "'\"":
+        return text[1:-1]
+    return text
+
+
 def normalize_symbol(value: str) -> str:
-    return (value or "").strip().casefold()
+    return strip_wrapping_quotes((value or "").strip()).casefold()

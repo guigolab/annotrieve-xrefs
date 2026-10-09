@@ -7,6 +7,7 @@ decisions and per-source profiles.
     python -m gene_corpus.harvest   # report → per-GFF shards
     python -m gene_corpus.merge     # shards → global gene_hit + xref_meta
     python -m gene_corpus.sync      # incremental harvest + attach
+    python -m gene_corpus.repair    # unwrap quote-wrapped symbol/alias keys
 """
 
 from gene_corpus.namespaces import canonicalize_db, include_in_local, include_in_v1
