@@ -16,9 +16,11 @@ from helpers.pagination import (
     MAX_LIMIT,
     PAGE_TOKEN_DESC,
 )
-from services.hits import list_hit_annotations, list_hits
+from services.hits import MATCH_ANY, list_hit_annotations, list_hits
 
 router = APIRouter()
+
+_MATCH_DESC = "any (union, default) or all (intersection)"
 
 
 class HitsSearchBody(BaseModel):
@@ -26,6 +28,7 @@ class HitsSearchBody(BaseModel):
 
     curies: list[str]
     taxid: int | None = Field(default=None, ge=1)
+    match: str = Field(default=MATCH_ANY, description=_MATCH_DESC)
     limit: int = Field(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT)
     next: str | None = None
     previous: str | None = None
@@ -48,6 +51,7 @@ def _hits_response(
     curies: str | list[str],
     *,
     taxid: int | None,
+    match: str,
     next: str | None,
     previous: str | None,
     limit: int,
@@ -59,6 +63,7 @@ def _hits_response(
                 corpus_conn(),
                 curies,
                 taxid=taxid,
+                match=match,
                 next=next,
                 previous=previous,
                 limit=limit,
@@ -74,6 +79,7 @@ def _hit_annotations_response(
     curies: str | list[str],
     *,
     taxid: int | None,
+    match: str,
     next: str | None,
     previous: str | None,
     limit: int,
@@ -85,6 +91,7 @@ def _hit_annotations_response(
                 corpus_conn(),
                 curies,
                 taxid=taxid,
+                match=match,
                 next=next,
                 previous=previous,
                 limit=limit,
@@ -107,14 +114,16 @@ def get_hit_annotations(
         ge=1,
         description="Optional NCBI taxid (species or ancestor via annotation_lineage)",
     ),
+    match: str = Query(MATCH_ANY, description=_MATCH_DESC),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     next: str | None = Query(None, description=PAGE_TOKEN_DESC),
     previous: str | None = Query(None, description=PAGE_TOKEN_DESC),
 ):
-    """Annotations matching any of the given CURIEs (one row per annotation)."""
+    """Annotations matching the given CURIEs (one row per annotation)."""
     return _hit_annotations_response(
         curies,
         taxid=taxid,
+        match=match,
         next=next,
         previous=previous,
         limit=limit,
@@ -128,6 +137,7 @@ def post_hit_annotations(body: HitsSearchBody):
     return _hit_annotations_response(
         body.curies,
         taxid=body.taxid,
+        match=body.match,
         next=body.next,
         previous=body.previous,
         limit=body.limit,
@@ -146,14 +156,16 @@ def get_hits(
         ge=1,
         description="Optional NCBI taxid (species or ancestor via annotation_lineage)",
     ),
+    match: str = Query(MATCH_ANY, description=_MATCH_DESC),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     next: str | None = Query(None, description=PAGE_TOKEN_DESC),
     previous: str | None = Query(None, description=PAGE_TOKEN_DESC),
 ):
-    """Cross-annotation hits matching any of the given CURIEs (keyset pagination)."""
+    """Cross-annotation hits matching the given CURIEs (keyset pagination)."""
     return _hits_response(
         curies,
         taxid=taxid,
+        match=match,
         next=next,
         previous=previous,
         limit=limit,
@@ -167,6 +179,7 @@ def post_hits(body: HitsSearchBody):
     return _hits_response(
         body.curies,
         taxid=body.taxid,
+        match=body.match,
         next=body.next,
         previous=body.previous,
         limit=body.limit,

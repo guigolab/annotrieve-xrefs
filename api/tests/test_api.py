@@ -490,6 +490,150 @@ def test_hits_post_allows_more_than_get_limit(client: TestClient) -> None:
     assert detail["received"] == 101
 
 
+def test_hits_match_all_same_gene(client: TestClient) -> None:
+    r = client.get(
+        "/hits",
+        params={"curies": "symbol:tp53,alias:tp53", "match": "all"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["results"]) == 1
+    row = body["results"][0]
+    assert row["annotation_id"] == "ann-human"
+    assert row["local_id"] == 10
+    assert set(row["matched"]) == {"symbol:tp53", "alias:tp53"}
+
+
+def test_hits_match_any_still_union(client: TestClient) -> None:
+    r = client.get(
+        "/hits",
+        params={"curies": "symbol:tp53,alias:tp53", "match": "any"},
+    )
+    assert r.status_code == 200
+    assert len(r.json()["results"]) == 2
+
+
+def test_hits_match_all_shared_go(client: TestClient) -> None:
+    r = client.get(
+        "/hits",
+        params={"curies": "symbol:tp53,GO:0008150", "match": "all"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["results"]) == 2
+    by_id = {row["annotation_id"]: row for row in body["results"]}
+    assert by_id["ann-human"]["local_id"] == 10
+    assert by_id["ann-mouse"]["local_id"] == 3
+    assert set(by_id["ann-human"]["matched"]) == {"go:GO:0008150", "symbol:tp53"}
+
+
+def test_hit_annotations_match_all(client: TestClient) -> None:
+    r = client.get(
+        "/hits/annotations",
+        params={"curies": "symbol:tp53,alias:tp53", "match": "all"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["results"]) == 1
+    assert body["results"][0]["annotation_id"] == "ann-human"
+    assert body["results"][0]["n_genes"] == 1
+    assert set(body["results"][0]["matched"]) == {"symbol:tp53", "alias:tp53"}
+
+
+def test_hit_annotations_match_any_still_union(client: TestClient) -> None:
+    r = client.get(
+        "/hits/annotations",
+        params={"curies": "symbol:tp53,alias:tp53", "match": "any"},
+    )
+    assert r.status_code == 200
+    assert len(r.json()["results"]) == 2
+
+
+def test_hits_match_all_missing_accession_empty(client: TestClient) -> None:
+    r = client.get(
+        "/hits",
+        params={"curies": "symbol:tp53,symbol:nosuchgene", "match": "all"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["results"] == []
+    assert "errors" not in body or body.get("errors") is None
+
+
+def test_hits_match_all_invalid_prefix_empty(client: TestClient) -> None:
+    r = client.get(
+        "/hits",
+        params={"curies": "symbol:tp53,notans:foo", "match": "all"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["results"] == []
+    assert body["errors"] == [
+        {
+            "curie": "notans:foo",
+            "code": "unknown_prefix",
+            "message": "unknown CURIE prefix: notans",
+        }
+    ]
+
+
+def test_hits_invalid_match(client: TestClient) -> None:
+    r = client.get(
+        "/hits",
+        params={"curies": "symbol:tp53", "match": "nope"},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "invalid_match"
+
+
+def test_hits_match_cursor_filter_mismatch(client: TestClient) -> None:
+    first = client.get(
+        "/hits",
+        params={"curies": "symbol:tp53,GO:0008150", "match": "any", "limit": 1},
+    )
+    assert first.status_code == 200
+    token = first.json()["next"]
+    assert token
+    bad = client.get(
+        "/hits",
+        params={
+            "curies": "symbol:tp53,GO:0008150",
+            "match": "all",
+            "limit": 1,
+            "next": token,
+        },
+    )
+    assert bad.status_code == 400
+    assert bad.json()["detail"]["code"] == "cursor_filter_mismatch"
+
+
+def test_hits_match_all_pagination(client: TestClient) -> None:
+    first = client.get(
+        "/hits",
+        params={"curies": "symbol:tp53,GO:0008150", "match": "all", "limit": 1},
+    )
+    assert first.status_code == 200
+    body = first.json()
+    assert len(body["results"]) == 1
+    assert body["results"][0]["annotation_id"] == "ann-human"
+    token = body["next"]
+    assert token
+    second = client.get(
+        "/hits",
+        params={
+            "curies": "symbol:tp53,GO:0008150",
+            "match": "all",
+            "limit": 1,
+            "next": token,
+        },
+    )
+    assert second.status_code == 200
+    page2 = second.json()
+    assert len(page2["results"]) == 1
+    assert page2["results"][0]["annotation_id"] == "ann-mouse"
+    assert page2["previous"]
+
+
 def test_annotation_genes_browse(client: TestClient) -> None:
     r = client.get("/annotations/ann-human/genes")
     assert r.status_code == 200

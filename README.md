@@ -126,9 +126,16 @@ Cross-annotation **locus** hits: one row per matching gene in an annotation.
 |---|---|---|
 | CURIEs | `curies` CSV query param | JSON `{"curies": [...]}` |
 | Max CURIEs | **20** | **100** |
-| Optional | `taxid`, `limit`, `next`, `previous` | same fields in the body |
+| Optional | `taxid`, `match`, `limit`, `next`, `previous` | same fields in the body |
 
 `taxid` keeps annotations whose taxonomy lineage includes that NCBI id (species or ancestor).
+
+`match` selects how multiple CURIEs combine (`any` is the default):
+
+- **`any`** — a gene matches if it carries **any** of the CURIEs (union).
+- **`all`** — a gene matches only if it carries **every** CURIE (intersection on the same locus).
+
+Under `match=all`, an unknown prefix or an accession absent from the corpus yields an empty page (plus `errors` for bad prefixes). Changing `match` invalidates page tokens from a previous request.
 
 ```http
 GET /hits?curies=symbol:tp53,alias:tp53&taxid=40674
@@ -157,7 +164,12 @@ GET /hits?curies=symbol:tp53,alias:tp53&taxid=40674
 
 ### `GET` / `POST /hits/annotations`
 
-Same CURIE inputs as `/hits`, but **one row per annotation**: how many distinct genes matched, and which CURIEs hit.
+Same CURIE inputs and `match` / `taxid` options as `/hits`, but **one row per annotation**: how many distinct genes matched, and which CURIEs hit.
+
+- **`match=any`** — the annotation has at least one of the CURIEs.
+- **`match=all`** — the annotation has every CURIE (each may be on a different gene).
+
+`n_genes` is the distinct count of genes that matched at least one of the CURIEs.
 
 Use this when you need a list of annotations first; use `/hits` when you need individual loci.
 
