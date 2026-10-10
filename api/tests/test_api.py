@@ -646,10 +646,51 @@ def test_annotation_genes_browse(client: TestClient) -> None:
         assert row["annotation_id"] == "ann-human"
 
 
-def test_annotation_genes_q_curie(client: TestClient) -> None:
+def test_annotation_namespaces(client: TestClient) -> None:
+    r = client.get("/annotations/ann-human/namespaces")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["annotation_id"] == "ann-human"
+    assert body["next"] is None
+    assert body["previous"] is None
+    by_ns = {row["namespace"]: row["accession_count"] for row in body["results"]}
+    assert by_ns == {
+        "alias": 1,
+        "ensembl_transcript": 1,
+        "go": 1,
+        "symbol": 2,
+    }
+    assert body["total"] == 4
+    assert [row["namespace"] for row in body["results"]] == sorted(by_ns)
+
+
+def test_annotation_namespaces_missing_shard(client: TestClient) -> None:
+    r = client.get("/annotations/missing/namespaces")
+    assert r.status_code == 404
+    assert r.json()["detail"]["code"] == "shard_not_found"
+
+
+def test_annotation_genes_q_is_name_prefix_not_curie(client: TestClient) -> None:
+    # Colon is part of the name prefix — no longer an xref CURIE filter.
     r = client.get(
         "/annotations/ann-human/genes",
         params={"q": "symbol:tp53"},
+    )
+    assert r.status_code == 200
+    assert r.json()["results"] == []
+
+    bad_prefix = client.get(
+        "/annotations/ann-human/genes",
+        params={"q": "notans:foo"},
+    )
+    assert bad_prefix.status_code == 200
+    assert bad_prefix.json()["results"] == []
+
+
+def test_annotation_genes_curies(client: TestClient) -> None:
+    r = client.get(
+        "/annotations/ann-human/genes",
+        params={"curies": "symbol:tp53"},
     )
     assert r.status_code == 200
     body = r.json()
@@ -657,6 +698,104 @@ def test_annotation_genes_q_curie(client: TestClient) -> None:
     assert body["results"][0]["local_id"] == 10
     assert "matched" not in body["results"][0]
     assert "xrefs" not in body["results"][0]
+    assert "errors" not in body
+
+
+def test_annotation_genes_curies_match_any(client: TestClient) -> None:
+    r = client.get(
+        "/annotations/ann-human/genes",
+        params={"curies": "symbol:tp53,symbol:brca1", "match": "any"},
+    )
+    assert r.status_code == 200
+    assert [x["local_id"] for x in r.json()["results"]] == [10, 20]
+
+
+def test_annotation_genes_curies_match_all(client: TestClient) -> None:
+    both = client.get(
+        "/annotations/ann-human/genes",
+        params={"curies": "symbol:tp53,alias:tp53", "match": "all"},
+    )
+    assert both.status_code == 200
+    assert [x["local_id"] for x in both.json()["results"]] == [10]
+
+    missing = client.get(
+        "/annotations/ann-human/genes",
+        params={"curies": "symbol:tp53,symbol:brca1", "match": "all"},
+    )
+    assert missing.status_code == 200
+    assert missing.json()["results"] == []
+
+
+def test_annotation_genes_curies_unknown_prefix(client: TestClient) -> None:
+    any_r = client.get(
+        "/annotations/ann-human/genes",
+        params={"curies": "symbol:tp53,notans:foo", "match": "any"},
+    )
+    assert any_r.status_code == 200
+    body = any_r.json()
+    assert [x["local_id"] for x in body["results"]] == [10]
+    assert body["errors"] == [
+        {
+            "curie": "notans:foo",
+            "code": "unknown_prefix",
+            "message": "unknown CURIE prefix: notans",
+        }
+    ]
+
+    all_r = client.get(
+        "/annotations/ann-human/genes",
+        params={"curies": "symbol:tp53,notans:foo", "match": "all"},
+    )
+    assert all_r.status_code == 200
+    all_body = all_r.json()
+    assert all_body["results"] == []
+    assert all_body["errors"][0]["code"] == "unknown_prefix"
+
+
+def test_annotation_genes_curies_required(client: TestClient) -> None:
+    r = client.get(
+        "/annotations/ann-human/genes",
+        params={"curies": " , "},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "curies_required"
+
+
+def test_annotation_genes_too_many_curies(client: TestClient) -> None:
+    curies = ",".join(f"symbol:g{i}" for i in range(21))
+    r = client.get(
+        "/annotations/ann-human/genes",
+        params={"curies": curies},
+    )
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert detail["code"] == "too_many_curies"
+    assert detail["max"] == 20
+
+
+def test_annotation_genes_invalid_match(client: TestClient) -> None:
+    r = client.get(
+        "/annotations/ann-human/genes",
+        params={"curies": "symbol:tp53", "match": "nope"},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "invalid_match"
+
+
+def test_annotation_genes_q_and_curies(client: TestClient) -> None:
+    hit = client.get(
+        "/annotations/ann-human/genes",
+        params={"q": "TP", "curies": "symbol:tp53"},
+    )
+    assert hit.status_code == 200
+    assert [x["local_id"] for x in hit.json()["results"]] == [10]
+
+    miss = client.get(
+        "/annotations/ann-human/genes",
+        params={"q": "BRCA", "curies": "symbol:tp53"},
+    )
+    assert miss.status_code == 200
+    assert miss.json()["results"] == []
 
 
 def test_annotation_genes_q_primary_name(client: TestClient) -> None:
@@ -673,17 +812,6 @@ def test_annotation_genes_q_primary_name(client: TestClient) -> None:
     )
     assert prefix.status_code == 200
     assert [x["local_id"] for x in prefix.json()["results"]] == [10]
-
-
-def test_annotation_genes_q_bad_curie(client: TestClient) -> None:
-    r = client.get(
-        "/annotations/ann-human/genes",
-        params={"q": "notans:foo"},
-    )
-    assert r.status_code == 400
-    detail = r.json()["detail"]
-    assert detail["code"] == "unknown_prefix"
-    assert "unknown CURIE prefix" in detail["message"]
 
 
 def test_annotation_genes_q_too_long(client: TestClient) -> None:
@@ -737,9 +865,14 @@ def test_gene_xrefs_list(client: TestClient) -> None:
     assert body["annotation_id"] == "ann-human"
     assert body["local_id"] == 10
     ns = {x["namespace"] for x in body["results"]}
-    assert ns == {"alias", "go", "symbol"}
+    assert ns == {"alias", "ensembl_transcript", "go", "symbol"}
     # Ordered by namespace, accession
-    assert [x["namespace"] for x in body["results"]] == ["alias", "go", "symbol"]
+    assert [x["namespace"] for x in body["results"]] == [
+        "alias",
+        "ensembl_transcript",
+        "go",
+        "symbol",
+    ]
 
 
 def test_gene_xrefs_missing(client: TestClient) -> None:
@@ -766,7 +899,7 @@ def test_gene_xrefs_pagination(client: TestClient) -> None:
         params={"limit": 1, "next": first["next"]},
     ).json()
     assert len(second["results"]) == 1
-    assert second["results"][0]["namespace"] == "go"
+    assert second["results"][0]["namespace"] == "ensembl_transcript"
     assert second["previous"]
 
     back = client.get(

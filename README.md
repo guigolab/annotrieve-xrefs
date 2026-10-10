@@ -43,7 +43,7 @@ Normalization:
 - **GO** — short forms pad to seven digits (`GO:8150` → `GO:0008150`).
 - **symbol / alias** — accessions are casefolded (`TP53` → `tp53`).
 
-Unknown prefixes are reported in the `errors` array on `/hits` (results for valid CURIEs still return). On `/annotations/…/genes?q=…`, a bad CURIE is a **400**.
+Unknown prefixes are reported in the `errors` array on `/hits` and on `/annotations/…/genes?curies=…` (results for valid CURIEs still return under `match=any`).
 
 ---
 
@@ -196,17 +196,45 @@ GET /hits/annotations?curies=symbol:tp53
 }
 ```
 
+### `GET /annotations/{annotation_id}/namespaces`
+
+Namespaces present on one annotation’s shard (Tier A and Tier B), with distinct accession counts. Same result item shape as `GET /namespaces`, plus `annotation_id`.
+
+```http
+GET /annotations/ann-human/namespaces
+```
+
+```json
+{
+  "annotation_id": "ann-human",
+  "total": 4,
+  "limit": 4,
+  "results": [
+    {"namespace": "alias", "accession_count": 1},
+    {"namespace": "ensembl_transcript", "accession_count": 1},
+    {"namespace": "go", "accession_count": 1},
+    {"namespace": "symbol", "accession_count": 2}
+  ],
+  "next": null,
+  "previous": null
+}
+```
+
 ### `GET /annotations/{annotation_id}/genes`
 
 Browse genes inside one annotation’s gene corpus (not Annotrieve’s annotation catalogue).
 
 | Parameter | Notes |
 |---|---|
-| `q` | If it contains `:`, treat as one CURIE (xref filter). Otherwise casefold **prefix** match on `primary_name` (max 64 chars). |
+| `q` | Casefold **prefix** match on `primary_name` (max 64 chars). Not a CURIE. |
+| `curies` | Optional comma-separated CURIEs (xref filter via `gene_xref`). Cap 20. |
+| `match` | `any` (union, default) or `all` (intersection). Only used with `curies`. |
 | `limit`, `next`, `previous` | Pagination |
 
+When both `q` and `curies` are set, a gene must satisfy both. Unknown prefixes appear in `errors` (same objects as `/hits`).
+
 ```http
-GET /annotations/ann-human/genes?q=symbol:tp53
+GET /annotations/ann-human/genes?curies=symbol:tp53
 ```
 
 ```json

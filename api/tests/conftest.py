@@ -165,6 +165,12 @@ def _init_shard(path: Path) -> None:
             via_level INTEGER NOT NULL,
             UNIQUE (local_id, namespace, accession)
         );
+        CREATE TABLE tier_a_counts (
+            namespace TEXT NOT NULL,
+            accession TEXT NOT NULL,
+            gene_count INTEGER NOT NULL,
+            PRIMARY KEY (namespace, accession)
+        ) WITHOUT ROWID;
         """
     )
     conn.executemany(
@@ -209,7 +215,17 @@ def _init_shard(path: Path) -> None:
             (10, "symbol", "tp53", "TP53", "attr", 0),
             (10, "alias", "tp53", "p53", "attr", 0),
             (10, "go", "GO:0008150", None, "attr", 2),
+            (10, "ensembl_transcript", "ENST00000269305", None, "attr", 1),
             (20, "symbol", "brca1", "BRCA1", "attr", 0),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO tier_a_counts VALUES (?, ?, ?)",
+        [
+            ("symbol", "tp53", 1),
+            ("symbol", "brca1", 1),
+            ("alias", "tp53", 1),
+            ("go", "GO:0008150", 1),
         ],
     )
     conn.commit()

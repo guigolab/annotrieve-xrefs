@@ -6,10 +6,28 @@ from fastapi import APIRouter, HTTPException, Path, Query
 from helpers.cursor import QueryError
 from helpers.deps import annotation_shard
 from helpers.errors import http_error
-from helpers.pagination import DEFAULT_LIMIT, MAX_LIMIT, PAGE_TOKEN_DESC
-from services.annotations import get_gene, list_annotation_genes, list_gene_xrefs
+from helpers.pagination import DEFAULT_LIMIT, MAX_CURIES_GET, MAX_LIMIT, PAGE_TOKEN_DESC
+from services.annotations import (
+    get_gene,
+    list_annotation_genes,
+    list_annotation_namespaces,
+    list_gene_xrefs,
+)
+from services.hits import MATCH_ANY
 
 router = APIRouter()
+
+_MATCH_DESC = "any (union, default) or all (intersection); only used with curies"
+
+
+@router.get("/annotations/{annotation_id}/namespaces")
+def get_annotation_namespaces(annotation_id: str):
+    """Namespaces present in this annotation's shard (Tier A + Tier B)."""
+    conn = annotation_shard(annotation_id)
+    try:
+        return list_annotation_namespaces(conn, annotation_id)
+    finally:
+        conn.close()
 
 
 @router.get("/annotations/{annotation_id}/genes")
@@ -18,15 +36,19 @@ def get_annotation_genes(
     q: str | None = Query(
         None,
         description=(
-            "Optional search: a CURIE (contains ':') filters by xref; "
-            "otherwise casefold prefix match on primary_name"
+            "Optional casefold prefix match on primary_name (max 64 chars)"
         ),
     ),
+    curies: str | None = Query(
+        None,
+        description="Comma-separated CURIEs, e.g. symbol:tp53,GO:0008150",
+    ),
+    match: str = Query(MATCH_ANY, description=_MATCH_DESC),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     next: str | None = Query(None, description=PAGE_TOKEN_DESC),
     previous: str | None = Query(None, description=PAGE_TOKEN_DESC),
 ):
-    """Paginated gene cards for one annotation (optional q filter)."""
+    """Paginated gene cards for one annotation (optional q / curies filters)."""
     conn = annotation_shard(annotation_id)
     try:
         try:
@@ -34,9 +56,12 @@ def get_annotation_genes(
                 conn,
                 annotation_id,
                 q=q,
+                curies=curies,
+                match=match,
                 next=next,
                 previous=previous,
                 limit=limit,
+                max_curies=MAX_CURIES_GET,
             )
         except QueryError as exc:
             raise HTTPException(status_code=400, detail=exc.as_detail()) from exc
