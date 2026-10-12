@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import ssl
 import sys
 import tempfile
 import urllib.request
@@ -15,6 +16,16 @@ from gene_corpus.stream.emit_util import normalize_go_token
 
 GO_BASIC_OBO_URL = "http://purl.obolibrary.org/obo/go/go-basic.obo"
 GO_CACHE_NAME = "go-basic.obo"
+
+_UA = "annotrieve-gene-corpus-labels/1.0 (+https://genome.crg.es/annotrieve)"
+_SSL_CTX = ssl._create_unverified_context()
+
+
+def _urlopen(url: str, *, timeout: float = 600):
+    req = urllib.request.Request(
+        url, headers={"Accept": "*/*", "User-Agent": _UA}
+    )
+    return urllib.request.urlopen(req, context=_SSL_CTX, timeout=timeout)
 
 # Cap aliases stored per term; prefer EXACT then RELATED when truncating.
 MAX_ALIASES_PER_TERM = 5
@@ -82,9 +93,7 @@ class GoLabelProvider:
         os.close(fd)
         tmp_path = Path(tmp_name)
         try:
-            with urllib.request.urlopen(GO_BASIC_OBO_URL) as resp, tmp_path.open(
-                "wb"
-            ) as out:
+            with _urlopen(GO_BASIC_OBO_URL) as resp, tmp_path.open("wb") as out:
                 shutil.copyfileobj(resp, out, length=1024 * 1024)
             os.replace(tmp_path, dest)
         except Exception:
