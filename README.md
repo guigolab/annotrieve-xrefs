@@ -238,6 +238,51 @@ GET /hits/annotations?curies=symbol:tp53
 }
 ```
 
+### `GET` / `POST /hits/annotations/index`
+
+Same `curies`, `match`, and `taxid` as `/hits/annotations`, and the same GET/POST CURIE caps (**20** / **100**). Returns the **full** match set in one response (no `limit` / `next` / `previous`).
+
+Presence comes from the `xref_file` index (one row per accession per annotation), not from a `gene_hit` locus scan. Build that index with `python -m gene_corpus.index` (see [Building the corpus](#building-the-corpus)).
+
+- **`match=any`** — the annotation has at least one of the CURIEs.
+- **`match=all`** — the annotation has every CURIE (annotation-level; not same-locus).
+
+Response shape is a compact tuple list. `errors` and `taxid` follow the other hits routes: omit `errors` when there are none; include `taxid` only when the request set it.
+
+```http
+GET /hits/annotations/index?curies=symbol:tp53&taxid=9606
+```
+
+```json
+{
+  "taxid": 9606,
+  "sources": {"1": "Ensembl", "2": "GenBank", "3": "RefSeq"},
+  "fields": ["annotation_id", "annotation_key", "taxid", "source"],
+  "rows": [["ann-human", 1, 9606, 3]]
+}
+```
+
+`source` is an integer code for `source_database` (`1` Ensembl, `2` GenBank, `3` RefSeq, `0` other). Join to `GET /annotations/index` on `annotation_key` for organism and assembly labels.
+
+### `GET /annotations/index`
+
+Placement catalogue for annotations that have at least one Tier A xref in the presence index (`xref_file_status.placed = 1`). No filters and no paging. Ordered by `annotation_key` (use that value as the client slot). Built by `python -m gene_corpus.index`.
+
+```http
+GET /annotations/index
+```
+
+```json
+{
+  "n_without_tier_a": 0,
+  "sources": {"1": "Ensembl", "2": "GenBank", "3": "RefSeq"},
+  "fields": ["annotation_id", "annotation_key", "organism_name", "assembly_accession", "taxid", "source"],
+  "rows": [["ann-human", 1, "Homo sapiens", "GCA_000001405", 9606, 3]]
+}
+```
+
+`n_without_tier_a` counts indexed annotations with no Tier A xrefs (`placed = 0`). Annotations not yet indexed are absent until the index script runs.
+
 ### `GET /annotations/{annotation_id}/namespaces`
 
 Namespaces present on one annotation’s shard (Tier A and Tier B), with distinct accession counts. Same result item shape as `GET /namespaces`, plus `annotation_id`.
@@ -369,10 +414,11 @@ Kept on each annotation’s gene shard (visible via gene xref chips and local br
 
 ## Building the corpus
 
-The searchable index is built in two steps:
+The searchable index is built in three steps:
 
 1. **Harvest** — walk published annotations and their GFF files; extract genes and cross-references into one small database per annotation.
 2. **Merge** — combine those per-annotation databases into the global search index the API serves (namespace catalogue, hit lookup, taxonomy).
+3. **Index** (optional for heatmaps) — copy each shard’s Tier A accession list into `xref_file` for `/annotations/index` and `/hits/annotations/index`.
 
 Harvest can run incrementally as new annotations appear. Merge rebuilds the searchable corpus from whatever per-annotation databases exist.
 
@@ -383,9 +429,20 @@ flowchart LR
   shards[Per-annotation databases]
   merge[Merge]
   global[Global search index]
+  index[Presence index]
   api[API]
-  report --> harvest --> shards --> merge --> global --> api
+  report --> harvest --> shards --> merge --> global --> index --> api
 ```
+
+### Presence index
+
+After merge, build annotation presence for the compact index routes:
+
+```bash
+PYTHONPATH=. python -m gene_corpus.index --work-dir /path/to/gene_corpus
+```
+
+Skips annotations already recorded in `xref_file_status`. Annotations with no Tier A xrefs are marked `placed = 0` and omitted from `GET /annotations/index`.
 
 ### Labels (optional sidecar)
 

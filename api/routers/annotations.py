@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Path, Query
 
 from helpers.cursor import QueryError
-from helpers.deps import annotation_shard
+from helpers.deps import annotation_shard, corpus_conn
 from helpers.errors import http_error
 from helpers.pagination import DEFAULT_LIMIT, MAX_CURIES_GET, MAX_LIMIT, PAGE_TOKEN_DESC
 from services.annotations import (
@@ -14,10 +14,21 @@ from services.annotations import (
     list_gene_xrefs,
 )
 from services.hits import MATCH_ANY
+from services.index import list_annotations_index
 
 router = APIRouter()
 
 _MATCH_DESC = "any (union, default) or all (intersection); only used with curies"
+
+
+@router.get("/annotations/index")
+def get_annotations_index():
+    """
+    Placement catalogue: annotations with at least one Tier A xref.
+
+    Ordered by annotation_key (client slot). Built by ``gene_corpus.index``.
+    """
+    return list_annotations_index(corpus_conn())
 
 
 @router.get("/annotations/{annotation_id}/namespaces")

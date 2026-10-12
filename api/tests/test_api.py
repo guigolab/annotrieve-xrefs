@@ -1108,3 +1108,126 @@ def test_gene_xrefs_pagination(client: TestClient) -> None:
         params={"limit": 1, "previous": second["previous"]},
     ).json()
     assert back["results"][0]["namespace"] == "alias"
+
+
+def test_annotations_index(client: TestClient) -> None:
+    r = client.get("/annotations/index")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["n_without_tier_a"] == 0
+    assert body["sources"] == {
+        "1": "Ensembl",
+        "2": "GenBank",
+        "3": "RefSeq",
+    }
+    assert body["fields"] == [
+        "annotation_id",
+        "annotation_key",
+        "organism_name",
+        "assembly_accession",
+        "taxid",
+        "source",
+    ]
+    assert "next" not in body
+    assert "previous" not in body
+    assert len(body["rows"]) == 2
+    # Ordered by annotation_key; fixture RefSeq → source 3.
+    assert body["rows"][0][0] == "ann-human"
+    assert body["rows"][0][1] == 1
+    assert body["rows"][0][5] == 3
+    assert body["rows"][1][0] == "ann-mouse"
+    assert body["rows"][1][1] == 2
+
+
+def test_hits_annotations_index(client: TestClient) -> None:
+    r = client.get(
+        "/hits/annotations/index",
+        params={"curies": "symbol:tp53"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["fields"] == [
+        "annotation_id",
+        "annotation_key",
+        "taxid",
+        "source",
+    ]
+    assert "n_genes" not in body["fields"]
+    assert "organism_name" not in body["fields"]
+    assert "errors" not in body
+    assert "taxid" not in body
+    by_id = {row[0]: row for row in body["rows"]}
+    assert set(by_id) == {"ann-human", "ann-mouse"}
+    assert by_id["ann-human"][1] == 1
+    assert by_id["ann-human"][2] == 9606
+    assert by_id["ann-human"][3] == 3
+
+
+def test_hits_annotations_index_post(client: TestClient) -> None:
+    r = client.post(
+        "/hits/annotations/index",
+        json={"curies": ["symbol:tp53"]},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert {row[0] for row in body["rows"]} == {"ann-human", "ann-mouse"}
+    assert "errors" not in body
+
+
+def test_hits_annotations_index_taxid(client: TestClient) -> None:
+    r = client.get(
+        "/hits/annotations/index",
+        params={"curies": "symbol:tp53", "taxid": 9606},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["taxid"] == 9606
+    assert [row[0] for row in body["rows"]] == ["ann-human"]
+
+
+def test_hits_annotations_index_match_all_missing(client: TestClient) -> None:
+    r = client.get(
+        "/hits/annotations/index",
+        params={
+            "curies": "symbol:tp53,symbol:nosuchgene",
+            "match": "all",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rows"] == []
+    assert "errors" not in body
+
+
+def test_hits_annotations_index_match_all_invalid_prefix(
+    client: TestClient,
+) -> None:
+    r = client.get(
+        "/hits/annotations/index",
+        params={"curies": "symbol:tp53,notans:foo", "match": "all"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rows"] == []
+    assert body["errors"] == [
+        {
+            "curie": "notans:foo",
+            "code": "unknown_prefix",
+            "message": "unknown CURIE prefix: notans",
+        }
+    ]
+
+
+def test_hits_annotations_index_match_all_present(client: TestClient) -> None:
+    r = client.get(
+        "/hits/annotations/index",
+        params={
+            "curies": "symbol:tp53,alias:tp53",
+            "match": "all",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    # Only human has both symbol and alias tp53 in xref_file.
+    assert [row[0] for row in body["rows"]] == ["ann-human"]
+    assert "errors" not in body

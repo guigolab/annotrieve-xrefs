@@ -46,6 +46,11 @@ from gene_corpus.sql.schema import (
     init_schema,
     seed_annotations,
 )
+from gene_corpus.sql.xref_index import (
+    ensure_schema as ensure_xref_index_schema,
+    index_annotation,
+    index_missing_annotations,
+)
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -58,10 +63,13 @@ __all__ = [
     "create_indexes",
     "create_per_gff_indexes",
     "discover_shard_paths",
+    "ensure_xref_index_schema",
     "existing_annotation_ids",
     "fill_annotation_lineage",
     "fill_lineage_for_annotation",
     "finalize_shard",
+    "index_annotation",
+    "index_missing_annotations",
     "init_per_gff_schema",
     "init_schema",
     "insert_genes",

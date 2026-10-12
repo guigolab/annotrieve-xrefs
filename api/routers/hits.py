@@ -17,6 +17,7 @@ from helpers.pagination import (
     PAGE_TOKEN_DESC,
 )
 from services.hits import MATCH_ANY, list_hit_annotations, list_hits
+from services.index import list_hit_annotations_index
 
 router = APIRouter()
 
@@ -32,6 +33,14 @@ class HitsSearchBody(BaseModel):
     limit: int = Field(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT)
     next: str | None = None
     previous: str | None = None
+
+
+class HitsAnnotationsIndexBody(BaseModel):
+    """JSON body for ``POST /hits/annotations/index`` (no paging)."""
+
+    curies: list[str]
+    taxid: int | None = Field(default=None, ge=1)
+    match: str = Field(default=MATCH_ANY, description=_MATCH_DESC)
 
 
 def _busy_response() -> JSONResponse:
@@ -101,6 +110,66 @@ def _hit_annotations_response(
         return _busy_response()
     except QueryError as exc:
         raise HTTPException(status_code=400, detail=exc.as_detail()) from exc
+
+
+def _hit_annotations_index_response(
+    curies: str | list[str],
+    *,
+    taxid: int | None,
+    match: str,
+    max_curies: int,
+):
+    try:
+        with hits_slot():
+            return list_hit_annotations_index(
+                corpus_conn(),
+                curies,
+                taxid=taxid,
+                match=match,
+                max_curies=max_curies,
+            )
+    except BusyError:
+        return _busy_response()
+    except QueryError as exc:
+        raise HTTPException(status_code=400, detail=exc.as_detail()) from exc
+
+
+@router.get("/hits/annotations/index")
+def get_hit_annotations_index(
+    curies: str = Query(
+        ...,
+        description="Comma-separated CURIEs, e.g. symbol:tp53,GO:0008150",
+    ),
+    taxid: int | None = Query(
+        None,
+        ge=1,
+        description="Optional NCBI taxid (species or ancestor via annotation_lineage)",
+    ),
+    match: str = Query(MATCH_ANY, description=_MATCH_DESC),
+):
+    """
+    Full annotation match set from xref_file (presence index).
+
+    Same curies / match / taxid as /hits/annotations; no paging. Built by
+    ``gene_corpus.index``.
+    """
+    return _hit_annotations_index_response(
+        curies,
+        taxid=taxid,
+        match=match,
+        max_curies=MAX_CURIES_GET,
+    )
+
+
+@router.post("/hits/annotations/index")
+def post_hit_annotations_index(body: HitsAnnotationsIndexBody):
+    """Full annotation presence index for a larger CURIE list (JSON body)."""
+    return _hit_annotations_index_response(
+        body.curies,
+        taxid=body.taxid,
+        match=body.match,
+        max_curies=MAX_CURIES_POST,
+    )
 
 
 @router.get("/hits/annotations")

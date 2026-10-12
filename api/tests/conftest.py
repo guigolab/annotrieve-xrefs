@@ -66,6 +66,16 @@ def _init_global(path: Path) -> None:
             namespace TEXT PRIMARY KEY,
             accession_count INTEGER NOT NULL
         ) WITHOUT ROWID;
+        CREATE TABLE xref_file (
+            namespace TEXT NOT NULL,
+            accession TEXT NOT NULL,
+            annotation_key INTEGER NOT NULL,
+            PRIMARY KEY (namespace, accession, annotation_key)
+        ) WITHOUT ROWID;
+        CREATE TABLE xref_file_status (
+            annotation_key INTEGER PRIMARY KEY,
+            placed INTEGER NOT NULL
+        ) WITHOUT ROWID;
         CREATE TABLE xref_label (
             namespace TEXT NOT NULL,
             accession TEXT NOT NULL,
@@ -160,6 +170,22 @@ def _init_global(path: Path) -> None:
             ("interpro", 1),
             ("symbol", 1),
         ],
+    )
+    # Presence index (mirrors gene_hit annotation set; no locus column).
+    conn.executemany(
+        "INSERT INTO xref_file VALUES (?, ?, ?)",
+        [
+            ("symbol", "tp53", 1),
+            ("alias", "tp53", 1),
+            ("go", "GO:0008150", 1),
+            ("interpro", "IPR002117", 1),
+            ("symbol", "tp53", 2),
+            ("go", "GO:0008150", 2),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO xref_file_status VALUES (?, ?)",
+        [(1, 1), (2, 1)],
     )
     # GO label collection for /namespaces/go/labels (browse + FTS).
     conn.execute(
