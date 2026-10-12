@@ -17,18 +17,219 @@ def test_namespaces(client: TestClient) -> None:
     names = {row["namespace"] for row in body["results"]}
     assert names == {"alias", "go", "interpro", "symbol"}
     assert body["next"] is None
+    by_ns = {row["namespace"]: row for row in body["results"]}
+    assert by_ns["go"]["name"] == "Gene Ontology"
+    assert by_ns["go"]["labels"] is True
+    assert by_ns["symbol"]["name"] == "Gene symbol"
+    assert by_ns["symbol"]["labels"] is False
+
+
+def test_namespaces_has_labels_filter(client: TestClient) -> None:
+    no_labels = client.get("/namespaces", params={"has_labels": "false"})
+    assert no_labels.status_code == 200
+    body = no_labels.json()
+    assert body["total"] == 3
+    assert all(row["labels"] is False for row in body["results"])
+    assert {row["namespace"] for row in body["results"]} == {
+        "alias",
+        "interpro",
+        "symbol",
+    }
+
+    with_labels = client.get("/namespaces", params={"has_labels": "true"})
+    assert with_labels.status_code == 200
+    labeled = with_labels.json()
+    assert labeled["total"] == 1
+    assert labeled["results"][0]["namespace"] == "go"
+    assert labeled["results"][0]["labels"] is True
+
+    go = client.get("/namespaces/go")
+    assert go.status_code == 200
+    assert go.json()["labels"] is True
 
 
 def test_namespace_item(client: TestClient) -> None:
     r = client.get("/namespaces/symbol")
     assert r.status_code == 200
-    assert r.json() == {"namespace": "symbol", "accession_count": 1}
+    assert r.json() == {
+        "namespace": "symbol",
+        "name": "Gene symbol",
+        "accession_count": 1,
+        "labels": False,
+    }
+    go = client.get("/namespaces/go")
+    assert go.status_code == 200
+    assert go.json()["labels"] is True
     missing = client.get("/namespaces/nope")
     assert missing.status_code == 404
     assert missing.json()["detail"] == {
         "code": "namespace_not_found",
         "message": "Unknown namespace: nope",
     }
+
+
+def test_namespace_labels_browse(client: TestClient) -> None:
+    r = client.get("/namespaces/go/labels")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["namespace"] == "go"
+    assert body["total"] == 1
+    assert body["previous"] is None
+    assert len(body["results"]) == 1
+    row = body["results"][0]
+    assert row == {
+        "accession": "GO:0008150",
+        "label": "biological_process",
+        "n_annotations": 2,
+        "n_genes": 2,
+    }
+
+
+def test_namespace_labels_search_q(
+    client: TestClient, corpus_dir
+) -> None:
+    import sqlite3
+
+    import pytest
+
+    conn = sqlite3.connect(str(corpus_dir / "gene_corpus.sqlite"))
+    try:
+        conn.execute("SELECT 1 FROM xref_label_fts LIMIT 1").fetchone()
+    except sqlite3.OperationalError:
+        conn.close()
+        pytest.skip("xref_label_fts trigram unavailable")
+    conn.close()
+
+    r = client.get("/namespaces/go/labels", params={"q": "biological"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1
+    assert body["results"][0]["accession"] == "GO:0008150"
+
+    # Alias text also matches via FTS.
+    via_alias = client.get(
+        "/namespaces/go/labels", params={"q": "process"}
+    )
+    assert via_alias.status_code == 200
+    assert via_alias.json()["results"][0]["accession"] == "GO:0008150"
+
+
+def test_namespace_labels_short_q(client: TestClient) -> None:
+    r = client.get("/namespaces/go/labels", params={"q": "bi"})
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "invalid_q"
+
+
+def test_namespace_labels_not_found(client: TestClient) -> None:
+    r = client.get("/namespaces/symbol/labels")
+    assert r.status_code == 404
+    assert r.json()["detail"]["code"] == "labels_not_found"
+    missing = client.get("/namespaces/nope/labels")
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["code"] == "namespace_not_found"
+
+
+def test_namespace_labels_pfam_versioned_meta_counts(
+    client: TestClient, corpus_dir
+) -> None:
+    """Unversioned label keys still pick up PF######.N meta counts."""
+    import sqlite3
+
+    conn = sqlite3.connect(str(corpus_dir / "gene_corpus.sqlite"))
+    conn.execute(
+        "INSERT INTO namespace_stats VALUES ('pfam', 2)"
+    )
+    # Only versioned meta rows — no plain PF00001.
+    conn.executemany(
+        "INSERT INTO xref_meta VALUES (?, ?, ?, ?)",
+        [
+            ("pfam", "PF00001.15", 3, 10),
+            ("pfam", "PF00001.20", 2, 5),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO xref_label VALUES (?, ?, ?)",
+        ("pfam", "PF00001", "7tm receptor"),
+    )
+    conn.commit()
+    conn.close()
+
+    r = client.get("/namespaces/pfam/labels")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1
+    row = body["results"][0]
+    assert row["accession"] == "PF00001"
+    assert row["label"] == "7tm receptor"
+    assert row["n_annotations"] == 5  # 3 + 2
+    assert row["n_genes"] == 15  # 10 + 5
+
+
+def test_namespace_labels_cursor(
+    client: TestClient, corpus_dir
+) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(str(corpus_dir / "gene_corpus.sqlite"))
+    conn.execute(
+        "INSERT INTO xref_meta VALUES ('go', 'GO:0003674', 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO xref_label VALUES "
+        "('go', 'GO:0003674', 'molecular_function')"
+    )
+    conn.execute(
+        "UPDATE namespace_stats SET accession_count = 2 "
+        "WHERE namespace = 'go'"
+    )
+    try:
+        conn.execute(
+            "INSERT INTO xref_label_fts (namespace, accession, text) "
+            "VALUES ('go', 'GO:0003674', 'molecular_function')"
+        )
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
+
+    first = client.get(
+        "/namespaces/go/labels",
+        params={"sort": "label", "sort_order": "asc", "limit": 1},
+    )
+    assert first.status_code == 200
+    body = first.json()
+    assert body["total"] == 2
+    assert len(body["results"]) == 1
+    assert body["results"][0]["accession"] == "GO:0008150"
+    assert body["next"] is not None
+    assert body["previous"] is None
+
+    second = client.get(
+        "/namespaces/go/labels",
+        params={
+            "sort": "label",
+            "sort_order": "asc",
+            "limit": 1,
+            "next": body["next"],
+        },
+    )
+    assert second.status_code == 200
+    page2 = second.json()
+    assert page2["results"][0]["accession"] == "GO:0003674"
+    assert page2["previous"] is not None
+    assert page2["next"] is None
+
+    back = client.get(
+        "/namespaces/go/labels",
+        params={
+            "sort": "label",
+            "sort_order": "asc",
+            "limit": 1,
+            "previous": page2["previous"],
+        },
+    )
+    assert back.status_code == 200
+    assert back.json()["results"][0]["accession"] == "GO:0008150"
 
 
 def test_accessions_sorted_by_n_genes(client: TestClient) -> None:

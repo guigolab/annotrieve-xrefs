@@ -66,8 +66,36 @@ def _init_global(path: Path) -> None:
             namespace TEXT PRIMARY KEY,
             accession_count INTEGER NOT NULL
         ) WITHOUT ROWID;
+        CREATE TABLE xref_label (
+            namespace TEXT NOT NULL,
+            accession TEXT NOT NULL,
+            label TEXT NOT NULL,
+            PRIMARY KEY (namespace, accession)
+        ) WITHOUT ROWID;
+        CREATE TABLE xref_label_alias (
+            namespace TEXT NOT NULL,
+            accession TEXT NOT NULL,
+            alias TEXT NOT NULL,
+            PRIMARY KEY (namespace, accession, alias)
+        ) WITHOUT ROWID;
+        CREATE INDEX xref_label_ns_label
+            ON xref_label (namespace, label);
         """
     )
+    try:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE xref_label_fts USING fts5(
+                namespace UNINDEXED,
+                accession UNINDEXED,
+                text,
+                tokenize = 'trigram'
+            )
+            """
+        )
+    except sqlite3.OperationalError:
+        # Older SQLite without FTS5 trigram — search tests skip/fail gracefully.
+        pass
     # Human annotation (taxid 9606, lineage includes Mammalia 40674)
     conn.execute(
         """
@@ -133,6 +161,26 @@ def _init_global(path: Path) -> None:
             ("symbol", 1),
         ],
     )
+    # GO label collection for /namespaces/go/labels (browse + FTS).
+    conn.execute(
+        "INSERT INTO xref_label VALUES (?, ?, ?)",
+        ("go", "GO:0008150", "biological_process"),
+    )
+    conn.execute(
+        "INSERT INTO xref_label_alias VALUES (?, ?, ?)",
+        ("go", "GO:0008150", "biological process"),
+    )
+    try:
+        conn.executemany(
+            "INSERT INTO xref_label_fts (namespace, accession, text) "
+            "VALUES (?, ?, ?)",
+            [
+                ("go", "GO:0008150", "biological_process"),
+                ("go", "GO:0008150", "biological process"),
+            ],
+        )
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 

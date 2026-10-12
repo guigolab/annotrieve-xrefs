@@ -1,0 +1,63 @@
+"""Human-readable names for Tier A catalogue namespaces."""
+from __future__ import annotations
+
+# Display names for published gene-corpus namespaces (keys match TIER_A).
+NAMESPACE_NAMES: dict[str, str] = {
+    "alias": "Gene synonym",
+    "aphidbase": "AphidBase",
+    "apidb_cryptodb": "CryptoDB",
+    "apidb_plasmodb": "PlasmoDB",
+    "apidb_toxodb": "ToxoDB",
+    "araport": "Araport",
+    "beebase": "BeeBase",
+    "beetlebase": "BeetleBase",
+    "bgd": "Bovine Genome Database",
+    "cdd": "Conserved Domain Database",
+    "cgd": "Candida Genome Database",
+    "cgnc": "CGNC",
+    "cog": "COG",
+    "dictybase": "dictyBase",
+    "eggnog": "eggNOG",
+    "ensembl": "Ensembl",
+    "ensemblgenomes": "Ensembl Genomes",
+    "flybase": "FlyBase",
+    "fungidb": "FungiDB",
+    "genedb": "GeneDB",
+    "geneid": "NCBI Gene",
+    "go": "Gene Ontology",
+    "goa": "GOA",
+    "hgnc": "HGNC",
+    "i5knal": "i5k",
+    "imgt/gene-db": "IMGT/GENE-DB",
+    "interpro": "InterPro",
+    "jgidb": "JGI",
+    "marpolbase": "MarpolBase",
+    "mgi": "MGI",
+    "mim": "OMIM",
+    "mirbase": "miRBase",
+    "nasoniabase": "NasoniaBase",
+    "ncbiortholog": "NCBI Ortholog",
+    "pfam": "Pfam",
+    "phytozome": "Phytozome",
+    "pombase": "PomBase",
+    "rap-db": "RAP-DB",
+    "rfam": "Rfam",
+    "rgd": "RGD",
+    "sgd": "SGD",
+    "symbol": "Gene symbol",
+    "tair": "TAIR",
+    "tigrfam": "TIGRFAM",
+    "uniprot/swiss-prot": "UniProtKB/Swiss-Prot",
+    "uniprot/trembl": "UniProtKB/TrEMBL",
+    "uniprotkb": "UniProtKB",
+    "vectorbase": "VectorBase",
+    "vgnc": "VGNC",
+    "wormbase": "WormBase",
+    "xenbase": "Xenbase",
+    "zfin": "ZFIN",
+}
+
+
+def namespace_name(namespace: str) -> str:
+    """Return the display name for *namespace*, or the raw id if unknown."""
+    return NAMESPACE_NAMES.get(namespace, namespace)

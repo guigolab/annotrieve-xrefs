@@ -55,13 +55,21 @@ Paths below are relative to the base URL.
 
 List namespaces present in the published corpus.
 
+Each row includes a human-readable `name` and a `labels` flag. `labels` is
+`true` when the published corpus has at least one `xref_label` row for that
+namespace (loaded via the labels CLI; see [Building the corpus](#building-the-corpus)).
+
+| Parameter | Notes |
+|---|---|
+| `has_labels` | Optional. `true` keeps namespaces with a label collection; `false` keeps those without. Omit for all. |
+
 ```json
 {
   "total": 4,
   "results": [
-    {"namespace": "alias", "accession_count": 1},
-    {"namespace": "go", "accession_count": 1},
-    {"namespace": "symbol", "accession_count": 1}
+    {"namespace": "alias", "name": "Gene synonym", "accession_count": 1, "labels": false},
+    {"namespace": "go", "name": "Gene Ontology", "accession_count": 1, "labels": false},
+    {"namespace": "symbol", "name": "Gene symbol", "accession_count": 1, "labels": false}
   ],
   "next": null,
   "previous": null
@@ -73,7 +81,7 @@ List namespaces present in the published corpus.
 One namespace summary.
 
 ```json
-{"namespace": "symbol", "accession_count": 1}
+{"namespace": "symbol", "name": "Gene symbol", "accession_count": 1, "labels": false}
 ```
 
 Slash namespaces work in the path (e.g. `/namespaces/uniprot/swiss-prot`).
@@ -115,6 +123,40 @@ One accession card (`n_annotations`, `n_genes`). GO and symbol/alias forms are n
   "accession": "GO:0008150",
   "n_annotations": 2,
   "n_genes": 2
+}
+```
+
+### `GET /namespaces/{namespace}/labels`
+
+Paginated human-readable labels for a namespace that has a label collection
+(`labels: true` on `/namespaces`). Omit `q` to browse; pass `q` to substring-search
+label and alias text (FTS5 trigram; at least 3 characters).
+
+| Parameter | Notes |
+|---|---|
+| `q` | Optional. Substring filter on label/alias text (min 3 chars when set) |
+| `sort` | `label` (default), `n_genes`, `n_annotations`, or `accession` |
+| `sort_order` | `asc` (default) or `desc` |
+| `limit`, `next`, `previous` | Pagination |
+
+Unknown namespace → `404` `namespace_not_found`. Namespace with no labels →
+`404` `labels_not_found`.
+
+```json
+{
+  "namespace": "go",
+  "total": 1,
+  "limit": 100,
+  "results": [
+    {
+      "accession": "GO:0008150",
+      "label": "biological_process",
+      "n_annotations": 2,
+      "n_genes": 2
+    }
+  ],
+  "next": null,
+  "previous": null
 }
 ```
 
@@ -344,6 +386,37 @@ flowchart LR
   api[API]
   report --> harvest --> shards --> merge --> global --> api
 ```
+
+### Labels (optional sidecar)
+
+After merge, load human-readable names into `xref_label` / `xref_label_alias`
+for accessions already present in `xref_meta`:
+
+```bash
+PYTHONPATH=. python -m gene_corpus.labels \
+  --work-dir /path/to/gene_corpus \
+  --namespace go \
+  --namespace mirbase \
+  --namespace rfam \
+  --namespace interpro \
+  --namespace pfam \
+  --namespace uniprot/swiss-prot
+```
+
+Omit `--namespace` to load all registered providers. Downloads are cached under
+`WORK_DIR/label_cache` (override with `--cache-dir`; refresh with
+`--force-download`). Loading all providers downloads Swiss-Prot FASTA (~94 MB).
+
+| Namespace | Source |
+|---|---|
+| `go` | Gene Ontology `go-basic.obo` (incl. obsolete terms) |
+| `mirbase` | miRBase `database_files` (precursor + mature + dead); falls back to RNAcentral `mirbase.tsv` if mirbase.org is unreachable |
+| `rfam` | Rfam `family.txt` + `dead_family.txt` dumps |
+| `interpro` | InterPro `entry.list` + `short_names.dat` (ENTRY_TYPE not indexed) |
+| `pfam` | Pfam `Pfam-A.clans.tsv.gz` (description + short id; clan not indexed) |
+| `uniprot/swiss-prot` | UniProt `uniprot_sprot.fasta.gz` (reviewed only; streamed) |
+
+Namespaces with loaded labels report `"labels": true` on `/namespaces`.
 
 ---
 

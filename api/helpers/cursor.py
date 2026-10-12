@@ -279,3 +279,66 @@ def decode_gene_xrefs_cursor(token: str) -> tuple[str, str]:
     ):
         raise QueryError("invalid cursor")
     return namespace, accession
+
+
+def encode_labels_cursor(
+    *,
+    sort: str,
+    sort_order: str,
+    sort_value: int | str,
+    accession: str,
+    filter_f: str,
+) -> str:
+    """Cursor for ``GET /namespaces/{ns}/labels`` keyset pages."""
+    payload: dict[str, Any] = {
+        "v": _CURSOR_VERSION,
+        "kind": "labels",
+        "sort": sort,
+        "sort_order": sort_order,
+        "a": accession,
+        "f": filter_f,
+    }
+    if sort == "label":
+        payload["l"] = str(sort_value)
+    else:
+        payload["n"] = int(sort_value)
+    return encode_cursor(payload)
+
+
+def decode_labels_cursor(
+    token: str,
+    *,
+    sort: str,
+    sort_order: str,
+    filter_f: str,
+) -> tuple[int | str, str]:
+    """
+    Decode a labels page cursor.
+
+    Returns ``(sort_value, accession)``. For ``sort=label``, ``sort_value`` is
+    the label string; otherwise it is the numeric count (0 for accession sort).
+    """
+    payload = decode_cursor(token)
+    if payload.get("kind") != "labels":
+        raise QueryError("invalid cursor")
+    if payload.get("sort") != sort or payload.get("sort_order") != sort_order:
+        raise QueryError(
+            "page token does not match current query filters",
+            code="cursor_filter_mismatch",
+        )
+    assert_cursor_filter(payload, filter_f)
+    accession = payload.get("a")
+    if not isinstance(accession, str) or len(accession) > 512:
+        raise QueryError("invalid cursor")
+    if sort == "label":
+        label = payload.get("l")
+        if not isinstance(label, str) or len(label) > 1024:
+            raise QueryError("invalid cursor")
+        return label, accession
+    sort_value = payload.get("n")
+    if (
+        not isinstance(sort_value, int)
+        or isinstance(sort_value, bool)
+    ):
+        raise QueryError("invalid cursor")
+    return sort_value, accession

@@ -2,7 +2,8 @@
 Global SQLite schema for annotrieve-xrefs serve (sidecar locked).
 
 Tables: annotation, annotation_lineage, gene_hit, xref_meta, namespace_stats,
-merge_done (build progress). ``xref_hit`` is not written.
+merge_done (build progress), xref_label, xref_label_alias, xref_label_fts.
+``xref_hit`` is not written.
 
 Incremental attach (``sql.attach`` / ``gene_corpus.sync``):
   1. INSERT annotation row with next annotation_key
@@ -11,6 +12,10 @@ Incremental attach (``sql.attach`` / ``gene_corpus.sync``):
   4. Rebuild namespace_stats from xref_meta (or bump when accession is new)
   5. Insert annotation_lineage for the new key
   6. Readers reopen on mtime (immutable=1 while writers are offline)
+
+Label tables (``xref_label`` / ``xref_label_alias``) and the trigram FTS
+index (``xref_label_fts``) are filled by ``python -m gene_corpus.labels``
+from external ontologies — not by harvest/merge.
 """
 from __future__ import annotations
 
@@ -80,6 +85,30 @@ CREATE TABLE IF NOT EXISTS namespace_stats (
 CREATE TABLE IF NOT EXISTS merge_done (
     annotation_key INTEGER PRIMARY KEY
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS xref_label (
+    namespace TEXT NOT NULL,
+    accession TEXT NOT NULL,
+    label TEXT NOT NULL,
+    PRIMARY KEY (namespace, accession)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS xref_label_alias (
+    namespace TEXT NOT NULL,
+    accession TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    PRIMARY KEY (namespace, accession, alias)
+) WITHOUT ROWID;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS xref_label_fts USING fts5(
+    namespace UNINDEXED,
+    accession UNINDEXED,
+    text,
+    tokenize = 'trigram'
+);
+
+CREATE INDEX IF NOT EXISTS xref_label_ns_label
+    ON xref_label (namespace, label);
 """
 
 _INDEXES_SQL = """
@@ -94,6 +123,9 @@ CREATE INDEX IF NOT EXISTS xref_meta_ns_loci
 
 CREATE INDEX IF NOT EXISTS xref_meta_ns_count
     ON xref_meta (namespace, n_annotations DESC, accession);
+
+CREATE INDEX IF NOT EXISTS xref_label_ns_label
+    ON xref_label (namespace, label);
 """
 
 

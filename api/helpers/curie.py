@@ -70,6 +70,10 @@ def normalize_accession(namespace: str, accession: str) -> str:
         return go
     if namespace in _CASEFOLD_NAMESPACES:
         return text.casefold()
+    # Pfam: harvest/meta keep optional .version; labels are unversioned.
+    # /namespaces/pfam/labels aggregates meta under the unversioned key
+    # (see services.namespaces._labels_meta_join). Do not strip here —
+    # get_accession / hits must match the raw harvested accession.
     return text
 
 

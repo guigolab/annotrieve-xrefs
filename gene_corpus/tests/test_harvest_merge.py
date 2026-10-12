@@ -514,6 +514,9 @@ def test_schema_has_sidecar_tables() -> None:
         assert "gene_hit" in tables
         assert "annotation_lineage" in tables
         assert "merge_done" in tables
+        assert "xref_label" in tables
+        assert "xref_label_alias" in tables
+        assert "xref_label_fts" in tables
         assert "xref_hit" not in tables
         ver = conn.execute(
             "SELECT value FROM meta WHERE key='schema_version'"
