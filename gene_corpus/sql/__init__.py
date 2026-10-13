@@ -46,6 +46,7 @@ from gene_corpus.sql.schema import (
     init_schema,
     seed_annotations,
 )
+from gene_corpus.sql.prune_xref_file import apply_prune, summarize_prune
 from gene_corpus.sql.xref_index import (
     ensure_schema as ensure_xref_index_schema,
     index_annotation,
@@ -55,6 +56,7 @@ from gene_corpus.sql.xref_index import (
 __all__ = [
     "SCHEMA_VERSION",
     "annotation_id_exists",
+    "apply_prune",
     "attach_shard",
     "build_tier_a_counts",
     "checkpoint_wal",
@@ -89,6 +91,7 @@ __all__ = [
     "shard_dir",
     "shard_sqlite_path",
     "shard_tmp_path",
+    "summarize_prune",
     "taxonomy_file_sha256",
     "tier_a_counts_n",
     "write_shard_meta",

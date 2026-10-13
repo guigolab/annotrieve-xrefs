@@ -5,7 +5,7 @@ import threading
 from contextlib import contextmanager
 from collections.abc import Iterator
 
-# Cap overlapping /hits work per gunicorn worker (RAM back-pressure).
+# Cap overlapping annotation-search work per gunicorn worker (RAM back-pressure).
 HITS_MAX_INFLIGHT = 16
 _HITS_SEMAPHORE = threading.Semaphore(HITS_MAX_INFLIGHT)
 

@@ -4,14 +4,14 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Sequence
 
-from helpers.pagination import MAX_CURIES_GET
-from helpers.source_codes import SOURCES_LEGEND, source_code
-from services.hits import (
+from helpers.match import (
     MATCH_ALL,
     MATCH_ANY,
-    _parse_hits_request,
+    parse_search_request,
     taxid_has_annotations,
 )
+from helpers.pagination import MAX_CURIES_GET
+from helpers.source_codes import SOURCES_LEGEND, source_code
 
 ANNOTATIONS_INDEX_FIELDS = [
     "annotation_id",
@@ -198,15 +198,12 @@ def list_hit_annotations_index(
     Same match / taxid semantics as ``list_hit_annotations``, without paging
     and without n_genes / matched / organism fields.
     """
-    match_mode, errors, by_key, _display_ids, _filter_f, taxid_i = (
-        _parse_hits_request(
-            curies, taxid=taxid, match=match, max_curies=max_curies
-        )
+    match_mode, errors, by_key, _display_ids, taxid_i = parse_search_request(
+        curies, taxid=taxid, match=match, max_curies=max_curies
     )
 
     def _envelope(*, rows: list) -> dict:
-        # Same errors / taxid rules as /hits and /hits/annotations:
-        # omit empty errors; echo taxid only when the request set it.
+        # Omit empty errors; echo taxid only when the request set it.
         out: dict = {
             "sources": dict(SOURCES_LEGEND),
             "fields": list(HITS_ANNOTATIONS_INDEX_FIELDS),

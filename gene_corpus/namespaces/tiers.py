@@ -103,6 +103,37 @@ TIER_B: frozenset[str] = frozenset(
 # Label-map / legacy sentinels — never emitted as gene_xref (not Tier A/B).
 _NEVER_XREF: frozenset[str] = frozenset({"product", "gff_id"})
 
+# API-facing searchable namespaces (presence search + catalogue). Harvest
+# still writes the full TIER_A set; the API filters to this allowlist.
+SEARCHABLE_NAMESPACES: frozenset[str] = frozenset(
+    {
+        "symbol",
+        "alias",
+        "geneid",
+        "go",
+        "pfam",
+        "interpro",
+        "rfam",
+        "mirbase",
+        "cdd",
+        "eggnog",
+        "uniprot/swiss-prot",
+        "ncbiortholog",
+    }
+)
+
+# Namespaces with label FTS (subset of SEARCHABLE_NAMESPACES).
+LABELED_SEARCH_NAMESPACES: frozenset[str] = frozenset(
+    {
+        "go",
+        "pfam",
+        "interpro",
+        "rfam",
+        "mirbase",
+        "uniprot/swiss-prot",
+    }
+)
+
 
 def include_in_v1(namespace: str) -> bool:
     """True when *namespace* belongs in the lean global SQL dry-run index."""

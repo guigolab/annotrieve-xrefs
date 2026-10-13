@@ -30,7 +30,7 @@ def _normalize_meta_accession(namespace: str, accession: str) -> str:
         go = normalize_go_token(accession)
         return go if go is not None else accession.strip()
     if namespace == "pfam":
-        # Labels are keyed unversioned (PF00001). The labels API aggregates
+        # Labels are keyed unversioned (PF00001). Terms browse aggregates
         # versioned xref_meta rows under that key (see _labels_meta_join).
         pfam = normalize_pfam_accession(accession)
         return pfam if pfam is not None else accession.strip()

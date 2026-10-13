@@ -10,8 +10,14 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from gene_corpus.namespaces.tiers import SEARCHABLE_NAMESPACES
 from gene_corpus.sql.per_gff import shard_sqlite_path
 from gene_corpus.sql.schema import checkpoint_wal
+
+
+def _searchable_ns_sql() -> tuple[str, list[str]]:
+    ns = sorted(SEARCHABLE_NAMESPACES)
+    return ",".join("?" for _ in ns), ns
 
 _TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS xref_file (
@@ -49,10 +55,11 @@ def index_annotation(
     annotation_id: str,
 ) -> bool:
     """
-    Copy one shard's ``tier_a_counts`` into ``xref_file``.
+    Copy searchable rows from one shard's ``tier_a_counts`` into ``xref_file``.
 
+    Only ``SEARCHABLE_NAMESPACES`` are written (API presence allowlist).
     Returns immediately when ``xref_file_status`` already has
-    ``annotation_key``. Zero Tier A rows record ``placed = 0`` and return
+    ``annotation_key``. Zero searchable rows record ``placed = 0`` and return
     False. One or more rows insert presence and record ``placed = 1``.
 
     TODO (return contract): False means both "already in xref_file_status"
@@ -78,8 +85,15 @@ def index_annotation(
 
     try:
         try:
+            placeholders, ns_list = _searchable_ns_sql()
             n = int(
-                conn.execute("SELECT COUNT(*) FROM shard.tier_a_counts").fetchone()[0]
+                conn.execute(
+                    f"""
+                    SELECT COUNT(*) FROM shard.tier_a_counts
+                    WHERE namespace IN ({placeholders})
+                    """,
+                    ns_list,
+                ).fetchone()[0]
             )
             if n == 0:
                 conn.execute(
@@ -91,12 +105,13 @@ def index_annotation(
                 return False
 
             conn.execute(
-                """
+                f"""
                 INSERT INTO xref_file (namespace, accession, annotation_key)
                 SELECT namespace, accession, ?
                 FROM shard.tier_a_counts
+                WHERE namespace IN ({placeholders})
                 """,
-                (key_i,),
+                (key_i, *ns_list),
             )
             conn.execute(
                 "INSERT INTO xref_file_status (annotation_key, placed) "

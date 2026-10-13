@@ -11,6 +11,7 @@ from gene_corpus.namespaces.labels import (
     namespace_for_projected_from,
 )
 from gene_corpus.namespaces.tiers import (
+    SEARCHABLE_NAMESPACES,
     TIER_A,
     TIER_B,
     include_in_local,
@@ -18,6 +19,7 @@ from gene_corpus.namespaces.tiers import (
 )
 
 __all__ = [
+    "SEARCHABLE_NAMESPACES",
     "TIER_A",
     "TIER_B",
     "NOISE_DBXREF_DBS",

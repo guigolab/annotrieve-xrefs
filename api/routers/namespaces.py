@@ -1,4 +1,4 @@
-"""Namespace and accession catalogue routes."""
+"""Namespace directory, /matches facet, and scoped terms routes."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
@@ -6,92 +6,86 @@ from fastapi import APIRouter, HTTPException, Query
 from helpers.cursor import QueryError
 from helpers.deps import corpus_conn
 from helpers.errors import http_error
-from helpers.pagination import DEFAULT_LIMIT, MAX_LIMIT, PAGE_TOKEN_DESC
+from helpers.pagination import DEFAULT_LIMIT, MAX_LIMIT, MAX_OFFSET, MIN_Q_LEN
 from services.namespaces import (
-    ACCESSION_SORTS,
-    LABEL_SORTS,
-    get_accession,
     get_namespace,
-    list_accessions,
-    list_labels,
+    get_term,
+    list_namespace_matches,
     list_namespaces,
+    list_terms,
 )
 
 router = APIRouter()
 
 
+@router.get("/matches")
+def get_matches(
+    q: str = Query(..., description="Search string (CURIE, id, symbol, or prose)"),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
+):
+    """
+    Namespace facet for *q*: which searchable namespaces match, with counts.
+
+    Every result includes ``match_count``. ``q`` is required.
+    """
+    try:
+        return list_namespace_matches(
+            corpus_conn(), q, limit=limit, offset=offset
+        )
+    except QueryError as exc:
+        raise HTTPException(status_code=400, detail=exc.as_detail()) from exc
+
+
 @router.get("/namespaces")
 def get_namespaces(
-    has_labels: bool | None = Query(
-        None,
-        description=(
-            "When set, keep only namespaces whose labels flag matches "
-            "(true = has a label collection; false = none)"
-        ),
-    ),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
 ):
-    """Namespaces present in the published gene corpus."""
-    return list_namespaces(corpus_conn(), has_labels=has_labels)
+    """Searchable namespaces present in the published gene corpus."""
+    return list_namespaces(corpus_conn(), limit=limit, offset=offset)
 
 
-@router.get("/namespaces/{namespace:path}/accessions/{accession:path}")
-def get_namespace_accession_item(namespace: str, accession: str):
-    """One accession summary in a namespace (GO / symbol normalized)."""
+@router.get("/namespaces/{namespace:path}/terms/{accession:path}")
+def get_namespace_term(namespace: str, accession: str):
+    """One term card (CURIE accession) in a searchable namespace."""
     if get_namespace(corpus_conn(), namespace) is None:
         raise http_error(
             404,
             "namespace_not_found",
             f"Unknown namespace: {namespace}",
         )
-    row = get_accession(corpus_conn(), namespace, accession)
+    row = get_term(corpus_conn(), namespace, accession)
     if row is None:
         raise http_error(
             404,
-            "accession_not_found",
-            f"Unknown accession: {accession}",
+            "term_not_found",
+            f"Unknown term: {accession}",
         )
     return row
 
 
-@router.get("/namespaces/{namespace:path}/accessions")
-def get_namespace_accessions(
+@router.get("/namespaces/{namespace:path}/terms")
+def get_namespace_terms(
     namespace: str,
-    sort: str = Query("n_genes"),
-    sort_order: str = Query("desc"),
-    accessions: str | None = Query(
+    q: str | None = Query(
         None,
         description=(
-            "Optional comma-separated accession values to keep "
-            "(normalized; GO padded to GO:#######)"
+            f"Filter terms (FTS for labeled ns; prefix/exact for identity; "
+            f"min {MIN_Q_LEN} chars when searching)"
         ),
     ),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    next: str | None = Query(None, description=PAGE_TOKEN_DESC),
-    previous: str | None = Query(None, description=PAGE_TOKEN_DESC),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
 ):
-    """Paginated accessions in one namespace."""
-    if sort not in ACCESSION_SORTS:
-        raise http_error(
-            400,
-            "invalid_sort",
-            f"sort must be one of: {', '.join(sorted(ACCESSION_SORTS))}",
-        )
-    if sort_order not in {"asc", "desc"}:
-        raise http_error(
-            400,
-            "invalid_sort_order",
-            "sort_order must be asc or desc",
-        )
+    """Paginated terms in one searchable namespace."""
     try:
-        page = list_accessions(
+        page = list_terms(
             corpus_conn(),
             namespace,
-            sort=sort,
-            sort_order=sort_order,
-            next=next,
-            previous=previous,
+            q=q,
             limit=limit,
-            accessions=accessions,
+            offset=offset,
         )
     except QueryError as exc:
         raise HTTPException(status_code=400, detail=exc.as_detail()) from exc
@@ -102,63 +96,6 @@ def get_namespace_accessions(
             f"Unknown namespace: {namespace}",
         )
     return page
-
-
-@router.get("/namespaces/{namespace:path}/labels")
-def get_namespace_labels(
-    namespace: str,
-    q: str | None = Query(
-        None,
-        description=(
-            "Optional substring filter on label/alias text "
-            "(FTS trigram; min 3 characters when set)"
-        ),
-    ),
-    sort: str = Query("label"),
-    sort_order: str = Query("asc"),
-    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    next: str | None = Query(None, description=PAGE_TOKEN_DESC),
-    previous: str | None = Query(None, description=PAGE_TOKEN_DESC),
-):
-    """Paginated labels for a namespace (browse all, or search with q)."""
-    stats = get_namespace(corpus_conn(), namespace)
-    if stats is None:
-        raise http_error(
-            404,
-            "namespace_not_found",
-            f"Unknown namespace: {namespace}",
-        )
-    if not stats["labels"]:
-        raise http_error(
-            404,
-            "labels_not_found",
-            f"No labels for namespace: {namespace}",
-        )
-    if sort not in LABEL_SORTS:
-        raise http_error(
-            400,
-            "invalid_sort",
-            f"sort must be one of: {', '.join(sorted(LABEL_SORTS))}",
-        )
-    if sort_order not in {"asc", "desc"}:
-        raise http_error(
-            400,
-            "invalid_sort_order",
-            "sort_order must be asc or desc",
-        )
-    try:
-        return list_labels(
-            corpus_conn(),
-            namespace,
-            q=q,
-            sort=sort,
-            sort_order=sort_order,
-            next=next,
-            previous=previous,
-            limit=limit,
-        )
-    except QueryError as exc:
-        raise HTTPException(status_code=400, detail=exc.as_detail()) from exc
 
 
 @router.get("/namespaces/{namespace:path}")

@@ -1,12 +1,14 @@
 """
 Root CLI dispatcher — use the split harvest / merge / sync / repair / labels
-entry points.
+/ index / prune_xref entry points.
 
     python -m gene_corpus.harvest --help
     python -m gene_corpus.merge --help
     python -m gene_corpus.sync --help
     python -m gene_corpus.repair --help
     python -m gene_corpus.labels --help
+    python -m gene_corpus.index --help
+    python -m gene_corpus.prune_xref --help
 """
 from __future__ import annotations
 
@@ -16,8 +18,8 @@ import sys
 def main(argv: list[str] | None = None) -> int:
     _ = argv
     print(
-        "gene_corpus: use separate harvest, merge, sync, repair, and labels "
-        "commands:\n"
+        "gene_corpus: use separate harvest, merge, sync, repair, labels, "
+        "index, and prune_xref commands:\n"
         "  python -m gene_corpus.harvest --work-dir DIR "
         "--files-root FILES [--annotation-id ID ...]\n"
         "  python -m gene_corpus.merge --work-dir DIR "
@@ -25,7 +27,9 @@ def main(argv: list[str] | None = None) -> int:
         "  python -m gene_corpus.sync --work-dir DIR "
         "--files-root FILES [--taxonomy-tsv PATH]\n"
         "  python -m gene_corpus.repair --work-dir DIR [--apply]\n"
-        "  python -m gene_corpus.labels --work-dir DIR [--namespace go]\n",
+        "  python -m gene_corpus.labels --work-dir DIR [--namespace go]\n"
+        "  python -m gene_corpus.index --work-dir DIR\n"
+        "  python -m gene_corpus.prune_xref --work-dir DIR [--apply]\n",
         file=sys.stderr,
     )
     return 2

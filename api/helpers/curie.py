@@ -10,13 +10,11 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from gene_corpus.namespaces.tiers import TIER_A  # noqa: E402
+from gene_corpus.namespaces.tiers import SEARCHABLE_NAMESPACES  # noqa: E402
 
 # Public prefix → SQL namespace (slash forms are not legal CURIE prefixes).
 PREFIX_TO_NAMESPACE: dict[str, str] = {
     "swiss-prot": "uniprot/swiss-prot",
-    "trembl": "uniprot/trembl",
-    "imgt": "imgt/gene-db",
 }
 
 # Namespaces whose accession is casefolded at harvest (symbol / alias).
@@ -54,8 +52,9 @@ def resolve_namespace(prefix: str) -> str | None:
     if not key:
         return None
     if key in PREFIX_TO_NAMESPACE:
-        return PREFIX_TO_NAMESPACE[key]
-    if key in TIER_A:
+        ns = PREFIX_TO_NAMESPACE[key]
+        return ns if ns in SEARCHABLE_NAMESPACES else None
+    if key in SEARCHABLE_NAMESPACES:
         return key
     return None
 
@@ -71,9 +70,9 @@ def normalize_accession(namespace: str, accession: str) -> str:
     if namespace in _CASEFOLD_NAMESPACES:
         return text.casefold()
     # Pfam: harvest/meta keep optional .version; labels are unversioned.
-    # /namespaces/pfam/labels aggregates meta under the unversioned key
+    # /namespaces/pfam/terms aggregates meta under the unversioned key
     # (see services.namespaces._labels_meta_join). Do not strip here —
-    # get_accession / hits must match the raw harvested accession.
+    # exact term lookup must match the raw harvested accession.
     return text
 
 

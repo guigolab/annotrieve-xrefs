@@ -187,10 +187,14 @@ def _init_global(path: Path) -> None:
         "INSERT INTO xref_file_status VALUES (?, ?)",
         [(1, 1), (2, 1)],
     )
-    # GO label collection for /namespaces/go/labels (browse + FTS).
-    conn.execute(
+    # Label collections for /namespaces/{ns}/terms (browse + FTS/accession).
+    conn.executemany(
         "INSERT INTO xref_label VALUES (?, ?, ?)",
-        ("go", "GO:0008150", "biological_process"),
+        [
+            ("go", "GO:0008150", "biological_process"),
+            # Text omits the accession so id search proves the accession arm.
+            ("interpro", "IPR002117", "p53-like"),
+        ],
     )
     conn.execute(
         "INSERT INTO xref_label_alias VALUES (?, ?, ?)",
@@ -203,6 +207,7 @@ def _init_global(path: Path) -> None:
             [
                 ("go", "GO:0008150", "biological_process"),
                 ("go", "GO:0008150", "biological process"),
+                ("interpro", "IPR002117", "p53-like"),
             ],
         )
     except sqlite3.OperationalError:

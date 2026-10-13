@@ -1,29 +1,35 @@
 # annotrieve-xrefs
 
-Search genes across [Annotrieve](https://genome.crg.es/annotrieve) annotations by accession — gene symbol, Gene Ontology term, UniProt id, and other cross-references.
+Search [Annotrieve](https://genome.crg.es/annotrieve) annotations by cross-reference — gene symbol, Gene Ontology, Pfam, UniProt, and related feature ids.
 
 **Base URL:** `https://genome.crg.es/annotrieve-xrefs/api/v1`
 
-This service is a sidecar to Annotrieve. Annotrieve still owns the main annotation catalogue; this API owns gene-level search and per-annotation gene/xref cards.
+This service is a sidecar to Annotrieve. Annotrieve owns the main annotation catalogue; this API owns **feature → annotation** search and per-annotation gene/xref drill-in. It is not a replacement for NCBI Gene or Ensembl.
 
 Typical flow:
 
-1. **Catalogue** — browse namespaces and accessions (`/namespaces…`)
-2. **Search** — find matching loci or annotations (`/hits`, `/hits/annotations`)
-3. **Drill in** — open one annotation’s genes and their xrefs (`/annotations/{id}/genes…`)
+1. **Discover** — `GET /matches?q=` (which namespaces match) then `GET /namespaces/{ns}/terms?q=` (pick CURIEs)
+2. **Search annotations** — `GET|POST /annotations?curies=…` (presence; compact heatmap rows)
+3. **Drill in** — `GET /annotations/{id}/genes…` and `…/xrefs`
 
 ---
 
 ## Pagination
 
-List endpoints return opaque `next` and `previous` page tokens. Pass one back as the matching query parameter (or POST body field). Do not send both at once.
+Paged list endpoints use **`limit`**, **`offset`**, and exact **`total`**:
+
+```json
+{ "total": 814, "limit": 100, "offset": 0, "results": [ … ] }
+```
 
 - Default `limit` is **100**; maximum is **200**.
-- Tokens are bound to the request filters (`curies`, `taxid`, `accessions`, `q`, sort). Changing filters while reusing a token returns **400** with `cursor_filter_mismatch` — start again from the first page.
+- Maximum `offset` is **10_000**.
 
-Failed responses use a common envelope: `{"detail": {"code": "...", "message": "..."}}` (optional extras such as `max` / `errors`). Framework validation failures are **422** with `code=validation_error`.
+Bulk annotation catalogue / presence search use a compact `fields` + `rows` payload (no offset paging).
 
-Production also applies modest rate limits (**3 req/s per IP**, ~**20 req/s** globally). Saturated `/hits` concurrency returns **503** with `Retry-After: 1`.
+Failed responses: `{"detail": {"code": "...", "message": "..."}}`. Validation failures are **422** with `code=validation_error`.
+
+Production rate limits: **3 req/s per IP**, ~**20 req/s** globally. Saturated annotation search concurrency returns **503** with `Retry-After: 1`.
 
 ---
 
@@ -34,16 +40,26 @@ Search ids use Compact URIs: `prefix:accession` (first colon splits prefix from 
 | Prefix in the request | Stored namespace |
 |---|---|
 | `swiss-prot` | `uniprot/swiss-prot` |
-| `trembl` | `uniprot/trembl` |
-| `imgt` | `imgt/gene-db` |
-| any Tier A name (e.g. `symbol`, `go`, `hgnc`) | same name |
+| any searchable name (e.g. `symbol`, `go`, `pfam`) | same name |
 
 Normalization:
 
 - **GO** — short forms pad to seven digits (`GO:8150` → `GO:0008150`).
 - **symbol / alias** — accessions are casefolded (`TP53` → `tp53`).
 
-Unknown prefixes are reported in the `errors` array on `/hits` and on `/annotations/…/genes?curies=…` (results for valid CURIEs still return under `match=any`).
+Only **searchable** namespaces are accepted as CURIE prefixes. Unknown prefixes appear in the `errors` array on `/annotations?curies=…` and on `/annotations/…/genes?curies=…` (valid CURIEs still return under `match=any`).
+
+---
+
+## Searchable namespaces
+
+API catalogue and CURIE search are limited to:
+
+`symbol`, `alias`, `geneid`, `go`, `pfam`, `interpro`, `rfam`, `mirbase`, `cdd`, `eggnog`, `uniprot/swiss-prot`, `ncbiortholog`
+
+Other harvested namespaces (Ensembl, model-organism DBs, TrEMBL, …) may still appear on **per-gene xref chips** inside a shard, but are not global search facets.
+
+Namespaces with a label collection (GO, Pfam, InterPro, Rfam, miRBase, Swiss-Prot) report `"labels": true` on `/namespaces` and `/matches`.
 
 ---
 
@@ -53,436 +69,156 @@ Paths below are relative to the base URL.
 
 ### `GET /namespaces`
 
-List namespaces present in the published corpus.
-
-Each row includes a human-readable `name` and a `labels` flag. `labels` is
-`true` when the published corpus has at least one `xref_label` row for that
-namespace (loaded via the labels CLI; see [Building the corpus](#building-the-corpus)).
+Directory of searchable namespaces present in the corpus. Fixed shape (no `q`, no `match_count`).
 
 | Parameter | Notes |
 |---|---|
-| `has_labels` | Optional. `true` keeps namespaces with a label collection; `false` keeps those without. Omit for all. |
+| `limit`, `offset` | Pagination |
 
 ```json
 {
   "total": 4,
+  "limit": 100,
+  "offset": 0,
   "results": [
     {"namespace": "alias", "name": "Gene synonym", "accession_count": 1, "labels": false},
-    {"namespace": "go", "name": "Gene Ontology", "accession_count": 1, "labels": false},
+    {"namespace": "go", "name": "Gene Ontology", "accession_count": 1, "labels": true},
     {"namespace": "symbol", "name": "Gene symbol", "accession_count": 1, "labels": false}
-  ],
-  "next": null,
-  "previous": null
+  ]
 }
 ```
 
 ### `GET /namespaces/{namespace}`
 
-One namespace summary.
+One namespace summary (same fields as a directory row). Slash namespaces work in the path (e.g. `/namespaces/uniprot/swiss-prot`).
 
-```json
-{"namespace": "symbol", "name": "Gene symbol", "accession_count": 1, "labels": false}
-```
+### `GET /matches`
 
-Slash namespaces work in the path (e.g. `/namespaces/uniprot/swiss-prot`).
+**Namespace facet** for a query string. `q` is required. Every result includes **`match_count`**.
 
-### `GET /namespaces/{namespace}/accessions`
-
-Paginated accessions in a namespace.
+Labeled namespaces match on label text **or** accession (Pfam free-text accepts versioned or unversioned ids).
 
 | Parameter | Notes |
 |---|---|
-| `sort` | `n_genes` (default), `n_annotations`, or `accession` |
-| `sort_order` | `desc` (default) or `asc` |
-| `accessions` | Optional CSV filter (normalized; max 20 values) |
-| `limit`, `next`, `previous` | Pagination |
+| `q` | CURIE, numeric id, symbol token, or prose (min 3 chars except CURIE / digits) |
+| `limit`, `offset` | Pagination over matching namespaces |
+
+```http
+GET /matches?q=kinase
+```
 
 ```json
 {
-  "total": 1,
+  "total": 2,
+  "limit": 100,
+  "offset": 0,
   "results": [
-    {
-      "namespace": "symbol",
-      "accession": "tp53",
-      "n_annotations": 2,
-      "n_genes": 2
-    }
-  ],
-  "next": null,
-  "previous": null
+    {"namespace": "go", "name": "Gene Ontology", "accession_count": 23999, "labels": true, "match_count": 512},
+    {"namespace": "interpro", "name": "InterPro", "accession_count": 60651, "labels": true, "match_count": 814}
+  ]
 }
 ```
 
-### `GET /namespaces/{namespace}/accessions/{accession}`
+### `GET /namespaces/{namespace}/terms`
 
-One accession card (`n_annotations`, `n_genes`). GO and symbol/alias forms are normalized the same way as CURIEs.
-
-```json
-{
-  "namespace": "go",
-  "accession": "GO:0008150",
-  "n_annotations": 2,
-  "n_genes": 2
-}
-```
-
-### `GET /namespaces/{namespace}/labels`
-
-Paginated human-readable labels for a namespace that has a label collection
-(`labels: true` on `/namespaces`). Omit `q` to browse; pass `q` to substring-search
-label and alias text (FTS5 trigram; at least 3 characters).
+Paged terms in one searchable namespace.
 
 | Parameter | Notes |
 |---|---|
-| `q` | Optional. Substring filter on label/alias text (min 3 chars when set) |
-| `sort` | `label` (default), `n_genes`, `n_annotations`, or `accession` |
-| `sort_order` | `asc` (default) or `desc` |
-| `limit`, `next`, `previous` | Pagination |
-
-Unknown namespace → `404` `namespace_not_found`. Namespace with no labels →
-`404` `labels_not_found`.
+| `q` | Optional for labeled namespaces (browse; FTS or accession); required for symbol/alias/geneid/… |
+| `limit`, `offset` | Pagination; `total` is exact |
 
 ```json
 {
   "namespace": "go",
   "total": 1,
   "limit": 100,
+  "offset": 0,
   "results": [
     {
+      "curie": "go:GO:0008150",
+      "namespace": "go",
       "accession": "GO:0008150",
       "label": "biological_process",
       "n_annotations": 2,
       "n_genes": 2
     }
-  ],
-  "next": null,
-  "previous": null
+  ]
 }
 ```
 
-### `GET` / `POST /hits`
+### `GET /namespaces/{namespace}/terms/{accession}`
 
-Cross-annotation **locus** hits: one row per matching gene in an annotation.
+One term card (`curie`, `label`, counts). GO / symbol forms are normalized like CURIEs.
 
-| | GET | POST |
-|---|---|---|
-| CURIEs | `curies` CSV query param | JSON `{"curies": [...]}` |
-| Max CURIEs | **20** | **100** |
-| Optional | `taxid`, `match`, `limit`, `next`, `previous` | same fields in the body |
+### `GET` / `POST /annotations`
 
-`taxid` keeps annotations whose taxonomy lineage includes that NCBI id (species or ancestor).
+Without `curies`: **placement catalogue** for the heatmap (annotations with at least one Tier A xref in `xref_file`).
 
-`match` selects how multiple CURIEs combine (`any` is the default):
-
-- **`any`** — a gene matches if it carries **any** of the CURIEs (union).
-- **`all`** — a gene matches only if it carries **every** CURIE (intersection on the same locus).
-
-Under `match=all`, an unknown prefix or an accession absent from the corpus yields an empty page (plus `errors` for bad prefixes). Changing `match` invalidates page tokens from a previous request.
+With `curies`: **presence search** — annotations that carry the CURIEs (`match=any|all`, optional `taxid`). Same compact payload.
 
 ```http
-GET /hits?curies=symbol:tp53,alias:tp53&taxid=40674
+GET /annotations
+GET /annotations?curies=symbol:tp53&taxid=9606&match=any
+POST /annotations
+{"curies": ["symbol:tp53", "GO:0008150"], "match": "all", "taxid": 9606}
 ```
 
 ```json
 {
-  "taxid": 40674,
-  "results": [
-    {
-      "annotation_id": "ann-human",
-      "local_id": 10,
-      "seqid": "NC_000017.11",
-      "start": 7661779,
-      "end": 7687550,
-      "strand": "-",
-      "primary_name": "TP53",
-      "matched": ["symbol:tp53", "alias:tp53"]
-    }
-  ],
-  "next": null,
-  "previous": null,
-  "errors": []
-}
-```
-
-### `GET` / `POST /hits/annotations`
-
-Same CURIE inputs and `match` / `taxid` options as `/hits`, but **one row per annotation**: how many distinct genes matched, and which CURIEs hit.
-
-- **`match=any`** — the annotation has at least one of the CURIEs.
-- **`match=all`** — the annotation has every CURIE (each may be on a different gene).
-
-`n_genes` is the distinct count of genes that matched at least one of the CURIEs.
-
-Use this when you need a list of annotations first; use `/hits` when you need individual loci.
-
-```http
-GET /hits/annotations?curies=symbol:tp53
-```
-
-```json
-{
-  "results": [
-    {
-      "annotation_id": "ann-human",
-      "n_genes": 1,
-      "matched": ["symbol:tp53"]
-    },
-    {
-      "annotation_id": "ann-mouse",
-      "n_genes": 1,
-      "matched": ["symbol:tp53"]
-    }
-  ],
-  "next": null,
-  "previous": null
-}
-```
-
-### `GET` / `POST /hits/annotations/index`
-
-Same `curies`, `match`, and `taxid` as `/hits/annotations`, and the same GET/POST CURIE caps (**20** / **100**). Returns the **full** match set in one response (no `limit` / `next` / `previous`).
-
-Presence comes from the `xref_file` index (one row per accession per annotation), not from a `gene_hit` locus scan. Build that index with `python -m gene_corpus.index` (see [Building the corpus](#building-the-corpus)).
-
-- **`match=any`** — the annotation has at least one of the CURIEs.
-- **`match=all`** — the annotation has every CURIE (annotation-level; not same-locus).
-
-Response shape is a compact tuple list. `errors` and `taxid` follow the other hits routes: omit `errors` when there are none; include `taxid` only when the request set it.
-
-```http
-GET /hits/annotations/index?curies=symbol:tp53&taxid=9606
-```
-
-```json
-{
-  "taxid": 9606,
   "sources": {"1": "Ensembl", "2": "GenBank", "3": "RefSeq"},
   "fields": ["annotation_id", "annotation_key", "taxid", "source"],
   "rows": [["ann-human", 1, 9606, 3]]
 }
 ```
 
-`source` is an integer code for `source_database` (`1` Ensembl, `2` GenBank, `3` RefSeq, `0` other). Join to `GET /annotations/index` on `annotation_key` for organism and assembly labels.
+Catalogue-only response also includes `organism_name` and `assembly_accession` in `fields` / `rows`, plus `n_without_tier_a`.
 
-### `GET /annotations/index`
-
-Placement catalogue for annotations that have at least one Tier A xref in the presence index (`xref_file_status.placed = 1`). No filters and no paging. Ordered by `annotation_key` (use that value as the client slot). Built by `python -m gene_corpus.index`.
-
-```http
-GET /annotations/index
-```
-
-```json
-{
-  "n_without_tier_a": 0,
-  "sources": {"1": "Ensembl", "2": "GenBank", "3": "RefSeq"},
-  "fields": ["annotation_id", "annotation_key", "organism_name", "assembly_accession", "taxid", "source"],
-  "rows": [["ann-human", 1, "Homo sapiens", "GCA_000001405", 9606, 3]]
-}
-```
-
-`n_without_tier_a` counts indexed annotations with no Tier A xrefs (`placed = 0`). Annotations not yet indexed are absent until the index script runs.
+Join presence rows to the catalogue on `annotation_key`. Built by `python -m gene_corpus.index`.
 
 ### `GET /annotations/{annotation_id}/namespaces`
 
-Namespaces present on one annotation’s shard (Tier A and Tier B), with distinct accession counts. Same result item shape as `GET /namespaces`, plus `annotation_id`.
-
-```http
-GET /annotations/ann-human/namespaces
-```
-
-```json
-{
-  "annotation_id": "ann-human",
-  "total": 4,
-  "limit": 4,
-  "results": [
-    {"namespace": "alias", "accession_count": 1},
-    {"namespace": "ensembl_transcript", "accession_count": 1},
-    {"namespace": "go", "accession_count": 1},
-    {"namespace": "symbol", "accession_count": 2}
-  ],
-  "next": null,
-  "previous": null
-}
-```
+Namespaces present on one annotation’s shard (Tier A and chip namespaces), with distinct accession counts.
 
 ### `GET /annotations/{annotation_id}/genes`
 
-Browse genes inside one annotation’s gene corpus (not Annotrieve’s annotation catalogue).
+Browse / filter genes inside one annotation.
 
 | Parameter | Notes |
 |---|---|
-| `q` | Casefold **prefix** match on `primary_name` (max 64 chars). Not a CURIE. |
-| `curies` | Optional comma-separated CURIEs (xref filter via `gene_xref`). Cap 20. |
-| `match` | `any` (union, default) or `all` (intersection). Only used with `curies`. |
-| `limit`, `next`, `previous` | Pagination |
-
-When both `q` and `curies` are set, a gene must satisfy both. Unknown prefixes appear in `errors` (same objects as `/hits`).
-
-```http
-GET /annotations/ann-human/genes?curies=symbol:tp53
-```
-
-```json
-{
-  "annotation_id": "ann-human",
-  "results": [
-    {
-      "annotation_id": "ann-human",
-      "local_id": 10,
-      "seqid": "NC_000017.11",
-      "start": 7661779,
-      "end": 7687550,
-      "strand": "-",
-      "primary_name": "TP53",
-      "prose": "tumor protein p53"
-    }
-  ],
-  "next": null,
-  "previous": null
-}
-```
+| `q` | Casefold **prefix** on `primary_name` (max 64 chars) |
+| `curies` | Optional CSV CURIEs via `gene_xref` (cap 20) |
+| `match` | `any` (default) or `all` (with `curies`) |
+| `limit`, `offset` | Pagination; response includes exact `total` |
 
 ### `GET /annotations/{annotation_id}/genes/{local_id}`
 
-One gene card (coordinates, name, prose). No embedded xrefs — use the xrefs route below.
-
-```json
-{
-  "annotation_id": "ann-human",
-  "local_id": 10,
-  "strand": "-",
-  "primary_name": "TP53",
-  "prose": "tumor protein p53"
-}
-```
+One gene card (coordinates, name, prose).
 
 ### `GET /annotations/{annotation_id}/genes/{local_id}/xrefs`
 
-Paginated cross-reference chips for one gene (Tier A and Tier B namespaces stored on the shard).
-
-```json
-{
-  "annotation_id": "ann-human",
-  "local_id": 10,
-  "results": [
-    {"namespace": "alias", "accession": "tp53"},
-    {"namespace": "go", "accession": "GO:0008150"},
-    {"namespace": "symbol", "accession": "tp53"}
-  ],
-  "next": null,
-  "previous": null
-}
-```
-
----
-
-## Indexed namespaces
-
-### Tier A — global search
-
-These namespaces appear in the catalogue (`/namespaces`) and power `/hits` / `/hits/annotations`.
-
-**Identity**
-
-`symbol`, `alias`, `geneid`
-
-**Domains / families / ontology**
-
-`interpro`, `pfam`, `go`, `goa`, `rfam`, `cdd`, `tigrfam`, `ncbiortholog`, `jgidb`, `phytozome`, `mirbase`
-
-**Model / community databases**
-
-`hgnc`, `mgi`, `rgd`, `zfin`, `vgnc`, `flybase`, `wormbase`, `sgd`, `tair`, `xenbase`, `dictybase`, `vectorbase`, `pombase`, `rap-db`, `araport`, `beebase`, `beetlebase`, `bgd`, `aphidbase`, `cgd`, `genedb`, `mim`, `marpolbase`, `apidb_toxodb`, `apidb_cryptodb`, `apidb_plasmodb`, `imgt/gene-db`, `ensembl`, `ensemblgenomes`, `cgnc`, `fungidb`, `i5knal`, `nasoniabase`
-
-**UniProt**
-
-`uniprot/swiss-prot` (CURIE prefix `swiss-prot`), `uniprot/trembl` (prefix `trembl`), `uniprotkb`
-
-**eggNOG / COG**
-
-`eggnog`, `cog`
-
-### Tier B — per-annotation only
-
-Kept on each annotation’s gene shard (visible via gene xref chips and local browse) but **not** in the global hit index.
-
-`locus_tag`, `ncbi_gp`, `refseq_protein`, `protein_id`, `ensembl_protein`, `genbank`, `ensembl_transcript`, `ensemblgenomes-tr`, `refseq_transcript`, `submitter_transcript`, `submitter_protein`, `ccds`, `vista`, `pseudo`, `dbsnp`, `pdb`, `pir`, `hssp`, `hmp`, `insdc_protein`, `refseq_mrna`, `pathema`
+Paginated xref chips for one gene (`limit` / `offset` / `total`).
 
 ---
 
 ## Building the corpus
 
-The searchable index is built in three steps:
-
-1. **Harvest** — walk published annotations and their GFF files; extract genes and cross-references into one small database per annotation.
-2. **Merge** — combine those per-annotation databases into the global search index the API serves (namespace catalogue, hit lookup, taxonomy).
-3. **Index** (optional for heatmaps) — copy each shard’s Tier A accession list into `xref_file` for `/annotations/index` and `/hits/annotations/index`.
-
-Harvest can run incrementally as new annotations appear. Merge rebuilds the searchable corpus from whatever per-annotation databases exist.
-
-```mermaid
-flowchart LR
-  report[Annotrieve report and GFFs]
-  harvest[Harvest]
-  shards[Per-annotation databases]
-  merge[Merge]
-  global[Global search index]
-  index[Presence index]
-  api[API]
-  report --> harvest --> shards --> merge --> global --> index --> api
-```
-
-### Presence index
-
-After merge, build annotation presence for the compact index routes:
+1. **Harvest** — per-annotation gene / xref shards  
+2. **Merge** — global `gene_corpus.sqlite` (catalogue, meta, optional `gene_hit`)  
+3. **Index** — `xref_file` presence for `/annotations`  
+4. **Labels** (optional) — `xref_label` / FTS for prose discovery  
 
 ```bash
 PYTHONPATH=. python -m gene_corpus.index --work-dir /path/to/gene_corpus
+PYTHONPATH=. python -m gene_corpus.labels --work-dir /path/to/gene_corpus
 ```
-
-Skips annotations already recorded in `xref_file_status`. Annotations with no Tier A xrefs are marked `placed = 0` and omitted from `GET /annotations/index`.
-
-### Labels (optional sidecar)
-
-After merge, load human-readable names into `xref_label` / `xref_label_alias`
-for accessions already present in `xref_meta`:
-
-```bash
-PYTHONPATH=. python -m gene_corpus.labels \
-  --work-dir /path/to/gene_corpus \
-  --namespace go \
-  --namespace mirbase \
-  --namespace rfam \
-  --namespace interpro \
-  --namespace pfam \
-  --namespace uniprot/swiss-prot
-```
-
-Omit `--namespace` to load all registered providers. Downloads are cached under
-`WORK_DIR/label_cache` (override with `--cache-dir`; refresh with
-`--force-download`). Loading all providers downloads Swiss-Prot FASTA (~94 MB).
-
-| Namespace | Source |
-|---|---|
-| `go` | Gene Ontology `go-basic.obo` (incl. obsolete terms) |
-| `mirbase` | miRBase `database_files` (precursor + mature + dead); falls back to RNAcentral `mirbase.tsv` if mirbase.org is unreachable |
-| `rfam` | Rfam `family.txt` + `dead_family.txt` dumps |
-| `interpro` | InterPro `entry.list` + `short_names.dat` (ENTRY_TYPE not indexed) |
-| `pfam` | Pfam `Pfam-A.clans.tsv.gz` (description + short id; clan not indexed) |
-| `uniprot/swiss-prot` | UniProt `uniprot_sprot.fasta.gz` (reviewed only; streamed) |
-
-Namespaces with loaded labels report `"labels": true` on `/namespaces`.
 
 ---
 
 ## Appendix: local development
 
 ```bash
-# Optional: point at a published corpus directory
 export GENE_CORPUS_HOST_DIR=/path/to/gene_corpus
-
 docker compose -f docker-compose-dev.yml up --build
 ```
 

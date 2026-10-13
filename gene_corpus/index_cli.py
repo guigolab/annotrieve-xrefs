@@ -17,9 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Build xref_file from per_gff/*/genes.sqlite tier_a_counts "
-            "(annotation presence for /annotations/index and "
-            "/hits/annotations/index). Skips keys already in "
-            "xref_file_status."
+            "(SEARCHABLE_NAMESPACES only; presence for GET /annotations). "
+            "Skips keys already in xref_file_status."
         )
     )
     parser.add_argument(

@@ -1,28 +1,34 @@
-"""Namespace and accession queries over gene_corpus.sqlite."""
+"""Namespace directory, /matches facet, and scoped /terms queries."""
 from __future__ import annotations
 
+import re
 import sqlite3
 
-from helpers.curie import normalize_accession
-from helpers.cursor import (
-    QueryError,
-    decode_accessions_cursor,
-    decode_labels_cursor,
-    encode_accessions_cursor,
-    encode_labels_cursor,
-    filter_fingerprint,
-    resolve_page_token,
+from helpers.curie import (
+    CurieError,
+    format_curie,
+    normalize_accession,
+    parse_curie,
 )
+from helpers.cursor import QueryError
 from helpers.namespace_names import namespace_name
 from helpers.pagination import (
     DEFAULT_LIMIT,
-    MAX_ACCESSIONS_FILTER,
+    MIN_Q_LEN,
     clamp_limit,
+    clamp_offset,
+    page_envelope,
 )
 
-ACCESSION_SORTS = frozenset({"accession", "n_annotations", "n_genes"})
-LABEL_SORTS = frozenset({"label", "accession", "n_annotations", "n_genes"})
-MIN_LABEL_Q_LEN = 3
+from gene_corpus.labels.providers.pfam import (  # noqa: E402
+    normalize_pfam_accession,
+)
+from gene_corpus.namespaces.tiers import (  # noqa: E402
+    LABELED_SEARCH_NAMESPACES,
+    SEARCHABLE_NAMESPACES,
+)
+
+_DIGITS_RE = re.compile(r"^\d+$")
 
 
 def _fts_match_query(q: str) -> str:
@@ -37,7 +43,6 @@ def _namespaces_with_labels(conn: sqlite3.Connection) -> set[str]:
             "SELECT DISTINCT namespace FROM xref_label"
         ).fetchall()
     except sqlite3.OperationalError:
-        # Older/minimal DBs may lack the sidecar tables.
         return set()
     return {str(row["namespace"]) for row in rows}
 
@@ -53,11 +58,19 @@ def _namespace_row(
     }
 
 
+def _is_searchable(namespace: str) -> bool:
+    return namespace in SEARCHABLE_NAMESPACES
+
+
 def list_namespaces(
     conn: sqlite3.Connection,
     *,
-    has_labels: bool | None = None,
+    limit: int = DEFAULT_LIMIT,
+    offset: int = 0,
 ) -> dict:
+    """Allowlisted namespaces present in namespace_stats (fixed shape)."""
+    limit = clamp_limit(limit)
+    offset = clamp_offset(offset)
     labeled = _namespaces_with_labels(conn)
     rows = conn.execute(
         """
@@ -66,26 +79,25 @@ def list_namespaces(
         ORDER BY namespace
         """
     ).fetchall()
-    results = [
+    all_rows = [
         _namespace_row(
             row["namespace"],
             row["accession_count"],
             labels=row["namespace"] in labeled,
         )
         for row in rows
+        if _is_searchable(str(row["namespace"]))
     ]
-    if has_labels is not None:
-        results = [row for row in results if row["labels"] is has_labels]
-    return {
-        "total": len(results),
-        "limit": len(results),
-        "results": results,
-        "next": None,
-        "previous": None,
-    }
+    total = len(all_rows)
+    page = all_rows[offset : offset + limit]
+    return page_envelope(
+        total=total, limit=limit, offset=offset, results=page
+    )
 
 
 def get_namespace(conn: sqlite3.Connection, namespace: str) -> dict | None:
+    if not _is_searchable(namespace):
+        return None
     row = conn.execute(
         """
         SELECT namespace, accession_count
@@ -104,284 +116,198 @@ def get_namespace(conn: sqlite3.Connection, namespace: str) -> dict | None:
     )
 
 
-def _accessions_page_sql(
-    *,
-    sort: str,
-    sort_order: str,
-    direction: str | None,
-) -> tuple[str, str]:
-    """Return (where_extra_sql, order_sql) for accession keyset pages."""
-    descending = sort_order == "desc"
-    # Public sort n_genes maps to SQL column n_loci.
-    count_col = "n_loci" if sort == "n_genes" else "n_annotations"
-
-    if sort == "accession":
-        if direction is None:
-            order = "accession DESC" if descending else "accession ASC"
-            return "", order
-        if direction == "next":
-            if descending:
-                return "AND accession < ?", "accession DESC"
-            return "AND accession > ?", "accession ASC"
-        if descending:
-            return "AND accession > ?", "accession ASC"
-        return "AND accession < ?", "accession DESC"
-
-    # sort == n_genes or n_annotations; stable tie-break accession ASC.
-    if direction is None:
-        if descending:
-            return "", f"{count_col} DESC, accession ASC"
-        return "", f"{count_col} ASC, accession ASC"
-
-    if direction == "next":
-        if descending:
-            return (
-                f"AND ({count_col} < ? OR ({count_col} = ? AND accession > ?))",
-                f"{count_col} DESC, accession ASC",
-            )
-        return (
-            f"AND ({count_col} > ? OR ({count_col} = ? AND accession > ?))",
-            f"{count_col} ASC, accession ASC",
-        )
-
-    if descending:
-        return (
-            f"AND ({count_col} > ? OR ({count_col} = ? AND accession < ?))",
-            f"{count_col} ASC, accession DESC",
-        )
-    return (
-        f"AND ({count_col} < ? OR ({count_col} = ? AND accession < ?))",
-        f"{count_col} DESC, accession DESC",
-    )
-
-
-def parse_accession_filter(
-    raw: str,
-    *,
-    namespace: str,
-    max_accessions: int = MAX_ACCESSIONS_FILTER,
-) -> list[str]:
-    """Parse CSV accession filter; normalize and dedupe (order preserved)."""
-    pieces: list[str] = []
-    for part in str(raw).split(","):
-        text = part.strip()
-        if text:
-            pieces.append(text)
-    if len(pieces) > max_accessions:
-        raise QueryError(
-            f"accessions accepts at most {max_accessions} values",
-            code="too_many_accessions",
-            max=max_accessions,
-            received=len(pieces),
-        )
-    out: list[str] = []
-    seen: set[str] = set()
-    for piece in pieces:
-        canon = normalize_accession(namespace, piece)
-        if canon not in seen:
-            seen.add(canon)
-            out.append(canon)
-    return out
-
-
-def get_accession(
-    conn: sqlite3.Connection,
-    namespace: str,
-    accession: str,
-) -> dict | None:
-    """O(1) xref_meta lookup; None if namespace or accession is unknown."""
-    if get_namespace(conn, namespace) is None:
-        return None
-    canon = normalize_accession(namespace, accession)
+def _meta_exact_count(
+    conn: sqlite3.Connection, namespace: str, accession: str
+) -> int:
     row = conn.execute(
         """
-        SELECT namespace, accession, n_annotations, n_loci
-        FROM xref_meta
+        SELECT 1 FROM xref_meta
         WHERE namespace = ? AND accession = ?
+        LIMIT 1
         """,
-        (namespace, canon),
+        (namespace, accession),
     ).fetchone()
-    if row is None:
-        return None
-    return {
-        "namespace": row["namespace"],
-        "accession": row["accession"],
-        "n_annotations": int(row["n_annotations"]),
-        "n_genes": int(row["n_loci"]),
-    }
+    return 1 if row is not None else 0
 
 
-def list_accessions(
+def _meta_prefix_count(
+    conn: sqlite3.Connection, namespace: str, prefix: str
+) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS n FROM xref_meta
+        WHERE namespace = ? AND accession >= ? AND accession < ?
+        """,
+        (namespace, prefix, prefix + "\uffff"),
+    ).fetchone()
+    return int(row["n"])
+
+
+def _labeled_accession_prefix(namespace: str, q: str) -> str:
+    """Prefix for xref_label.accession matching (Pfam strips .version)."""
+    prefix = normalize_accession(namespace, q)
+    if namespace == "pfam":
+        stripped = normalize_pfam_accession(prefix)
+        if stripped is not None:
+            return stripped
+    return prefix
+
+
+def _labeled_match_count(
+    conn: sqlite3.Connection, namespace: str, q: str
+) -> int:
+    """Distinct label accessions matching FTS text or accession prefix."""
+    prefix = _labeled_accession_prefix(namespace, q)
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM (
+                SELECT accession
+                FROM xref_label_fts
+                WHERE namespace = ? AND text MATCH ?
+                UNION
+                SELECT accession
+                FROM xref_label
+                WHERE namespace = ?
+                  AND accession >= ?
+                  AND accession < ?
+            )
+            """,
+            (
+                namespace,
+                _fts_match_query(q),
+                namespace,
+                prefix,
+                prefix + "\uffff",
+            ),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        # FTS unavailable — accession prefix only
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM xref_label
+            WHERE namespace = ?
+              AND accession >= ?
+              AND accession < ?
+            """,
+            (namespace, prefix, prefix + "\uffff"),
+        ).fetchone()
+    return int(row["n"])
+
+
+def _match_count_for_namespace(
+    conn: sqlite3.Connection, namespace: str, q: str
+) -> int:
+    """Exact hit count for one searchable namespace and query string."""
+    if namespace in LABELED_SEARCH_NAMESPACES:
+        return _labeled_match_count(conn, namespace, q)
+    if namespace in {"symbol", "alias"}:
+        prefix = normalize_accession(namespace, q)
+        return _meta_prefix_count(conn, namespace, prefix)
+    if namespace in {"geneid", "ncbiortholog"}:
+        canon = normalize_accession(namespace, q)
+        return _meta_exact_count(conn, namespace, canon)
+    # cdd, eggnog, …
+    canon = normalize_accession(namespace, q)
+    return _meta_prefix_count(conn, namespace, canon)
+
+
+def list_namespace_matches(
     conn: sqlite3.Connection,
-    namespace: str,
+    q: str,
     *,
-    sort: str = "n_genes",
-    sort_order: str = "desc",
-    next: str | None = None,
-    previous: str | None = None,
     limit: int = DEFAULT_LIMIT,
-    accessions: str | None = None,
-) -> dict | None:
-    stats = get_namespace(conn, namespace)
-    if stats is None:
-        return None
+    offset: int = 0,
+) -> dict:
+    """
+    Facet: which searchable namespaces match *q* (always includes match_count).
+    """
+    text = (q or "").strip()
+    if not text:
+        raise QueryError("q is required", code="q_required")
 
-    column = sort if sort in ACCESSION_SORTS else "n_genes"
-    order = "asc" if (sort_order or "").lower() == "asc" else "desc"
     limit = clamp_limit(limit)
+    offset = clamp_offset(offset)
+    labeled = _namespaces_with_labels(conn)
 
-    filter_vals: list[str] | None = None
-    if accessions is not None and str(accessions).strip() != "":
-        filter_vals = parse_accession_filter(accessions, namespace=namespace)
-
-    filter_f = filter_fingerprint(
-        {
-            "sort": column,
-            "sort_order": order,
-            "accessions": list(filter_vals) if filter_vals is not None else [],
-        }
-    )
-
-    direction, page_token = resolve_page_token(next=next, previous=previous)
-    bound_n: int | None = None
-    bound_a: str | None = None
-    if page_token is not None:
-        bound_n, bound_a = decode_accessions_cursor(
-            page_token,
-            sort=column,
-            sort_order=order,
-            filter_f=filter_f,
+    # CURIE → single namespace
+    if ":" in text:
+        try:
+            namespace, accession = parse_curie(text)
+        except CurieError as exc:
+            raise QueryError(str(exc), code=exc.code) from exc
+        count = _meta_exact_count(conn, namespace, accession)
+        results = []
+        if count > 0:
+            stats = get_namespace(conn, namespace)
+            if stats is not None:
+                results.append({**stats, "match_count": count})
+        return page_envelope(
+            total=len(results),
+            limit=limit,
+            offset=offset,
+            results=results[offset : offset + limit],
         )
 
-    where_extra, order_sql = _accessions_page_sql(
-        sort=column, sort_order=order, direction=direction
-    )
-    params: list = [namespace]
-    filter_sql = ""
-    if filter_vals is not None:
-        if not filter_vals:
-            return {
-                "namespace": namespace,
-                "total": 0,
-                "limit": limit,
-                "results": [],
-                "next": None,
-                "previous": None,
-            }
-        placeholders = ",".join("?" for _ in filter_vals)
-        filter_sql = f"AND accession IN ({placeholders})"
-        params.extend(filter_vals)
+    # Digits → geneid (and ncbiortholog if present as exact)
+    if _DIGITS_RE.fullmatch(text):
+        hits: list[dict] = []
+        for ns in ("geneid", "ncbiortholog"):
+            count = _meta_exact_count(conn, ns, text)
+            if count > 0:
+                stats = get_namespace(conn, ns)
+                if stats is not None:
+                    hits.append({**stats, "match_count": count})
+        hits.sort(key=lambda r: r["namespace"])
+        return page_envelope(
+            total=len(hits),
+            limit=limit,
+            offset=offset,
+            results=hits[offset : offset + limit],
+        )
 
-    if direction is not None:
-        assert bound_a is not None and bound_n is not None
-        if column == "accession":
-            params.append(bound_a)
-        else:
-            params.extend([bound_n, bound_n, bound_a])
+    if len(text) < MIN_Q_LEN:
+        raise QueryError(
+            f"q must be at least {MIN_Q_LEN} characters",
+            code="q_too_short",
+            min_length=MIN_Q_LEN,
+        )
 
-    rows = conn.execute(
-        f"""
-        SELECT accession, n_annotations, n_loci
-        FROM xref_meta
-        WHERE namespace = ?
-        {filter_sql}
-        {where_extra}
-        ORDER BY {order_sql}
-        LIMIT ?
-        """,
-        [*params, limit + 1],
-    ).fetchall()
-
-    going_prev = direction == "prev"
-    has_more_in_scan = len(rows) > limit
-    rows = rows[:limit]
-    if going_prev:
-        rows = list(reversed(rows))
-
-    results = [
-        {
-            "accession": row["accession"],
-            "n_annotations": int(row["n_annotations"]),
-            "n_genes": int(row["n_loci"]),
-        }
-        for row in rows
-    ]
-
-    def _sort_value(item: dict) -> int:
-        if column == "accession":
-            return 0
-        return int(item["n_genes" if column == "n_genes" else "n_annotations"])
-
-    next_token = None
-    prev_token = None
-    if results:
-        first = results[0]
-        last = results[-1]
-        if going_prev:
-            if has_more_in_scan:
-                prev_token = encode_accessions_cursor(
-                    sort=column,
-                    sort_order=order,
-                    sort_value=_sort_value(first),
-                    accession=first["accession"],
-                    filter_f=filter_f,
-                )
-            next_token = encode_accessions_cursor(
-                sort=column,
-                sort_order=order,
-                sort_value=_sort_value(last),
-                accession=last["accession"],
-                filter_f=filter_f,
-            )
-        else:
-            if has_more_in_scan:
-                next_token = encode_accessions_cursor(
-                    sort=column,
-                    sort_order=order,
-                    sort_value=_sort_value(last),
-                    accession=last["accession"],
-                    filter_f=filter_f,
-                )
-            if direction == "next":
-                prev_token = encode_accessions_cursor(
-                    sort=column,
-                    sort_order=order,
-                    sort_value=_sort_value(first),
-                    accession=first["accession"],
-                    filter_f=filter_f,
-                )
-
-    if filter_vals is not None:
-        total_row = conn.execute(
-            f"""
-            SELECT COUNT(*) AS n
-            FROM xref_meta
-            WHERE namespace = ?
-            AND accession IN ({",".join("?" for _ in filter_vals)})
-            """,
-            [namespace, *filter_vals],
-        ).fetchone()
-        total = int(total_row["n"])
-    else:
-        total = stats["accession_count"]
-
-    return {
-        "namespace": namespace,
-        "total": total,
-        "limit": limit,
-        "results": results,
-        "next": next_token,
-        "previous": prev_token,
+    # Directory rows for allowlisted ns present in stats
+    stats_rows = {
+        str(row["namespace"]): int(row["accession_count"])
+        for row in conn.execute(
+            "SELECT namespace, accession_count FROM namespace_stats"
+        )
+        if _is_searchable(str(row["namespace"]))
     }
+
+    hits = []
+    for namespace in sorted(stats_rows):
+        count = _match_count_for_namespace(conn, namespace, text)
+        if count <= 0:
+            continue
+        hits.append(
+            {
+                **_namespace_row(
+                    namespace,
+                    stats_rows[namespace],
+                    labels=namespace in labeled,
+                ),
+                "match_count": count,
+            }
+        )
+
+    return page_envelope(
+        total=len(hits),
+        limit=limit,
+        offset=offset,
+        results=hits[offset : offset + limit],
+    )
 
 
 def _labels_meta_join(namespace: str) -> tuple[str, list]:
-    """
-    Return ``(join_sql, params)`` after ``FROM xref_label l``.
-
-    Pfam labels are keyed unversioned (``PF00001``) while ``xref_meta`` may
-    keep ``PF00001.15``; aggregate version spellings under the unversioned key.
-    """
     if namespace == "pfam":
         return (
             """
@@ -413,263 +339,218 @@ def _labels_meta_join(namespace: str) -> tuple[str, list]:
     )
 
 
-def _labels_page_sql(
+def _term_row(
+    namespace: str,
+    accession: str,
     *,
-    sort: str,
-    sort_order: str,
-    direction: str | None,
-) -> tuple[str, str]:
-    """Return (where_extra_sql, order_sql) for labels keyset pages."""
-    descending = sort_order == "desc"
-    count_col = "n_loci" if sort == "n_genes" else "n_annotations"
-    # Qualified columns from xref_label l LEFT JOIN xref_meta m.
-    acc = "l.accession"
-    lab = "l.label"
-    # COALESCE so NULL meta sorts as 0.
-    cnt = f"COALESCE(m.{count_col}, 0)"
+    label: str | None,
+    n_annotations: int,
+    n_genes: int,
+) -> dict:
+    return {
+        "curie": format_curie(namespace, accession),
+        "namespace": namespace,
+        "accession": accession,
+        "label": label,
+        "n_annotations": int(n_annotations),
+        "n_genes": int(n_genes),
+    }
 
-    if sort == "accession":
-        if direction is None:
-            order = f"{acc} DESC" if descending else f"{acc} ASC"
-            return "", order
-        if direction == "next":
-            if descending:
-                return f"AND {acc} < ?", f"{acc} DESC"
-            return f"AND {acc} > ?", f"{acc} ASC"
-        if descending:
-            return f"AND {acc} > ?", f"{acc} ASC"
-        return f"AND {acc} < ?", f"{acc} DESC"
 
-    if sort == "label":
-        if direction is None:
-            if descending:
-                return "", f"{lab} DESC, {acc} ASC"
-            return "", f"{lab} ASC, {acc} ASC"
-        if direction == "next":
-            if descending:
-                return (
-                    f"AND ({lab} < ? OR ({lab} = ? AND {acc} > ?))",
-                    f"{lab} DESC, {acc} ASC",
-                )
-            return (
-                f"AND ({lab} > ? OR ({lab} = ? AND {acc} > ?))",
-                f"{lab} ASC, {acc} ASC",
-            )
-        if descending:
-            return (
-                f"AND ({lab} > ? OR ({lab} = ? AND {acc} < ?))",
-                f"{lab} ASC, {acc} DESC",
-            )
-        return (
-            f"AND ({lab} < ? OR ({lab} = ? AND {acc} < ?))",
-            f"{lab} DESC, {acc} DESC",
-        )
+def get_term(
+    conn: sqlite3.Connection,
+    namespace: str,
+    accession: str,
+) -> dict | None:
+    """One term card from xref_meta (+ label when present)."""
+    if not _is_searchable(namespace):
+        return None
+    if get_namespace(conn, namespace) is None:
+        return None
+    canon = normalize_accession(namespace, accession)
+    row = conn.execute(
+        """
+        SELECT namespace, accession, n_annotations, n_loci
+        FROM xref_meta
+        WHERE namespace = ? AND accession = ?
+        """,
+        (namespace, canon),
+    ).fetchone()
+    if row is None:
+        return None
 
-    # sort == n_genes or n_annotations; stable tie-break accession ASC.
-    if direction is None:
-        if descending:
-            return "", f"{cnt} DESC, {acc} ASC"
-        return "", f"{cnt} ASC, {acc} ASC"
+    label = None
+    try:
+        lab = conn.execute(
+            """
+            SELECT label FROM xref_label
+            WHERE namespace = ? AND accession = ?
+            """,
+            (namespace, row["accession"]),
+        ).fetchone()
+        if lab is not None:
+            label = str(lab["label"])
+    except sqlite3.OperationalError:
+        pass
 
-    if direction == "next":
-        if descending:
-            return (
-                f"AND ({cnt} < ? OR ({cnt} = ? AND {acc} > ?))",
-                f"{cnt} DESC, {acc} ASC",
-            )
-        return (
-            f"AND ({cnt} > ? OR ({cnt} = ? AND {acc} > ?))",
-            f"{cnt} ASC, {acc} ASC",
-        )
-
-    if descending:
-        return (
-            f"AND ({cnt} > ? OR ({cnt} = ? AND {acc} < ?))",
-            f"{cnt} ASC, {acc} DESC",
-        )
-    return (
-        f"AND ({cnt} < ? OR ({cnt} = ? AND {acc} < ?))",
-        f"{cnt} DESC, {acc} DESC",
+    return _term_row(
+        namespace,
+        str(row["accession"]),
+        label=label,
+        n_annotations=int(row["n_annotations"]),
+        n_genes=int(row["n_loci"]),
     )
 
 
-def list_labels(
+def list_terms(
     conn: sqlite3.Connection,
     namespace: str,
     *,
     q: str | None = None,
-    sort: str = "label",
-    sort_order: str = "asc",
-    next: str | None = None,
-    previous: str | None = None,
     limit: int = DEFAULT_LIMIT,
-) -> dict:
+    offset: int = 0,
+) -> dict | None:
     """
-    Paginated labels for a namespace that already has ``labels: true``.
+    Paged terms in one searchable namespace.
 
-    Caller must verify the namespace exists and has label rows.
+    Returns None when the namespace is unknown / not searchable.
     """
-    column = sort if sort in LABEL_SORTS else "label"
-    order = "asc" if (sort_order or "").lower() == "asc" else "desc"
+    stats = get_namespace(conn, namespace)
+    if stats is None:
+        return None
+
     limit = clamp_limit(limit)
+    offset = clamp_offset(offset)
+    q_text = q.strip() if q is not None and str(q).strip() else None
 
-    q_text: str | None = None
-    if q is not None and str(q).strip() != "":
-        q_text = str(q).strip()
-        if len(q_text) < MIN_LABEL_Q_LEN:
+    # Labeled namespaces: FTS or full label browse
+    if namespace in LABELED_SEARCH_NAMESPACES and stats["labels"]:
+        if q_text is not None and len(q_text) < MIN_Q_LEN:
             raise QueryError(
-                f"q must be at least {MIN_LABEL_Q_LEN} characters",
-                code="invalid_q",
-                min_length=MIN_LABEL_Q_LEN,
+                f"q must be at least {MIN_Q_LEN} characters",
+                code="q_too_short",
+                min_length=MIN_Q_LEN,
             )
-
-    filter_f = filter_fingerprint(
-        {
-            "sort": column,
-            "sort_order": order,
-            "q": q_text or "",
-        }
-    )
-
-    direction, page_token = resolve_page_token(next=next, previous=previous)
-    bound_key: int | str | None = None
-    bound_a: str | None = None
-    if page_token is not None:
-        bound_key, bound_a = decode_labels_cursor(
-            page_token,
-            sort=column,
-            sort_order=order,
-            filter_f=filter_f,
-        )
-
-    where_extra, order_sql = _labels_page_sql(
-        sort=column, sort_order=order, direction=direction
-    )
-
-    meta_join, meta_params = _labels_meta_join(namespace)
-    fts_sql = ""
-    params: list = [*meta_params, namespace]
-    if q_text is not None:
-        fts_sql = (
-            "AND l.accession IN ("
-            "SELECT DISTINCT accession FROM xref_label_fts "
-            "WHERE namespace = ? AND text MATCH ?"
-            ")"
-        )
-        params.extend([namespace, _fts_match_query(q_text)])
-
-    if direction is not None:
-        assert bound_a is not None and bound_key is not None
-        if column == "accession":
-            params.append(bound_a)
+        meta_join, meta_params = _labels_meta_join(namespace)
+        q_filter = ""
+        params: list = [*meta_params, namespace]
+        if q_text is not None:
+            prefix = _labeled_accession_prefix(namespace, q_text)
+            q_filter = """
+                AND l.accession IN (
+                    SELECT accession
+                    FROM xref_label_fts
+                    WHERE namespace = ? AND text MATCH ?
+                    UNION
+                    SELECT accession
+                    FROM xref_label
+                    WHERE namespace = ?
+                      AND accession >= ?
+                      AND accession < ?
+                )
+            """
+            params.extend(
+                [
+                    namespace,
+                    _fts_match_query(q_text),
+                    namespace,
+                    prefix,
+                    prefix + "\uffff",
+                ]
+            )
+            total = _labeled_match_count(conn, namespace, q_text)
         else:
-            # label / count sorts: (key, key, accession)
-            params.extend([bound_key, bound_key, bound_a])
+            total_row = conn.execute(
+                "SELECT COUNT(*) AS n FROM xref_label WHERE namespace = ?",
+                (namespace,),
+            ).fetchone()
+            total = int(total_row["n"])
 
+        rows = conn.execute(
+            f"""
+            SELECT
+                l.accession AS accession,
+                l.label AS label,
+                COALESCE(m.n_annotations, 0) AS n_annotations,
+                COALESCE(m.n_loci, 0) AS n_loci
+            FROM xref_label l
+            {meta_join}
+            WHERE l.namespace = ?
+            {q_filter}
+            ORDER BY l.label ASC, l.accession ASC
+            LIMIT ? OFFSET ?
+            """,
+            [*params, limit, offset],
+        ).fetchall()
+        results = [
+            _term_row(
+                namespace,
+                str(row["accession"]),
+                label=str(row["label"]),
+                n_annotations=int(row["n_annotations"]),
+                n_genes=int(row["n_loci"]),
+            )
+            for row in rows
+        ]
+        return page_envelope(
+            total=total,
+            limit=limit,
+            offset=offset,
+            results=results,
+            namespace=namespace,
+        )
+
+    # Identity / id-like: require q
+    if q_text is None:
+        raise QueryError(
+            "q is required for this namespace",
+            code="q_required",
+        )
+    if namespace in {"geneid", "ncbiortholog"}:
+        # exact only
+        term = get_term(conn, namespace, q_text)
+        results = [term] if term is not None else []
+        return page_envelope(
+            total=len(results),
+            limit=limit,
+            offset=offset,
+            results=results[offset : offset + limit],
+            namespace=namespace,
+        )
+
+    if len(q_text) < MIN_Q_LEN and namespace in {"symbol", "alias"}:
+        raise QueryError(
+            f"q must be at least {MIN_Q_LEN} characters",
+            code="q_too_short",
+            min_length=MIN_Q_LEN,
+        )
+
+    prefix = normalize_accession(namespace, q_text)
+    total = _meta_prefix_count(conn, namespace, prefix)
     rows = conn.execute(
-        f"""
-        SELECT
-            l.accession AS accession,
-            l.label AS label,
-            COALESCE(m.n_annotations, 0) AS n_annotations,
-            COALESCE(m.n_loci, 0) AS n_loci
-        FROM xref_label l
-        {meta_join}
-        WHERE l.namespace = ?
-        {fts_sql}
-        {where_extra}
-        ORDER BY {order_sql}
-        LIMIT ?
+        """
+        SELECT accession, n_annotations, n_loci
+        FROM xref_meta
+        WHERE namespace = ? AND accession >= ? AND accession < ?
+        ORDER BY n_annotations DESC, accession ASC
+        LIMIT ? OFFSET ?
         """,
-        [*params, limit + 1],
+        (namespace, prefix, prefix + "\uffff", limit, offset),
     ).fetchall()
-
-    going_prev = direction == "prev"
-    has_more_in_scan = len(rows) > limit
-    rows = rows[:limit]
-    if going_prev:
-        rows = list(reversed(rows))
-
     results = [
-        {
-            "accession": row["accession"],
-            "label": row["label"],
-            "n_annotations": int(row["n_annotations"]),
-            "n_genes": int(row["n_loci"]),
-        }
+        _term_row(
+            namespace,
+            str(row["accession"]),
+            label=None,
+            n_annotations=int(row["n_annotations"]),
+            n_genes=int(row["n_loci"]),
+        )
         for row in rows
     ]
-
-    def _cursor_sort_value(item: dict) -> int | str:
-        if column == "label":
-            return item["label"]
-        if column == "accession":
-            return 0
-        return int(item["n_genes" if column == "n_genes" else "n_annotations"])
-
-    next_token = None
-    prev_token = None
-    if results:
-        first = results[0]
-        last = results[-1]
-        if going_prev:
-            if has_more_in_scan:
-                prev_token = encode_labels_cursor(
-                    sort=column,
-                    sort_order=order,
-                    sort_value=_cursor_sort_value(first),
-                    accession=first["accession"],
-                    filter_f=filter_f,
-                )
-            next_token = encode_labels_cursor(
-                sort=column,
-                sort_order=order,
-                sort_value=_cursor_sort_value(last),
-                accession=last["accession"],
-                filter_f=filter_f,
-            )
-        else:
-            if has_more_in_scan:
-                next_token = encode_labels_cursor(
-                    sort=column,
-                    sort_order=order,
-                    sort_value=_cursor_sort_value(last),
-                    accession=last["accession"],
-                    filter_f=filter_f,
-                )
-            if direction == "next":
-                prev_token = encode_labels_cursor(
-                    sort=column,
-                    sort_order=order,
-                    sort_value=_cursor_sort_value(first),
-                    accession=first["accession"],
-                    filter_f=filter_f,
-                )
-
-    if q_text is not None:
-        total_row = conn.execute(
-            """
-            SELECT COUNT(DISTINCT accession) AS n
-            FROM xref_label_fts
-            WHERE namespace = ? AND text MATCH ?
-            """,
-            (namespace, _fts_match_query(q_text)),
-        ).fetchone()
-        total = int(total_row["n"])
-    else:
-        total_row = conn.execute(
-            "SELECT COUNT(*) AS n FROM xref_label WHERE namespace = ?",
-            (namespace,),
-        ).fetchone()
-        total = int(total_row["n"])
-
-    return {
-        "namespace": namespace,
-        "total": total,
-        "limit": limit,
-        "results": results,
-        "next": next_token,
-        "previous": prev_token,
-    }
-
-
+    return page_envelope(
+        total=total,
+        limit=limit,
+        offset=offset,
+        results=results,
+        namespace=namespace,
+    )
