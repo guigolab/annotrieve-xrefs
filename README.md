@@ -66,7 +66,7 @@ Paths below are relative to the base URL.
 
 ### `GET` / `POST /hits`
 
-**Gene-name presence search** (primary API). Names are matched against **symbol ∪ alias** (casefolded). Optional trailing `*` expands a prefix (min 3 characters before `*`; at most 100 accessions or `422 prefix_too_broad`).
+**Gene-name presence search** (primary API). Names are matched against **symbol ∪ alias** (casefolded). Optional trailing `*` expands a prefix (min 3 characters before `*`; at most 500 accessions or `422 prefix_too_broad`).
 
 | Parameter | Notes |
 |---|---|
