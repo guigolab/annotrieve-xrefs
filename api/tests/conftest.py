@@ -158,6 +158,11 @@ def _init_global(path: Path) -> None:
         [
             ("symbol", "tp53", 2, 2),
             ("alias", "tp53", 1, 1),
+            ("alias", "sepp1", 1, 1),
+            ("symbol", "selenop", 1, 1),
+            ("symbol", "gpx4", 2, 2),
+            ("symbol", "gpx4a", 1, 1),
+            ("symbol", "gpx4b", 1, 1),
             ("go", "GO:0008150", 2, 2),
             ("interpro", "IPR002117", 1, 1),
         ],
@@ -165,10 +170,10 @@ def _init_global(path: Path) -> None:
     conn.executemany(
         "INSERT INTO namespace_stats VALUES (?, ?)",
         [
-            ("alias", 1),
+            ("alias", 2),
             ("go", 1),
             ("interpro", 1),
-            ("symbol", 1),
+            ("symbol", 5),
         ],
     )
     # Presence index (mirrors gene_hit annotation set; no locus column).
@@ -177,6 +182,12 @@ def _init_global(path: Path) -> None:
         [
             ("symbol", "tp53", 1),
             ("alias", "tp53", 1),
+            ("alias", "sepp1", 1),
+            ("symbol", "selenop", 1),
+            ("symbol", "gpx4", 1),
+            ("symbol", "gpx4", 2),
+            ("symbol", "gpx4a", 1),
+            ("symbol", "gpx4b", 2),
             ("go", "GO:0008150", 1),
             ("interpro", "IPR002117", 1),
             ("symbol", "tp53", 2),
@@ -187,31 +198,6 @@ def _init_global(path: Path) -> None:
         "INSERT INTO xref_file_status VALUES (?, ?)",
         [(1, 1), (2, 1)],
     )
-    # Label collections for /namespaces/{ns}/terms (browse + FTS/accession).
-    conn.executemany(
-        "INSERT INTO xref_label VALUES (?, ?, ?)",
-        [
-            ("go", "GO:0008150", "biological_process"),
-            # Text omits the accession so id search proves the accession arm.
-            ("interpro", "IPR002117", "p53-like"),
-        ],
-    )
-    conn.execute(
-        "INSERT INTO xref_label_alias VALUES (?, ?, ?)",
-        ("go", "GO:0008150", "biological process"),
-    )
-    try:
-        conn.executemany(
-            "INSERT INTO xref_label_fts (namespace, accession, text) "
-            "VALUES (?, ?, ?)",
-            [
-                ("go", "GO:0008150", "biological_process"),
-                ("go", "GO:0008150", "biological process"),
-                ("interpro", "IPR002117", "p53-like"),
-            ],
-        )
-    except sqlite3.OperationalError:
-        pass
     conn.commit()
     conn.close()
 

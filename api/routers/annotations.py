@@ -1,19 +1,15 @@
-"""Annotation catalogue, presence search, and per-annotation gene routes."""
+"""Per-annotation gene and xref routes (shard-backed)."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Path, Query
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 
-from helpers.concurrency import BusyError, hits_slot
 from helpers.cursor import QueryError
-from helpers.deps import annotation_shard, corpus_conn
+from helpers.deps import annotation_shard
 from helpers.errors import error_detail, http_error
 from helpers.match import MATCH_ANY
 from helpers.pagination import (
     DEFAULT_LIMIT,
     MAX_CURIES_GET,
-    MAX_CURIES_POST,
     MAX_LIMIT,
     MAX_OFFSET,
 )
@@ -23,85 +19,8 @@ from services.annotations import (
     list_annotation_namespaces,
     list_gene_xrefs,
 )
-from services.index import list_annotations_index, list_hit_annotations_index
 
 router = APIRouter()
-
-_MATCH_DESC = "any (union, default) or all (intersection)"
-
-
-class AnnotationsSearchBody(BaseModel):
-    """JSON body for ``POST /annotations`` presence search."""
-
-    curies: list[str]
-    taxid: int | None = Field(default=None, ge=1)
-    match: str = Field(default=MATCH_ANY, description=_MATCH_DESC)
-
-
-def _busy_response() -> JSONResponse:
-    return JSONResponse(
-        status_code=503,
-        content={
-            "detail": error_detail(
-                "hits_busy",
-                "too many concurrent search requests; retry shortly",
-            )
-        },
-        headers={"Retry-After": "1"},
-    )
-
-
-@router.get("/annotations")
-def get_annotations(
-    curies: str | None = Query(
-        None,
-        description="Comma-separated CURIEs for presence filter",
-    ),
-    taxid: int | None = Query(
-        None,
-        ge=1,
-        description="Optional NCBI taxid (species or ancestor)",
-    ),
-    match: str = Query(MATCH_ANY, description=_MATCH_DESC),
-):
-    """
-    Placement catalogue, or presence-filtered rows when ``curies`` is set.
-
-    Compact ``fields`` / ``rows`` / ``sources`` payload (heatmap-oriented).
-    """
-    if curies is None or not str(curies).strip():
-        return list_annotations_index(corpus_conn())
-    try:
-        with hits_slot():
-            return list_hit_annotations_index(
-                corpus_conn(),
-                curies,
-                taxid=taxid,
-                match=match,
-                max_curies=MAX_CURIES_GET,
-            )
-    except BusyError:
-        return _busy_response()
-    except QueryError as exc:
-        raise HTTPException(status_code=400, detail=exc.as_detail()) from exc
-
-
-@router.post("/annotations")
-def post_annotations(body: AnnotationsSearchBody):
-    """Presence search for a larger CURIE list (JSON body)."""
-    try:
-        with hits_slot():
-            return list_hit_annotations_index(
-                corpus_conn(),
-                body.curies,
-                taxid=body.taxid,
-                match=body.match,
-                max_curies=MAX_CURIES_POST,
-            )
-    except BusyError:
-        return _busy_response()
-    except QueryError as exc:
-        raise HTTPException(status_code=400, detail=exc.as_detail()) from exc
 
 
 @router.get("/annotations/{annotation_id}/namespaces")
