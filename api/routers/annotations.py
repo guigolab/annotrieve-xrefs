@@ -9,10 +9,10 @@ from helpers.errors import error_detail, http_error
 from helpers.match import MATCH_ANY
 from helpers.pagination import (
     DEFAULT_LIMIT,
-    MAX_CURIES_GET,
     MAX_LIMIT,
     MAX_OFFSET,
 )
+
 from services.annotations import (
     get_gene,
     list_annotation_genes,
@@ -21,6 +21,24 @@ from services.annotations import (
 )
 
 router = APIRouter()
+
+_MATCH_DESC = "any (union over terms, default) or all (intersection over terms)"
+
+# Validation-style QueryError codes → HTTP 422 (align with /hits)
+_VALIDATION_CODES = frozenset(
+    {
+        "names_required",
+        "too_many_names",
+        "prefix_too_short",
+        "prefix_too_broad",
+        "invalid_match",
+    }
+)
+
+
+def _http_for_query_error(exc: QueryError) -> HTTPException:
+    status = 422 if exc.code in _VALIDATION_CODES else 400
+    return HTTPException(status_code=status, detail=exc.as_detail())
 
 
 @router.get("/annotations/{annotation_id}/namespaces")
@@ -36,39 +54,31 @@ def get_annotation_namespaces(annotation_id: str):
 @router.get("/annotations/{annotation_id}/genes")
 def get_annotation_genes(
     annotation_id: str,
-    q: str | None = Query(
+    names: str | None = Query(
         None,
         description=(
-            "Optional casefold prefix match on primary_name (max 64 chars)"
+            "Comma-separated gene names; optional trailing * for prefix "
+            "(symbol∪alias)"
         ),
     ),
-    curies: str | None = Query(
-        None,
-        description="Comma-separated CURIEs, e.g. symbol:tp53,GO:0008150",
-    ),
-    match: str = Query(
-        MATCH_ANY,
-        description="any (union, default) or all (intersection); only with curies",
-    ),
+    match: str = Query(MATCH_ANY, description=_MATCH_DESC),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0, le=MAX_OFFSET),
 ):
-    """Paginated gene cards for one annotation (optional q / curies filters)."""
+    """Paginated gene cards for one annotation (optional names filter)."""
     conn = annotation_shard(annotation_id)
     try:
         try:
             return list_annotation_genes(
                 conn,
                 annotation_id,
-                q=q,
-                curies=curies,
+                names=names,
                 match=match,
                 limit=limit,
                 offset=offset,
-                max_curies=MAX_CURIES_GET,
             )
         except QueryError as exc:
-            raise HTTPException(status_code=400, detail=exc.as_detail()) from exc
+            raise _http_for_query_error(exc) from exc
         except ValueError as exc:
             raise HTTPException(
                 status_code=400,
@@ -120,7 +130,7 @@ def get_annotation_gene(
     """One gene locus card from this annotation's gene corpus shard."""
     conn = annotation_shard(annotation_id)
     try:
-        row = get_gene(conn, local_id, annotation_id=annotation_id)
+        row = get_gene(conn, local_id)
     finally:
         conn.close()
     if row is None:

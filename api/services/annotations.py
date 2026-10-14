@@ -5,13 +5,17 @@ import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 
-from helpers.curie import CurieError, format_curie, parse_curie
 from helpers.cursor import QueryError
-from helpers.match import MATCH_ANY, parse_curie_list, parse_match
+from helpers.match import MATCH_ALL, MATCH_ANY, MatchMode, parse_match
+from helpers.names import (
+    MAX_PREFIX_EXPAND,
+    parse_name_list,
+    split_name_term,
+)
 from helpers.paths import per_gff_root, shard_genes_path
 from helpers.pagination import (
     DEFAULT_LIMIT,
-    MAX_CURIES_GET,
+    MAX_NAMES_GET,
     clamp_limit,
     clamp_offset,
     page_envelope,
@@ -20,7 +24,6 @@ from helpers.session import GeneCorpusUnavailable
 from helpers.strand import format_strand
 
 _SHARD_CACHE_SIZE = -16384  # 16 MiB
-MAX_Q_CHARS = 64
 
 _GENE_COLS = (
     "local_id, source_gene_id, feature_type, seqid, start, end, "
@@ -59,9 +62,8 @@ def open_shard(
     return conn
 
 
-def _gene_card(row: sqlite3.Row, *, annotation_id: str) -> dict:
+def _gene_card(row: sqlite3.Row) -> dict:
     return {
-        "annotation_id": annotation_id,
         "local_id": int(row["local_id"]),
         "source_gene_id": row["source_gene_id"],
         "feature_type": row["feature_type"],
@@ -79,8 +81,6 @@ def _gene_card(row: sqlite3.Row, *, annotation_id: str) -> dict:
 def get_gene(
     conn: sqlite3.Connection,
     local_id: int,
-    *,
-    annotation_id: str,
 ) -> dict | None:
     """Return one gene card, or None if missing."""
     if local_id < 0:
@@ -95,7 +95,7 @@ def get_gene(
     ).fetchone()
     if row is None:
         return None
-    return _gene_card(row, annotation_id=annotation_id)
+    return _gene_card(row)
 
 
 def gene_exists(conn: sqlite3.Connection, local_id: int) -> bool:
@@ -148,22 +148,13 @@ def list_gene_xrefs(
         }
         for row in rows
     ]
+    # annotation_id / local_id are path context only; not echoed.
+    _ = annotation_id
     return page_envelope(
         total=total,
         limit=limit,
         offset=offset,
         results=results,
-        annotation_id=annotation_id,
-        local_id=int(local_id),
-    )
-
-
-def _escape_like(text: str) -> str:
-    """Escape ``\\``, ``%``, and ``_`` for SQLite LIKE with ESCAPE '\\'."""
-    return (
-        text.replace("\\", "\\\\")
-        .replace("%", "\\%")
-        .replace("_", "\\_")
     )
 
 
@@ -176,6 +167,8 @@ def list_annotation_namespaces(
 
     ``accession_count`` is the number of distinct accessions per namespace.
     """
+    # annotation_id is path context only; not echoed in the payload.
+    _ = annotation_id
     rows = conn.execute(
         """
         SELECT namespace, COUNT(DISTINCT accession) AS accession_count
@@ -196,135 +189,214 @@ def list_annotation_namespaces(
         limit=len(results),
         offset=0,
         results=results,
-        annotation_id=annotation_id,
     )
 
 
-def _resolve_name_prefix(q: str | None) -> str | None:
-    """Optional casefold prefix for ``primary_name`` (not a CURIE)."""
-    if q is None:
-        return None
-    text = q.strip()
-    if not text:
-        return None
-    if len(text) > MAX_Q_CHARS:
+def _expand_name_prefix(conn: sqlite3.Connection, prefix: str) -> list[str]:
+    """
+    Distinct symbol∪alias accessions with accession prefix on this shard.
+
+    Raises ``prefix_too_broad`` when more than ``MAX_PREFIX_EXPAND`` match.
+    """
+    rows = conn.execute(
+        """
+        SELECT DISTINCT accession
+        FROM gene_xref
+        WHERE namespace IN ('symbol', 'alias')
+          AND accession >= ?
+          AND accession < ?
+        ORDER BY accession ASC
+        LIMIT ?
+        """,
+        (prefix, prefix + "\uffff", MAX_PREFIX_EXPAND + 1),
+    ).fetchall()
+    if len(rows) > MAX_PREFIX_EXPAND:
         raise QueryError(
-            f"q accepts at most {MAX_Q_CHARS} characters",
-            code="q_too_long",
-            max=MAX_Q_CHARS,
-            received=len(text),
+            f"prefix expands to more than {MAX_PREFIX_EXPAND} accessions",
+            code="prefix_too_broad",
+            max=MAX_PREFIX_EXPAND,
+            expanded=len(rows),
+            prefix=prefix,
         )
-    return text.casefold()
+    return [str(r["accession"]) for r in rows]
 
 
-def _parse_gene_curies(
-    curies: str | Sequence[str] | None,
+def _local_ids_for_accessions(
+    conn: sqlite3.Connection, accessions: list[str]
+) -> set[int]:
+    """local_ids with any symbol/alias accession in ``accessions``."""
+    if not accessions:
+        return set()
+    placeholders = ",".join("?" for _ in accessions)
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT local_id
+        FROM gene_xref
+        WHERE namespace IN ('symbol', 'alias')
+          AND accession IN ({placeholders})
+        """,
+        accessions,
+    ).fetchall()
+    return {int(row["local_id"]) for row in rows}
+
+
+def _resolve_name_terms(
+    conn: sqlite3.Connection,
+    names: str | Sequence[str],
     *,
-    match: str | None,
-    max_curies: int,
-) -> tuple[str, list[dict], dict[tuple[str, str], list[str]], list[str]]:
+    match: MatchMode,
+    max_names: int,
+) -> tuple[list[dict], set[int]]:
     """
-    Parse optional ``curies`` + ``match`` for the genes list.
+    Expand ``names`` into term specs and the filtered local_id set.
 
-    Returns ``(match_mode, errors, by_key, display_ids)``.
+    Each term spec: ``{input, candidates}`` (candidates are casefolded
+    accessions; empty when the prefix expands to nothing).
     """
-    match_mode = parse_match(match)
-    if curies is None:
-        return match_mode, [], {}, []
+    raw_names = parse_name_list(names, max_names=max_names)
+    terms: list[dict] = []
+    per_term: list[set[int]] = []
+    for raw in raw_names:
+        inp, name_form, is_prefix = split_name_term(raw)
+        if is_prefix:
+            stem = name_form[:-1]
+            candidates = _expand_name_prefix(conn, stem)
+        else:
+            candidates = [name_form]
+        terms.append({"input": inp, "candidates": candidates})
+        per_term.append(_local_ids_for_accessions(conn, candidates))
 
-    raw_list = parse_curie_list(curies, max_curies=max_curies)
-    errors: list[dict] = []
-    parsed: list[tuple[str, str]] = []
-    for raw in raw_list:
-        try:
-            namespace, accession = parse_curie(raw)
-            parsed.append((namespace, accession))
-        except CurieError as exc:
-            errors.append(
-                {"curie": raw, "code": exc.code, "message": str(exc)}
+    if not per_term:
+        return terms, set()
+    if match == MATCH_ALL:
+        local_ids = per_term[0]
+        for extra in per_term[1:]:
+            local_ids &= extra
+    else:
+        local_ids = set()
+        for ids in per_term:
+            local_ids |= ids
+    return terms, local_ids
+
+
+def _matches_for_page(
+    conn: sqlite3.Connection,
+    page_ids: list[int],
+    terms: list[dict],
+) -> dict[int, list[dict]]:
+    """
+    Map page local_id → inline matches ``{input, name, ns}``.
+
+    Order per gene: term index, then namespace, then accession.
+    """
+    out: dict[int, list[dict]] = {lid: [] for lid in page_ids}
+    if not page_ids or not terms:
+        return out
+
+    all_candidates = list(
+        dict.fromkeys(
+            acc for term in terms for acc in term["candidates"]
+        )
+    )
+    if not all_candidates:
+        return out
+
+    # accession → terms that claimed it (term-list order)
+    acc_to_terms: dict[str, list[dict]] = {}
+    for term in terms:
+        for acc in term["candidates"]:
+            acc_to_terms.setdefault(acc, []).append(term)
+
+    id_ph = ",".join("?" for _ in page_ids)
+    acc_ph = ",".join("?" for _ in all_candidates)
+    rows = conn.execute(
+        f"""
+        SELECT local_id, namespace, accession
+        FROM gene_xref
+        WHERE local_id IN ({id_ph})
+          AND namespace IN ('symbol', 'alias')
+          AND accession IN ({acc_ph})
+        """,
+        [*page_ids, *all_candidates],
+    ).fetchall()
+
+    # Collect then sort for stable output
+    raw: dict[int, list[tuple[int, str, str, str]]] = {
+        lid: [] for lid in page_ids
+    }
+    term_index = {id(term): i for i, term in enumerate(terms)}
+    for row in rows:
+        lid = int(row["local_id"])
+        if lid not in raw:
+            continue
+        acc = str(row["accession"])
+        ns = str(row["namespace"])
+        for term in acc_to_terms.get(acc, []):
+            raw[lid].append(
+                (term_index[id(term)], ns, acc, term["input"])
             )
 
-    by_key: dict[tuple[str, str], list[str]] = {}
-    for namespace, accession in parsed:
-        by_key.setdefault((namespace, accession), []).append(
-            format_curie(namespace, accession)
-        )
-    display_ids = sorted(
-        {format_curie(ns, acc) for ns, acc in by_key}
-    )
-    return match_mode, errors, by_key, display_ids
+    for lid, items in raw.items():
+        items.sort(key=lambda t: (t[0], t[1], t[2]))
+        # Dedupe identical (term, ns, name) while keeping order
+        seen: set[tuple[int, str, str]] = set()
+        matches: list[dict] = []
+        for ti, ns, name, inp in items:
+            key = (ti, ns, name)
+            if key in seen:
+                continue
+            seen.add(key)
+            matches.append({"input": inp, "name": name, "ns": ns})
+        out[lid] = matches
+    return out
 
 
 def list_annotation_genes(
     conn: sqlite3.Connection,
     annotation_id: str,
     *,
-    q: str | None = None,
-    curies: str | Sequence[str] | None = None,
+    names: str | Sequence[str] | None = None,
     match: str | None = MATCH_ANY,
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
-    max_curies: int = MAX_CURIES_GET,
+    max_names: int = MAX_NAMES_GET,
 ) -> dict:
     """
     Paginated gene cards for one annotation shard.
 
-    Optional ``q``: casefold prefix match on ``primary_name``.
-    Optional ``curies``: xref filter (``match=any`` / ``match=all``).
+    Optional ``names``: symbol∪alias filter (``match=any`` / ``match=all``),
+    same token rules as ``/hits`` including trailing ``*`` prefixes.
+    When ``names`` is set, each gene card includes ``matches``.
     """
+    # annotation_id is path context only; not echoed in the payload.
+    _ = annotation_id
     limit = clamp_limit(limit)
     offset = clamp_offset(offset)
-    prefix = _resolve_name_prefix(q)
-    match_mode, errors, by_key, _display_ids = _parse_gene_curies(
-        curies, match=match, max_curies=max_curies
-    )
-    curies_requested = curies is not None
+    match_mode = parse_match(match)
 
     empty = page_envelope(
         total=0,
         limit=limit,
         offset=offset,
         results=[],
-        annotation_id=annotation_id,
     )
-    if errors:
-        empty["errors"] = errors
 
-    if curies_requested and match_mode == "all" and errors:
-        return empty
-
-    if curies_requested and not by_key:
-        return empty
+    local_ids: set[int] | None = None
+    terms: list[dict] = []
+    if names is not None:
+        terms, local_ids = _resolve_name_terms(
+            conn, names, match=match_mode, max_names=max_names
+        )
+        if not local_ids:
+            return empty
 
     params: list = []
     where_parts: list[str] = ["1=1"]
 
-    if prefix is not None:
-        params.append(_escape_like(prefix) + "%")
-        where_parts.append(
-            "g.primary_name IS NOT NULL "
-            "AND LOWER(g.primary_name) LIKE ? ESCAPE '\\'"
-        )
-
-    if by_key:
-        keys = list(by_key)
-        in_tuples = ", ".join("(?, ?)" for _ in keys)
-        for ns, acc in keys:
-            params.extend([ns, acc])
-        if match_mode == "all" and len(keys) > 1:
-            params.append(len(keys))
-            xref_sql = f"""
-                SELECT x.local_id FROM gene_xref x
-                WHERE (x.namespace, x.accession) IN ({in_tuples})
-                GROUP BY x.local_id
-                HAVING COUNT(*) = ?
-            """
-        else:
-            xref_sql = f"""
-                SELECT x.local_id FROM gene_xref x
-                WHERE (x.namespace, x.accession) IN ({in_tuples})
-            """
-        where_parts.append(f"g.local_id IN ({xref_sql})")
+    if local_ids is not None:
+        placeholders = ",".join("?" for _ in local_ids)
+        params.extend(sorted(local_ids))
+        where_parts.append(f"g.local_id IN ({placeholders})")
 
     where_sql = " AND ".join(where_parts)
 
@@ -351,14 +423,16 @@ def list_annotation_genes(
         [*params, limit, offset],
     ).fetchall()
 
-    results = [_gene_card(row, annotation_id=annotation_id) for row in rows]
-    out = page_envelope(
+    results = [_gene_card(row) for row in rows]
+    if names is not None and results:
+        page_ids = [int(card["local_id"]) for card in results]
+        by_lid = _matches_for_page(conn, page_ids, terms)
+        for card in results:
+            card["matches"] = by_lid.get(int(card["local_id"]), [])
+
+    return page_envelope(
         total=total,
         limit=limit,
         offset=offset,
         results=results,
-        annotation_id=annotation_id,
     )
-    if errors:
-        out["errors"] = errors
-    return out

@@ -32,31 +32,11 @@ Production rate limits: **3 req/s per IP**, ~**20 req/s** globally. Saturated `/
 
 ---
 
-## CURIEs
+## Namespaces
 
-Ids use Compact URIs: `prefix:accession` (first colon splits prefix from accession). Used on `/annotations/{id}/genes?curies=…`.
+`/hits` and `/annotations/{id}/genes?names=…` match **symbol ∪ alias** (casefolded; `TP53` → `tp53`).
 
-| Prefix in the request | Stored namespace |
-|---|---|
-| `swiss-prot` | `uniprot/swiss-prot` |
-| any searchable name (e.g. `symbol`, `go`, `pfam`) | same name |
-
-Normalization:
-
-- **GO** — short forms pad to seven digits (`GO:8150` → `GO:0008150`).
-- **symbol / alias** — accessions are casefolded (`TP53` → `tp53`).
-
-Only **searchable** namespaces are accepted as CURIE prefixes. Unknown prefixes appear in the `errors` array on `/annotations/…/genes?curies=…` (valid CURIEs still return under `match=any`).
-
----
-
-## Searchable namespaces
-
-CURIE filters on gene browse are limited to:
-
-`symbol`, `alias`, `geneid`, `go`, `pfam`, `interpro`, `rfam`, `mirbase`, `cdd`, `eggnog`, `uniprot/swiss-prot`, `ncbiortholog`
-
-Other harvested namespaces (Ensembl, model-organism DBs, TrEMBL, …) may still appear on **per-gene xref chips** inside a shard.
+Other harvested namespaces (GO, Pfam, Ensembl, model-organism DBs, …) appear on **per-gene xref chips** inside a shard (`…/genes/{local_id}/xrefs`), not as drill-in name filters.
 
 ---
 
@@ -107,26 +87,48 @@ POST /hits
 
 ### `GET /annotations/{annotation_id}/namespaces`
 
-Namespaces present on one annotation’s shard (Tier A and chip namespaces), with distinct accession counts.
+Namespaces present on one annotation’s shard (Tier A and chip namespaces), with distinct accession counts. `annotation_id` is path-only (not repeated in the JSON).
 
 ### `GET /annotations/{annotation_id}/genes`
 
-Browse / filter genes inside one annotation.
+Browse / filter genes inside one annotation. Same **name** token rules as `/hits` (symbol∪alias; optional `*` prefix). Pass the same `names` (+ `match`) used on `/hits` when drilling in; taxid filters stay on `/hits` only. `annotation_id` is path-only (not repeated in the JSON).
 
 | Parameter | Notes |
 |---|---|
-| `q` | Casefold **prefix** on `primary_name` (max 64 chars) |
-| `curies` | Optional CSV CURIEs via `gene_xref` (cap 20) |
-| `match` | `any` (default) or `all` (with `curies`) |
+| `names` | Optional CSV gene names (cap **50**). Omit to browse all genes. |
+| `match` | `any` (default) or `all` — union vs intersection over **input names** |
 | `limit`, `offset` | Pagination; response includes exact `total` |
+
+When `names` is set, each gene includes **`matches`**: inline `{input, name, ns}` for every symbol/alias hit that linked that gene to the request (`input` = raw token, `name` = matched accession, `ns` = `symbol` or `alias`). Omitted when browsing without `names`.
+
+```http
+GET /annotations/ann-human/genes?names=SELENOP,gpx4*&match=any&limit=50
+```
+
+```json
+{
+  "total": 1,
+  "limit": 50,
+  "offset": 0,
+  "results": [
+    {
+      "local_id": 10,
+      "primary_name": "SELENOP",
+      "matches": [
+        {"input": "SELENOP", "name": "selenop", "ns": "symbol"}
+      ]
+    }
+  ]
+}
+```
 
 ### `GET /annotations/{annotation_id}/genes/{local_id}`
 
-One gene card (coordinates, name, prose).
+One gene card (coordinates, name, prose). No `annotation_id` field (path-scoped).
 
 ### `GET /annotations/{annotation_id}/genes/{local_id}/xrefs`
 
-Paginated xref chips for one gene (`limit` / `offset` / `total`).
+Paginated xref chips for one gene (`limit` / `offset` / `total`). `annotation_id` and `local_id` are path-only (not repeated in the JSON).
 
 ---
 
