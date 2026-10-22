@@ -18,7 +18,7 @@ PREFIX_TO_NAMESPACE: dict[str, str] = {
 }
 
 # Namespaces whose accession is casefolded at harvest (symbol / alias).
-_CASEFOLD_NAMESPACES = frozenset({"symbol", "alias"})
+CASEFOLD_NAMESPACES = frozenset({"symbol", "alias"})
 
 _GO_DIGITS_RE = re.compile(r"(?i)^(?:go[:_]?)?(\d{1,7})$")
 
@@ -46,7 +46,7 @@ def resolve_namespace(prefix: str) -> str | None:
     """
     Map a CURIE prefix to a stored namespace.
 
-    Returns None for an unknown prefix.
+    Returns None for an unknown prefix (global searchable allowlist).
     """
     key = prefix.strip().lower()
     if not key:
@@ -59,6 +59,21 @@ def resolve_namespace(prefix: str) -> str | None:
     return None
 
 
+def resolve_namespace_local(prefix: str) -> str | None:
+    """
+    Map a CURIE / path prefix to a stored namespace for shard-local routes.
+
+    Accepts any non-empty mapped or lowercased prefix (Tier A ∪ Tier B chips),
+    not only ``SEARCHABLE_NAMESPACES``. Returns None when empty.
+    """
+    key = prefix.strip().lower()
+    if not key:
+        return None
+    if key in PREFIX_TO_NAMESPACE:
+        return PREFIX_TO_NAMESPACE[key]
+    return key
+
+
 def normalize_accession(namespace: str, accession: str) -> str:
     """Normalize accession the way harvest stored it (sidecar §4)."""
     text = (accession or "").strip()
@@ -67,20 +82,15 @@ def normalize_accession(namespace: str, accession: str) -> str:
         if go is None:
             return text
         return go
-    if namespace in _CASEFOLD_NAMESPACES:
+    if namespace in CASEFOLD_NAMESPACES:
         return text.casefold()
     # Pfam: harvest/meta keep optional .version; labels are unversioned.
     # Do not strip the version here — stored accessions may be versioned.
     return text
 
 
-def parse_curie(raw: str) -> tuple[str, str]:
-    """
-    Split ``prefix:accession`` on the first colon.
-
-    Returns ``(namespace, accession)``. Raises CurieError when the string
-    has no colon or the prefix is empty/unknown.
-    """
+def _parse_curie_parts(raw: str) -> tuple[str, str]:
+    """Split ``prefix:accession``; raise CurieError on malformed input."""
     text = (raw or "").strip()
     if ":" not in text:
         raise CurieError("CURIE must contain a colon", code="missing_colon")
@@ -89,7 +99,34 @@ def parse_curie(raw: str) -> tuple[str, str]:
         raise CurieError("empty CURIE prefix", code="empty_prefix")
     if not accession.strip():
         raise CurieError("empty CURIE accession", code="empty_accession")
+    return prefix, accession
+
+
+def parse_curie(raw: str) -> tuple[str, str]:
+    """
+    Split ``prefix:accession`` on the first colon.
+
+    Returns ``(namespace, accession)``. Raises CurieError when the string
+    has no colon or the prefix is empty/unknown (searchable allowlist).
+    """
+    prefix, accession = _parse_curie_parts(raw)
     namespace = resolve_namespace(prefix)
+    if namespace is None:
+        raise CurieError(
+            f"unknown CURIE prefix: {prefix}",
+            code="unknown_prefix",
+        )
+    return namespace, normalize_accession(namespace, accession)
+
+
+def parse_curie_local(raw: str) -> tuple[str, str]:
+    """
+    Like ``parse_curie``, but any non-empty prefix maps to a stored namespace.
+
+    Used by annotation-scoped ``curies`` / accessions routes (chip namespaces).
+    """
+    prefix, accession = _parse_curie_parts(raw)
+    namespace = resolve_namespace_local(prefix)
     if namespace is None:
         raise CurieError(
             f"unknown CURIE prefix: {prefix}",

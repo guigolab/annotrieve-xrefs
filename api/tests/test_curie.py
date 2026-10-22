@@ -8,6 +8,8 @@ from helpers.curie import (
     format_curie,
     normalize_go_accession,
     parse_curie,
+    parse_curie_local,
+    resolve_namespace_local,
 )
 
 
@@ -39,3 +41,25 @@ def test_unknown_prefix() -> None:
 def test_missing_colon() -> None:
     with pytest.raises(CurieError, match="colon"):
         parse_curie("tp53")
+
+
+def test_parse_curie_local_tier_b() -> None:
+    assert parse_curie_local("refseq_transcript:XM_015139305.2") == (
+        "refseq_transcript",
+        "XM_015139305.2",
+    )
+    with pytest.raises(CurieError, match="unknown CURIE prefix"):
+        parse_curie("refseq_transcript:XM_015139305.2")
+
+
+def test_parse_curie_local_swiss_prot() -> None:
+    assert parse_curie_local("swiss-prot:P04637") == (
+        "uniprot/swiss-prot",
+        "P04637",
+    )
+
+
+def test_resolve_namespace_local_slash_form() -> None:
+    assert resolve_namespace_local("uniprot/swiss-prot") == "uniprot/swiss-prot"
+    assert resolve_namespace_local("swiss-prot") == "uniprot/swiss-prot"
+    assert resolve_namespace_local("") is None

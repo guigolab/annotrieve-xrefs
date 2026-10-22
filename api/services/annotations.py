@@ -5,8 +5,20 @@ import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 
+from helpers.curie import (
+    CASEFOLD_NAMESPACES,
+    CurieError,
+    parse_curie_local,
+    resolve_namespace_local,
+)
 from helpers.cursor import QueryError
-from helpers.match import MATCH_ALL, MATCH_ANY, MatchMode, parse_match
+from helpers.match import (
+    MATCH_ALL,
+    MATCH_ANY,
+    MatchMode,
+    parse_curie_list,
+    parse_match,
+)
 from helpers.names import (
     MAX_PREFIX_EXPAND,
     parse_name_list,
@@ -15,7 +27,9 @@ from helpers.names import (
 from helpers.paths import per_gff_root, shard_genes_path
 from helpers.pagination import (
     DEFAULT_LIMIT,
+    MAX_CURIES_GET,
     MAX_NAMES_GET,
+    MIN_Q_LEN,
     clamp_limit,
     clamp_offset,
     page_envelope,
@@ -192,6 +206,96 @@ def list_annotation_namespaces(
     )
 
 
+def resolve_path_namespace(raw: str) -> str | None:
+    """Map a path ``{namespace}`` segment to the stored namespace form."""
+    return resolve_namespace_local(raw)
+
+
+def namespace_present(conn: sqlite3.Connection, namespace: str) -> bool:
+    """True when ``namespace`` has at least one gene_xref row on this shard."""
+    row = conn.execute(
+        "SELECT 1 FROM gene_xref WHERE namespace = ? LIMIT 1",
+        (namespace,),
+    ).fetchone()
+    return row is not None
+
+
+def list_namespace_accessions(
+    conn: sqlite3.Connection,
+    annotation_id: str,
+    namespace: str,
+    *,
+    q: str | None = None,
+    limit: int = DEFAULT_LIMIT,
+    offset: int = 0,
+) -> dict | None:
+    """
+    Paginated accessions under one namespace on this shard.
+
+    Returns None when the namespace is absent. Each result:
+    ``{accession, display, gene_count}``.
+    """
+    _ = annotation_id
+    if not namespace_present(conn, namespace):
+        return None
+
+    limit = clamp_limit(limit)
+    offset = clamp_offset(offset)
+
+    prefix = (q or "").strip()
+    if prefix and namespace in CASEFOLD_NAMESPACES:
+        prefix = prefix.casefold()
+    params: list = [namespace]
+    where = "namespace = ?"
+    if prefix:
+        if len(prefix) < MIN_Q_LEN:
+            raise QueryError(
+                f"q requires at least {MIN_Q_LEN} characters",
+                code="prefix_too_short",
+                min_length=MIN_Q_LEN,
+            )
+        where += " AND accession >= ? AND accession < ?"
+        params.extend([prefix, prefix + "\uffff"])
+
+    total = int(
+        conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT accession)
+            FROM gene_xref
+            WHERE {where}
+            """,
+            params,
+        ).fetchone()[0]
+    )
+    rows = conn.execute(
+        f"""
+        SELECT accession,
+               MAX(display) AS display,
+               COUNT(DISTINCT local_id) AS gene_count
+        FROM gene_xref
+        WHERE {where}
+        GROUP BY accession
+        ORDER BY accession ASC
+        LIMIT ? OFFSET ?
+        """,
+        [*params, limit, offset],
+    ).fetchall()
+    results = [
+        {
+            "accession": str(row["accession"]),
+            "display": row["display"],
+            "gene_count": int(row["gene_count"]),
+        }
+        for row in rows
+    ]
+    return page_envelope(
+        total=total,
+        limit=limit,
+        offset=offset,
+        results=results,
+    )
+
+
 def _expand_name_prefix(conn: sqlite3.Connection, prefix: str) -> list[str]:
     """
     Distinct symbol∪alias accessions with accession prefix on this shard.
@@ -240,6 +344,56 @@ def _local_ids_for_accessions(
     return {int(row["local_id"]) for row in rows}
 
 
+def _ids_by_keys(
+    conn: sqlite3.Connection,
+    keys: list[tuple[str, str]],
+) -> dict[tuple[str, str], set[int]]:
+    """
+    Map each exact ``(namespace, accession)`` to its local_id set.
+
+    One round-trip using ``xref_resolve``-friendly equality OR clauses.
+    """
+    out: dict[tuple[str, str], set[int]] = {key: set() for key in keys}
+    if not keys:
+        return out
+    unique = list(dict.fromkeys(keys))
+    clauses: list[str] = []
+    params: list = []
+    for ns, acc in unique:
+        clauses.append("(namespace = ? AND accession = ?)")
+        params.extend([ns, acc])
+    rows = conn.execute(
+        f"""
+        SELECT namespace, accession, local_id
+        FROM gene_xref
+        WHERE {" OR ".join(clauses)}
+        """,
+        params,
+    ).fetchall()
+    for row in rows:
+        key = (str(row["namespace"]), str(row["accession"]))
+        if key in out:
+            out[key].add(int(row["local_id"]))
+    return out
+
+
+def _combine_term_ids(
+    per_term: list[set[int]],
+    match: MatchMode,
+) -> set[int]:
+    if not per_term:
+        return set()
+    if match == MATCH_ALL:
+        local_ids = set(per_term[0])
+        for extra in per_term[1:]:
+            local_ids &= extra
+        return local_ids
+    local_ids: set[int] = set()
+    for ids in per_term:
+        local_ids |= ids
+    return local_ids
+
+
 def _resolve_name_terms(
     conn: sqlite3.Connection,
     names: str | Sequence[str],
@@ -266,17 +420,34 @@ def _resolve_name_terms(
         terms.append({"input": inp, "candidates": candidates})
         per_term.append(_local_ids_for_accessions(conn, candidates))
 
-    if not per_term:
-        return terms, set()
-    if match == MATCH_ALL:
-        local_ids = per_term[0]
-        for extra in per_term[1:]:
-            local_ids &= extra
-    else:
-        local_ids = set()
-        for ids in per_term:
-            local_ids |= ids
-    return terms, local_ids
+    return terms, _combine_term_ids(per_term, match)
+
+
+def _resolve_curie_terms(
+    conn: sqlite3.Connection,
+    curies: str | Sequence[str],
+    *,
+    match: MatchMode,
+    max_curies: int,
+) -> tuple[list[dict], set[int], list[set[int]]]:
+    """
+    Parse ``curies`` into term specs, combined local_ids, and per-term sets.
+
+    Each term: ``{input, ns, accession}``. Exact keys only. One SQL round-trip.
+    """
+    raw_curies = parse_curie_list(curies, max_curies=max_curies)
+    terms: list[dict] = []
+    for raw in raw_curies:
+        try:
+            ns, acc = parse_curie_local(raw)
+        except CurieError as exc:
+            raise QueryError(str(exc), code=exc.code) from exc
+        terms.append({"input": raw, "ns": ns, "accession": acc})
+
+    keys = [(t["ns"], t["accession"]) for t in terms]
+    by_key = _ids_by_keys(conn, keys)
+    per_term = [by_key[(t["ns"], t["accession"])] for t in terms]
+    return terms, _combine_term_ids(per_term, match), per_term
 
 
 def _matches_for_page(
@@ -351,28 +522,66 @@ def _matches_for_page(
     return out
 
 
+def _curie_matches_for_page(
+    page_ids: list[int],
+    terms: list[dict],
+    per_term: list[set[int]],
+) -> dict[int, list[dict]]:
+    """
+    Map page local_id → inline matches ``{input, ns, accession}``.
+
+    Built from resolve-time per-term id sets (no extra SQL). Order per gene
+    follows term list order; duplicates of the same (term, ns, accession)
+    are dropped.
+    """
+    out: dict[int, list[dict]] = {lid: [] for lid in page_ids}
+    if not page_ids or not terms:
+        return out
+    page_set = set(page_ids)
+    for term, ids in zip(terms, per_term, strict=True):
+        match = {
+            "input": term["input"],
+            "ns": term["ns"],
+            "accession": term["accession"],
+        }
+        for lid in ids:
+            if lid in page_set:
+                out[lid].append(match)
+    return out
+
+
 def list_annotation_genes(
     conn: sqlite3.Connection,
     annotation_id: str,
     *,
     names: str | Sequence[str] | None = None,
+    curies: str | Sequence[str] | None = None,
     match: str | None = MATCH_ANY,
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
     max_names: int = MAX_NAMES_GET,
+    max_curies: int = MAX_CURIES_GET,
 ) -> dict:
     """
     Paginated gene cards for one annotation shard.
 
     Optional ``names``: symbol∪alias filter (``match=any`` / ``match=all``),
     same token rules as ``/hits`` including trailing ``*`` prefixes.
-    When ``names`` is set, each gene card includes ``matches``.
+    Optional ``curies``: exact ``ns:accession`` keys (any shard namespace).
+    ``names`` and ``curies`` are mutually exclusive.
+    When either filter is set, each gene card includes ``matches``.
     """
     # annotation_id is path context only; not echoed in the payload.
     _ = annotation_id
     limit = clamp_limit(limit)
     offset = clamp_offset(offset)
     match_mode = parse_match(match)
+
+    if names is not None and curies is not None:
+        raise QueryError(
+            "names and curies cannot be combined",
+            code="names_and_curies",
+        )
 
     empty = page_envelope(
         total=0,
@@ -382,10 +591,18 @@ def list_annotation_genes(
     )
 
     local_ids: set[int] | None = None
-    terms: list[dict] = []
+    name_terms: list[dict] = []
+    curie_terms: list[dict] = []
+    curie_per_term: list[set[int]] = []
     if names is not None:
-        terms, local_ids = _resolve_name_terms(
+        name_terms, local_ids = _resolve_name_terms(
             conn, names, match=match_mode, max_names=max_names
+        )
+        if not local_ids:
+            return empty
+    elif curies is not None:
+        curie_terms, local_ids, curie_per_term = _resolve_curie_terms(
+            conn, curies, match=match_mode, max_curies=max_curies
         )
         if not local_ids:
             return empty
@@ -424,9 +641,16 @@ def list_annotation_genes(
     ).fetchall()
 
     results = [_gene_card(row) for row in rows]
-    if names is not None and results:
+    if results and name_terms:
         page_ids = [int(card["local_id"]) for card in results]
-        by_lid = _matches_for_page(conn, page_ids, terms)
+        by_lid = _matches_for_page(conn, page_ids, name_terms)
+        for card in results:
+            card["matches"] = by_lid.get(int(card["local_id"]), [])
+    elif results and curie_terms:
+        page_ids = [int(card["local_id"]) for card in results]
+        by_lid = _curie_matches_for_page(
+            page_ids, curie_terms, curie_per_term
+        )
         for card in results:
             card["matches"] = by_lid.get(int(card["local_id"]), [])
 

@@ -281,6 +281,22 @@ def _init_shard(path: Path) -> None:
             (10, "alias", "tp53", "p53", "attr", 0),
             (10, "go", "GO:0008150", None, "attr", 2),
             (10, "ensembl_transcript", "ENST00000269305", None, "attr", 1),
+            (
+                10,
+                "refseq_transcript",
+                "XM_015139305.2",
+                "XM_015139305.2",
+                "attr",
+                1,
+            ),
+            (
+                10,
+                "uniprot/swiss-prot",
+                "P04637",
+                "P53_HUMAN",
+                "dbxref",
+                0,
+            ),
             (20, "symbol", "brca1", "BRCA1", "attr", 0),
         ],
     )
