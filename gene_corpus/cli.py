@@ -10,6 +10,7 @@ Root CLI dispatcher — use the split harvest / merge / sync / repair / labels
     python -m gene_corpus.index --help
     python -m gene_corpus.prune_xref --help
     python -m gene_corpus.repair_symbol_deletes --help
+    python -m gene_corpus.seed_release_date --help
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     _ = argv
     print(
         "gene_corpus: use separate harvest, merge, sync, repair, labels, "
-        "index, prune_xref, and repair_symbol_deletes "
+        "index, prune_xref, repair_symbol_deletes, and seed_release_date "
         "commands:\n"
         "  python -m gene_corpus.harvest --work-dir DIR "
         "--files-root FILES [--annotation-id ID ...]\n"
@@ -33,7 +34,9 @@ def main(argv: list[str] | None = None) -> int:
         "  python -m gene_corpus.index --work-dir DIR\n"
         "  python -m gene_corpus.prune_xref --work-dir DIR [--apply]\n"
         "  python -m gene_corpus.repair_symbol_deletes --work-dir DIR "
-        "[--apply] [--finalize-only] [--spill-dir DIR]\n",
+        "[--apply] [--finalize-only] [--spill-dir DIR]\n"
+        "  python -m gene_corpus.seed_release_date --work-dir DIR "
+        "[--apply] [--report PATH]\n",
         file=sys.stderr,
     )
     return 2

@@ -60,6 +60,7 @@ def download_annotation_report(
     dest: Path,
     *,
     annotation_ids: Sequence[str] | None = None,
+    selected_fields: str | Sequence[str] | None = None,
     timeout: float = 600,
     opener=None,
 ) -> None:
@@ -68,11 +69,15 @@ def download_annotation_report(
 
     Always filters ``db_sources`` to Ensembl/GenBank/RefSeq. When
     ``annotation_ids`` is set, also sends ``md5_checksums`` (API name for
-    annotation_id__in).
+    annotation_id__in). ``selected_fields`` defaults to
+    ``REPORT_SELECTED_FIELDS`` (extended harvest columns).
     """
     url = annotation_report_url(api_base)
+    fields = (
+        REPORT_SELECTED_FIELDS if selected_fields is None else selected_fields
+    )
     body: dict = {
-        "selected_fields": REPORT_SELECTED_FIELDS,
+        "selected_fields": fields,
         "db_sources": list(API_DB_SOURCES),
     }
     if annotation_ids:
@@ -117,6 +122,7 @@ def downloaded_annotation_report(
     api_base: str,
     *,
     annotation_ids: Sequence[str] | None = None,
+    selected_fields: str | Sequence[str] | None = None,
     timeout: float = 600,
     opener=None,
 ) -> Iterator[Path]:
@@ -128,6 +134,7 @@ def downloaded_annotation_report(
             api_base,
             dest,
             annotation_ids=annotation_ids,
+            selected_fields=selected_fields,
             timeout=timeout,
             opener=opener,
         )
