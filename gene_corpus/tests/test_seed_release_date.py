@@ -1,4 +1,4 @@
-"""One-time annotation.release_date seed from report TSV."""
+"""One-time annotation.release_date + assembly_name seed from report TSV."""
 from __future__ import annotations
 
 import json
@@ -9,9 +9,11 @@ from gene_corpus.catalog.report import download_annotation_report
 from gene_corpus.seed_release_date_cli import main as seed_main
 from gene_corpus.sql.schema import connect_for_build, init_schema, seed_annotations
 from gene_corpus.sql.seed_release_date import (
-    REPORT_RELEASE_DATE_FIELDS,
+    REPORT_SEED_FIELDS,
+    AnnotationSeedValues,
+    annotation_has_assembly_name_column,
     annotation_has_release_date_column,
-    ensure_release_date_column,
+    ensure_seed_columns,
     parse_release_date_tsv,
     seed_release_dates,
 )
@@ -36,7 +38,7 @@ class _FakeResponse:
 
 
 def _legacy_db(path: Path) -> None:
-    """DB whose annotation table lacks release_date (pre-schema bump)."""
+    """DB whose annotation table lacks release_date / assembly_name."""
     conn = connect_for_build(path)
     conn.executescript(
         """
@@ -84,19 +86,31 @@ def _legacy_db(path: Path) -> None:
     conn.close()
 
 
-def test_ensure_column_and_seed_apply() -> None:
+def test_ensure_columns_and_seed_apply() -> None:
     with tempfile.TemporaryDirectory() as d:
         db = Path(d) / "gene_corpus.sqlite"
         _legacy_db(db)
         conn = connect_for_build(db)
         assert not annotation_has_release_date_column(conn)
-        assert ensure_release_date_column(conn) is True
+        assert not annotation_has_assembly_name_column(conn)
+        added = ensure_seed_columns(conn)
+        assert set(added) == {"release_date", "assembly_name"}
         assert annotation_has_release_date_column(conn)
-        assert ensure_release_date_column(conn) is False
+        assert annotation_has_assembly_name_column(conn)
+        assert ensure_seed_columns(conn) == ()
 
         stats = seed_release_dates(
             conn,
-            {"aaa": "2024-01-02T00:00:00", "ccc": "2020-01-01"},
+            {
+                "aaa": AnnotationSeedValues(
+                    release_date="2024-01-02T00:00:00",
+                    assembly_name="GRCh38.p14",
+                ),
+                "ccc": AnnotationSeedValues(
+                    release_date="2020-01-01",
+                    assembly_name="AsmC",
+                ),
+            },
             apply=True,
             report_rows=2,
             empty_in_report=0,
@@ -105,13 +119,17 @@ def test_ensure_column_and_seed_apply() -> None:
         assert stats.updated == 1
         assert stats.missing_in_db == 1
         row = conn.execute(
-            "SELECT release_date FROM annotation WHERE annotation_id = 'aaa'"
+            "SELECT release_date, assembly_name FROM annotation "
+            "WHERE annotation_id = 'aaa'"
         ).fetchone()
         assert row[0] == "2024-01-02T00:00:00"
+        assert row[1] == "GRCh38.p14"
         row_b = conn.execute(
-            "SELECT release_date FROM annotation WHERE annotation_id = 'bbb'"
+            "SELECT release_date, assembly_name FROM annotation "
+            "WHERE annotation_id = 'bbb'"
         ).fetchone()
         assert row_b[0] is None
+        assert row_b[1] is None
         conn.close()
 
 
@@ -119,19 +137,28 @@ def test_parse_release_date_tsv() -> None:
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "r.tsv"
         path.write_text(
-            "annotation_id\trelease_date\tdatabase\n"
-            "aaa\t2024-01-02T00:00:00\tRefSeq\n"
-            "bbb\t\tEnsembl\n"
-            "ccc\t2020-06-01\tGenBank\n",
+            "annotation_id\trelease_date\tassembly_name\tdatabase\n"
+            "aaa\t2024-01-02T00:00:00\tGRCh38\tRefSeq\n"
+            "bbb\t\tGRCm39\tEnsembl\n"
+            "ccc\t2020-06-01\t\tGenBank\n",
             encoding="utf-8",
         )
-        mapping, total, empty = parse_release_date_tsv(path)
+        mapping, total, empty_date, empty_name = parse_release_date_tsv(path)
         assert total == 3
-        assert empty == 1
-        assert mapping == {
-            "aaa": "2024-01-02T00:00:00",
-            "ccc": "2020-06-01",
-        }
+        assert empty_date == 1
+        assert empty_name == 1
+        assert mapping["aaa"] == AnnotationSeedValues(
+            release_date="2024-01-02T00:00:00",
+            assembly_name="GRCh38",
+        )
+        assert mapping["bbb"] == AnnotationSeedValues(
+            release_date=None,
+            assembly_name="GRCm39",
+        )
+        assert mapping["ccc"] == AnnotationSeedValues(
+            release_date="2020-06-01",
+            assembly_name=None,
+        )
 
 
 def test_download_selected_fields_override() -> None:
@@ -140,8 +167,8 @@ def test_download_selected_fields_override() -> None:
     def opener(request, timeout=None):
         captured["body"] = json.loads(request.data.decode("utf-8"))
         return _FakeResponse(
-            b"annotation_id\trelease_date\tdatabase\n"
-            b"aaa\t2024-01-02\tRefSeq\n"
+            b"annotation_id\trelease_date\tassembly_name\tdatabase\n"
+            b"aaa\t2024-01-02\tGRCh38\tRefSeq\n"
         )
 
     with tempfile.TemporaryDirectory() as d:
@@ -149,10 +176,10 @@ def test_download_selected_fields_override() -> None:
         download_annotation_report(
             "https://example.test/api/v0",
             dest,
-            selected_fields=REPORT_RELEASE_DATE_FIELDS,
+            selected_fields=REPORT_SEED_FIELDS,
             opener=opener,
         )
-        assert captured["body"]["selected_fields"] == REPORT_RELEASE_DATE_FIELDS
+        assert captured["body"]["selected_fields"] == REPORT_SEED_FIELDS
 
 
 def test_cli_apply_from_local_report() -> None:
@@ -162,14 +189,15 @@ def test_cli_apply_from_local_report() -> None:
         _legacy_db(db)
         report = root / "report.tsv"
         report.write_text(
-            "annotation_id\trelease_date\n"
-            "aaa\t2024-05-01T12:00:00\n"
-            "bbb\t2023-01-01\n",
+            "annotation_id\trelease_date\tassembly_name\n"
+            "aaa\t2024-05-01T12:00:00\tGRCh38.p14\n"
+            "bbb\t2023-01-01\tGRCm39\n",
             encoding="utf-8",
         )
         assert seed_main(["--work-dir", str(root), "--report", str(report)]) == 0
         conn = connect_for_build(db)
         assert not annotation_has_release_date_column(conn)
+        assert not annotation_has_assembly_name_column(conn)
         conn.close()
 
         assert (
@@ -185,13 +213,15 @@ def test_cli_apply_from_local_report() -> None:
             == 0
         )
         conn = connect_for_build(db)
-        rows = dict(
-            conn.execute(
-                "SELECT annotation_id, release_date FROM annotation"
+        rows = {
+            r[0]: (r[1], r[2])
+            for r in conn.execute(
+                "SELECT annotation_id, release_date, assembly_name "
+                "FROM annotation"
             ).fetchall()
-        )
-        assert rows["aaa"] == "2024-05-01T12:00:00"
-        assert rows["bbb"] == "2023-01-01"
+        }
+        assert rows["aaa"] == ("2024-05-01T12:00:00", "GRCh38.p14")
+        assert rows["bbb"] == ("2023-01-01", "GRCm39")
         ver = conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()
@@ -199,10 +229,11 @@ def test_cli_apply_from_local_report() -> None:
         conn.close()
 
 
-def test_init_schema_includes_release_date() -> None:
+def test_init_schema_includes_seed_columns() -> None:
     with tempfile.TemporaryDirectory() as d:
         db = Path(d) / "gene_corpus.sqlite"
         conn = connect_for_build(db)
         init_schema(conn)
         assert annotation_has_release_date_column(conn)
+        assert annotation_has_assembly_name_column(conn)
         conn.close()

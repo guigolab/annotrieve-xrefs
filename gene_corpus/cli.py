@@ -36,7 +36,8 @@ def main(argv: list[str] | None = None) -> int:
         "  python -m gene_corpus.repair_symbol_deletes --work-dir DIR "
         "[--apply] [--finalize-only] [--spill-dir DIR]\n"
         "  python -m gene_corpus.seed_release_date --work-dir DIR "
-        "[--apply] [--report PATH]\n",
+        "[--apply] [--report PATH]  "
+        "# release_date + assembly_name\n",
         file=sys.stderr,
     )
     return 2

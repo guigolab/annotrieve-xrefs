@@ -23,7 +23,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Negative cache_size is KiB.
 _DEFAULT_BUILD_CACHE_SIZE = -131072  # 128 MiB
@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS annotation (
     source_provider TEXT,
     profile_id TEXT NOT NULL,
     gff_path TEXT,
-    release_date TEXT
+    release_date TEXT,
+    assembly_name TEXT
 );
 
 CREATE TABLE IF NOT EXISTS annotation_lineage (
@@ -173,7 +174,8 @@ def seed_annotations(
 
     Each dict: annotation_key, annotation_id, taxid, assembly_accession,
     organism_name, source_database, source_provider, profile_id, gff_path.
-    ``release_date`` is nullable; seed via ``gene_corpus.seed_release_date``.
+    ``release_date`` / ``assembly_name`` are nullable; seed via
+    ``gene_corpus.seed_release_date``.
     """
     conn.executemany(
         """
