@@ -16,7 +16,14 @@ from helpers.names import (
 from helpers.pagination import MAX_NAMES_GET
 from helpers.source_codes import SOURCES_LEGEND, source_code
 
-HITS_FIELDS = ["annotation_id", "taxid", "source", "n_matched", "matched"]
+HITS_FIELDS = [
+    "annotation_id",
+    "taxid",
+    "source",
+    "n_matched",
+    "matched",
+    "release_date",
+]
 
 HITS_SOURCES: dict[str, dict[str, str]] = {
     code: {"label": label} for code, label in SOURCES_LEGEND.items()
@@ -195,7 +202,8 @@ def _fetch_annotations(
         placeholders = ",".join("?" for _ in chunk)
         rows = conn.execute(
             f"""
-            SELECT annotation_key, annotation_id, taxid, source_database
+            SELECT annotation_key, annotation_id, taxid, source_database,
+                   release_date
             FROM annotation
             WHERE annotation_key IN ({placeholders})
             """,
@@ -388,6 +396,12 @@ def list_name_hits(
             continue
         key_idxs = sorted(ann_to_key_idxs[ak])
         n_matched = len({keys[ki]["term"] for ki in key_idxs})
+        release_raw = row["release_date"]
+        release_date = (
+            str(release_raw).strip() if release_raw is not None else None
+        )
+        if release_date == "":
+            release_date = None
         scored.append(
             (
                 n_matched,
@@ -398,6 +412,7 @@ def list_name_hits(
                     source_code(row["source_database"]),
                     n_matched,
                     key_idxs,
+                    release_date,
                 ],
             )
         )

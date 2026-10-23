@@ -81,7 +81,8 @@ def get_hits(
     Presence search by gene symbol/synonym names.
 
     Compact envelope: ``terms``, ``keys``, ``fields``/``rows`` with
-    ``n_matched`` / ``matched`` (indices into ``keys``).
+    ``n_matched`` / ``matched`` (indices into ``keys``) and
+    ``release_date``.
     """
     try:
         with hits_slot():

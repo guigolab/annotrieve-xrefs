@@ -21,6 +21,7 @@ def test_hits_exact_name(client: TestClient) -> None:
         "source",
         "n_matched",
         "matched",
+        "release_date",
     ]
     assert body["sources"]["3"] == {"label": "RefSeq"}
     assert body["include_taxids"] == []
@@ -48,6 +49,9 @@ def test_hits_exact_name(client: TestClient) -> None:
     assert human[2] == 3  # RefSeq
     assert human[3] == 1  # one term
     assert set(human[4]) == {0, 1}
+    assert human[5] == "2024-01-02T00:00:00"
+    mouse = next(row for row in body["rows"] if row[0] == "ann-mouse")
+    assert mouse[5] is None
 
 
 def test_hits_prefix_expand(client: TestClient) -> None:
@@ -239,7 +243,8 @@ def test_hits_chunked_postings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             annotation_key INTEGER PRIMARY KEY,
             annotation_id TEXT, taxid INT, assembly_accession TEXT,
             organism_name TEXT, source_database TEXT,
-            source_provider TEXT, profile_id TEXT, gff_path TEXT
+            source_provider TEXT, profile_id TEXT, gff_path TEXT,
+            release_date TEXT
         );
         CREATE TABLE annotation_lineage (
             annotation_key INT, taxid INT,
@@ -250,7 +255,8 @@ def test_hits_chunked_postings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     conn.execute(
         """
         INSERT INTO annotation VALUES
-        (1, 'ann-a', 9606, 'GCF_x', 'Homo', 'RefSeq', 'NCBI', 'refseq', '/t')
+        (1, 'ann-a', 9606, 'GCF_x', 'Homo', 'RefSeq', 'NCBI', 'refseq',
+         '/t', NULL)
         """
     )
     conn.execute("INSERT INTO annotation_lineage VALUES (1, 9606)")
@@ -291,7 +297,8 @@ def test_hits_prefix_too_broad(tmp_path: Path) -> None:
             annotation_key INTEGER PRIMARY KEY,
             annotation_id TEXT, taxid INT, assembly_accession TEXT,
             organism_name TEXT, source_database TEXT,
-            source_provider TEXT, profile_id TEXT, gff_path TEXT
+            source_provider TEXT, profile_id TEXT, gff_path TEXT,
+            release_date TEXT
         );
         CREATE TABLE annotation_lineage (
             annotation_key INT, taxid INT,
