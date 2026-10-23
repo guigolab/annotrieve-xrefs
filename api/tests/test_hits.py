@@ -22,6 +22,7 @@ def test_hits_exact_name(client: TestClient) -> None:
         "n_matched",
         "matched",
         "release_date",
+        "assembly_name",
     ]
     assert body["sources"]["3"] == {"label": "RefSeq"}
     assert body["include_taxids"] == []
@@ -50,8 +51,10 @@ def test_hits_exact_name(client: TestClient) -> None:
     assert human[3] == 1  # one term
     assert set(human[4]) == {0, 1}
     assert human[5] == "2024-01-02T00:00:00"
+    assert human[6] == "GRCh38.p14"
     mouse = next(row for row in body["rows"] if row[0] == "ann-mouse")
     assert mouse[5] is None
+    assert mouse[6] is None
 
 
 def test_hits_prefix_expand(client: TestClient) -> None:
@@ -244,7 +247,7 @@ def test_hits_chunked_postings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             annotation_id TEXT, taxid INT, assembly_accession TEXT,
             organism_name TEXT, source_database TEXT,
             source_provider TEXT, profile_id TEXT, gff_path TEXT,
-            release_date TEXT
+            release_date TEXT, assembly_name TEXT
         );
         CREATE TABLE annotation_lineage (
             annotation_key INT, taxid INT,
@@ -256,7 +259,7 @@ def test_hits_chunked_postings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         """
         INSERT INTO annotation VALUES
         (1, 'ann-a', 9606, 'GCF_x', 'Homo', 'RefSeq', 'NCBI', 'refseq',
-         '/t', NULL)
+         '/t', NULL, NULL)
         """
     )
     conn.execute("INSERT INTO annotation_lineage VALUES (1, 9606)")
@@ -298,7 +301,7 @@ def test_hits_prefix_too_broad(tmp_path: Path) -> None:
             annotation_id TEXT, taxid INT, assembly_accession TEXT,
             organism_name TEXT, source_database TEXT,
             source_provider TEXT, profile_id TEXT, gff_path TEXT,
-            release_date TEXT
+            release_date TEXT, assembly_name TEXT
         );
         CREATE TABLE annotation_lineage (
             annotation_key INT, taxid INT,

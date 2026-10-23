@@ -23,6 +23,7 @@ HITS_FIELDS = [
     "n_matched",
     "matched",
     "release_date",
+    "assembly_name",
 ]
 
 HITS_SOURCES: dict[str, dict[str, str]] = {
@@ -203,7 +204,7 @@ def _fetch_annotations(
         rows = conn.execute(
             f"""
             SELECT annotation_key, annotation_id, taxid, source_database,
-                   release_date
+                   release_date, assembly_name
             FROM annotation
             WHERE annotation_key IN ({placeholders})
             """,
@@ -212,6 +213,13 @@ def _fetch_annotations(
         for row in rows:
             by_key[int(row["annotation_key"])] = row
     return by_key
+
+
+def _optional_text(raw) -> str | None:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
 
 
 def _envelope(
@@ -396,12 +404,6 @@ def list_name_hits(
             continue
         key_idxs = sorted(ann_to_key_idxs[ak])
         n_matched = len({keys[ki]["term"] for ki in key_idxs})
-        release_raw = row["release_date"]
-        release_date = (
-            str(release_raw).strip() if release_raw is not None else None
-        )
-        if release_date == "":
-            release_date = None
         scored.append(
             (
                 n_matched,
@@ -412,7 +414,8 @@ def list_name_hits(
                     source_code(row["source_database"]),
                     n_matched,
                     key_idxs,
-                    release_date,
+                    _optional_text(row["release_date"]),
+                    _optional_text(row["assembly_name"]),
                 ],
             )
         )

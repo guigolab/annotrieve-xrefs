@@ -31,7 +31,8 @@ def _init_global(path: Path) -> None:
             source_provider TEXT,
             profile_id TEXT NOT NULL,
             gff_path TEXT,
-            release_date TEXT
+            release_date TEXT,
+            assembly_name TEXT
         );
         CREATE TABLE annotation_lineage (
             annotation_key INTEGER NOT NULL,
@@ -112,7 +113,8 @@ def _init_global(path: Path) -> None:
         """
         INSERT INTO annotation VALUES
         (1, 'ann-human', 9606, 'GCF_000001405.40', 'Homo sapiens',
-         'RefSeq', 'NCBI', 'refseq', '/tmp/h.gff.gz', '2024-01-02T00:00:00')
+         'RefSeq', 'NCBI', 'refseq', '/tmp/h.gff.gz', '2024-01-02T00:00:00',
+         'GRCh38.p14')
         """
     )
     # Mouse annotation
@@ -120,7 +122,7 @@ def _init_global(path: Path) -> None:
         """
         INSERT INTO annotation VALUES
         (2, 'ann-mouse', 10090, 'GCF_000001635.27', 'Mus musculus',
-         'RefSeq', 'NCBI', 'refseq', '/tmp/m.gff.gz', NULL)
+         'RefSeq', 'NCBI', 'refseq', '/tmp/m.gff.gz', NULL, NULL)
         """
     )
     for ak, taxids in (

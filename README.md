@@ -85,14 +85,14 @@ POST /hits
   "include_taxids": [7742],
   "exclude_taxids": [],
   "total": 2,
-  "fields": ["annotation_id", "taxid", "source", "n_matched", "matched", "release_date"],
+  "fields": ["annotation_id", "taxid", "source", "n_matched", "matched", "release_date", "assembly_name"],
   "rows": [
-    ["ann-human", 9606, 3, 2, [0, 1], "2024-01-02T00:00:00"]
+    ["ann-human", 9606, 3, 2, [0, 1], "2024-01-02T00:00:00", "GRCh38.p14"]
   ]
 }
 ```
 
-`matched` lists indices into `keys`. `n_matched` is the number of distinct input **terms** those keys cover. `release_date` is the annotation source release (ISO string or `null`). `matched_namespaces` / `n_hits` on each term reflect postings **after** tax filters. The response is the full hit set (no pagination); clients derive taxon sets from row `taxid`s.
+`matched` lists indices into `keys`. `n_matched` is the number of distinct input **terms** those keys cover. `release_date` is the annotation source release (ISO string or `null`); `assembly_name` is the assembly display name (or `null`). `matched_namespaces` / `n_hits` on each term reflect postings **after** tax filters. The response is the full hit set (no pagination); clients derive taxon sets from row `taxid`s.
 
 ### `GET /annotations/{annotation_id}/namespaces`
 
