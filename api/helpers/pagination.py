@@ -8,8 +8,8 @@ MAX_CURIES_GET = 20
 MAX_ACCESSIONS_FILTER = MAX_CURIES_GET
 MIN_Q_LEN = 3
 
-# Gene-name /hits caps
-MAX_NAMES_GET = 50
+# Gene-name /hits caps (GET stays cacheable via nginx; POST is fallback)
+MAX_NAMES_GET = 200
 MAX_NAMES_POST = 200
 MAX_PREFIX_EXPAND = 500
 MIN_PREFIX_LEN = 3

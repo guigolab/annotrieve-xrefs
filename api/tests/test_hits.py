@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from helpers.pagination import MAX_PREFIX_EXPAND
 from services.hits import list_name_hits
 
 
@@ -19,11 +18,11 @@ def test_hits_exact_name(client: TestClient) -> None:
         "annotation_id",
         "taxid",
         "source",
-        "n_matched",
         "matched",
         "release_date",
         "assembly_name",
     ]
+    assert "keys" not in body
     assert body["sources"]["3"] == {"label": "RefSeq"}
     assert body["include_taxids"] == []
     assert body["exclude_taxids"] == []
@@ -31,70 +30,56 @@ def test_hits_exact_name(client: TestClient) -> None:
     term = body["terms"][0]
     assert term["input"] == "TP53"
     assert term["name"] == "tp53"
-    assert set(term["matched_namespaces"]) == {"alias", "symbol"}
+    assert set(term["namespaces"]) == {"alias", "symbol"}
     assert term["n_hits"] == 2
     assert "expanded" not in term
 
-    # keys: symbol+alias for tp53
-    assert len(body["keys"]) == 2
-    assert { (k["name"], k["ns"]) for k in body["keys"] } == {
-        ("tp53", "symbol"),
-        ("tp53", "alias"),
-    }
-    assert all(k["term"] == 0 for k in body["keys"])
     assert body["total"] == 2
     assert len(body["rows"]) == 2
-    # Sorted by n_matched desc — human has both ns → more key hits
     human = next(row for row in body["rows"] if row[0] == "ann-human")
     assert human[1] == 9606
     assert human[2] == 3  # RefSeq
-    assert human[3] == 1  # one term
-    assert set(human[4]) == {0, 1}
-    assert human[5] == "2024-01-02T00:00:00"
-    assert human[6] == "GRCh38.p14"
+    assert human[3] == [0]  # term indices
+    assert human[4] == "2024-01-02T00:00:00"
+    assert human[5] == "GRCh38.p14"
     mouse = next(row for row in body["rows"] if row[0] == "ann-mouse")
+    assert mouse[3] == [0]
+    assert mouse[4] is None
     assert mouse[5] is None
-    assert mouse[6] is None
 
 
-def test_hits_prefix_expand(client: TestClient) -> None:
+def test_hits_rejects_wildcard(client: TestClient) -> None:
     r = client.get("/hits", params={"names": "gpx4*"})
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "wildcard_not_supported"
+
+
+def test_hits_multi_term_union(client: TestClient) -> None:
+    r = client.get("/hits", params={"names": "selenop,sepp1"})
     assert r.status_code == 200
     body = r.json()
-    term = body["terms"][0]
-    assert term["name"] == "gpx4*"
-    assert term["expanded"] == ["gpx4", "gpx4a", "gpx4b"]
-    assert term["matched_namespaces"] == ["symbol"]
-    assert term["n_hits"] == 2
-    names = {k["name"] for k in body["keys"]}
-    assert names == {"gpx4", "gpx4a", "gpx4b"}
-    assert body["total"] == 2
-
-
-def test_hits_match_all_and_any(client: TestClient) -> None:
-    any_r = client.get(
-        "/hits", params={"names": "selenop,sepp1", "match": "any"}
-    )
-    assert any_r.status_code == 200
-    assert any_r.json()["total"] == 1
-
-    all_r = client.get(
-        "/hits", params={"names": "selenop,sepp1", "match": "all"}
-    )
-    assert all_r.status_code == 200
-    body = all_r.json()
     assert body["total"] == 1
     row = body["rows"][0]
     assert row[0] == "ann-human"
-    assert row[3] == 2  # both terms
+    assert set(row[3]) == {0, 1}
 
-    # missing name → match=all empty rows
-    miss = client.get(
-        "/hits", params={"names": "tp53,nope", "match": "all"}
-    )
-    assert miss.status_code == 200
-    assert miss.json()["total"] == 0
-    assert miss.json()["terms"][1]["n_hits"] == 0
+
+def test_hits_unknown_name(client: TestClient) -> None:
+    r = client.get("/hits", params={"names": "tp53,nope"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 2
+    assert body["terms"][1]["name"] == "nope"
+    assert body["terms"][1]["n_hits"] == 0
+    assert body["terms"][1]["namespaces"] == []
+
+
+def test_hits_dedupe_casefold(client: TestClient) -> None:
+    r = client.get("/hits", params={"names": "TP53,tp53"})
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["terms"]) == 1
+    assert body["terms"][0]["input"] == "TP53"
 
 
 def test_hits_include_exclude_taxids(client: TestClient) -> None:
@@ -108,6 +93,7 @@ def test_hits_include_exclude_taxids(client: TestClient) -> None:
     assert body["total"] == 1
     assert body["rows"][0][0] == "ann-human"
     assert body["terms"][0]["n_hits"] == 1
+    assert set(body["terms"][0]["namespaces"]) == {"alias", "symbol"}
 
     no_human = client.get(
         "/hits",
@@ -118,25 +104,20 @@ def test_hits_include_exclude_taxids(client: TestClient) -> None:
     assert body["exclude_taxids"] == [9606]
     assert body["total"] == 1
     assert body["rows"][0][0] == "ann-mouse"
+    assert body["terms"][0]["namespaces"] == ["symbol"]
 
 
 def test_hits_post_and_multi_term_matched(client: TestClient) -> None:
     r = client.post(
         "/hits",
-        json={
-            "names": ["SELENOP", "SEPP1", "gpx4*"],
-            "match": "any",
-        },
+        json={"names": ["SELENOP", "SEPP1", "gpx4"]},
     )
     assert r.status_code == 200
     body = r.json()
     assert len(body["terms"]) == 3
-    assert body["terms"][2]["expanded"] == ["gpx4", "gpx4a", "gpx4b"]
-    # Human matches selenop + sepp1 + gpx4/gpx4a
+    assert "expanded" not in body["terms"][2]
     human = next(row for row in body["rows"] if row[0] == "ann-human")
-    assert human[3] == 3
-    key_terms = {body["keys"][i]["term"] for i in human[4]}
-    assert key_terms == {0, 1, 2}
+    assert set(human[3]) == {0, 1, 2}
 
 
 def test_hits_validation_errors(client: TestClient) -> None:
@@ -146,41 +127,103 @@ def test_hits_validation_errors(client: TestClient) -> None:
     assert empty.status_code == 422
     assert empty.json()["detail"]["code"] == "names_required"
 
-    short = client.get("/hits", params={"names": "ab*"})
-    assert short.status_code == 422
-    assert short.json()["detail"]["code"] == "prefix_too_short"
-
     bad_tax = client.get(
         "/hits", params={"names": "tp53", "include_taxids": "nope"}
     )
     assert bad_tax.status_code == 422
     assert bad_tax.json()["detail"]["code"] == "invalid_taxid"
 
-    bad_match = client.get(
-        "/hits", params={"names": "tp53", "match": "xor"}
+
+def test_hits_too_many_names(client: TestClient) -> None:
+    from helpers.pagination import MAX_NAMES_GET
+
+    names = ",".join(f"gene{i}" for i in range(MAX_NAMES_GET + 1))
+    r = client.get("/hits", params={"names": names})
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "too_many_names"
+    assert "n_matched" not in (
+        client.get("/hits", params={"names": "tp53"}).json()["fields"]
     )
-    assert bad_match.status_code == 422
-    assert bad_match.json()["detail"]["code"] == "invalid_match"
 
 
-def test_hits_tax_filter_strips_empty_namespaces(client: TestClient) -> None:
-    """alias:tp53 is human-only; mouse include must drop alias from namespaces."""
-    r = client.get(
-        "/hits",
-        params={"names": "tp53", "include_taxids": "10090"},
-    )
+def test_hits_post_too_many_names(client: TestClient) -> None:
+    """POST shares too_many_names with GET (no pydantic max_length shape)."""
+    from helpers.pagination import MAX_NAMES_POST
+
+    names = [f"gene{i}" for i in range(MAX_NAMES_POST + 1)]
+    r = client.post("/hits", json={"names": names})
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "too_many_names"
+
+
+def test_hits_post_casefold_dedupe_under_cap(client: TestClient) -> None:
+    from helpers.pagination import MAX_NAMES_POST
+
+    names: list[str] = []
+    for i in range(MAX_NAMES_POST):
+        names.append(f"gene{i}")
+        names.append(f"GENE{i}")
+    r = client.post("/hits", json={"names": names})
+    assert r.status_code == 200
+    assert len(r.json()["terms"]) == MAX_NAMES_POST
+
+
+def test_hits_casefold_dedupe_under_cap(client: TestClient) -> None:
+    """Casefolded duplicates do not count toward too_many_names."""
+    from helpers.pagination import MAX_NAMES_GET
+
+    parts: list[str] = []
+    for i in range(MAX_NAMES_GET):
+        parts.append(f"gene{i}")
+        parts.append(f"GENE{i}")
+    r = client.get("/hits", params={"names": ",".join(parts)})
     assert r.status_code == 200
     body = r.json()
+    assert len(body["terms"]) == MAX_NAMES_GET
+    assert "keys" not in body
+    assert "n_matched" not in body["fields"]
+
+
+def test_hits_orphan_xref_keys_ignored(tmp_path: Path) -> None:
+    """xref_file keys missing from annotation do not inflate n_hits."""
+    db = tmp_path / "orphan.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE xref_file (
+            namespace TEXT, accession TEXT, annotation_key INT,
+            PRIMARY KEY (namespace, accession, annotation_key)
+        );
+        CREATE TABLE annotation (
+            annotation_key INTEGER PRIMARY KEY,
+            annotation_id TEXT, taxid INT, assembly_accession TEXT,
+            organism_name TEXT, source_database TEXT,
+            source_provider TEXT, profile_id TEXT, gff_path TEXT,
+            release_date TEXT, assembly_name TEXT
+        );
+        CREATE TABLE annotation_lineage (
+            annotation_key INT, taxid INT,
+            PRIMARY KEY (annotation_key, taxid)
+        );
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO annotation VALUES
+        (1, 'ann-real', 9606, 'GCF_x', 'Homo', 'RefSeq', 'NCBI', 'refseq',
+         '/t', NULL, NULL)
+        """
+    )
+    conn.execute("INSERT INTO annotation_lineage VALUES (1, 9606)")
+    conn.execute("INSERT INTO xref_file VALUES ('symbol', 'tp53', 1)")
+    conn.execute("INSERT INTO xref_file VALUES ('symbol', 'tp53', 999)")  # orphan
+    conn.commit()
+    body = list_name_hits(conn, ["TP53"])
+    conn.close()
     assert body["total"] == 1
-    assert body["rows"][0][0] == "ann-mouse"
-    term = body["terms"][0]
-    assert term["matched_namespaces"] == ["symbol"]
-    assert term["n_hits"] == 1
-    # keys still list both ns (xref_file presence); only symbol contributes hits
-    assert { (k["name"], k["ns"]) for k in body["keys"] } == {
-        ("tp53", "symbol"),
-        ("tp53", "alias"),
-    }
+    assert body["terms"][0]["n_hits"] == 1
+    assert body["rows"][0][0] == "ann-real"
 
 
 def test_hits_too_many_taxids(client: TestClient) -> None:
@@ -222,8 +265,10 @@ def test_hits_post_int_taxids(client: TestClient) -> None:
     assert body["rows"][0][0] == "ann-human"
 
 
-def test_hits_chunked_postings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Many (ns, acc) pairs must not blow SQLite bind limits."""
+def test_hits_chunked_postings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Many accessions must not blow SQLite bind limits."""
     import services.hits as hits_mod
 
     monkeypatch.setattr(hits_mod, "_SQLITE_MAX_VARS", 6)
@@ -233,11 +278,6 @@ def test_hits_chunked_postings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     conn.row_factory = sqlite3.Row
     conn.executescript(
         """
-        CREATE TABLE xref_meta (
-            namespace TEXT, accession TEXT,
-            n_annotations INT, n_loci INT,
-            PRIMARY KEY (namespace, accession)
-        );
         CREATE TABLE xref_file (
             namespace TEXT, accession TEXT, annotation_key INT,
             PRIMARY KEY (namespace, accession, annotation_key)
@@ -268,9 +308,6 @@ def test_hits_chunked_postings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         acc = f"gene{i:02d}"
         names.append(acc)
         conn.execute(
-            "INSERT INTO xref_meta VALUES ('symbol', ?, 1, 1)", (acc,)
-        )
-        conn.execute(
             "INSERT INTO xref_file VALUES ('symbol', ?, 1)", (acc,)
         )
     conn.commit()
@@ -278,47 +315,5 @@ def test_hits_chunked_postings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     conn.close()
     assert body["total"] == 1
     assert body["terms"][0]["n_hits"] == 1
-    assert len(body["keys"]) == 20
-
-
-def test_hits_prefix_too_broad(tmp_path: Path) -> None:
-    db = tmp_path / "broad.sqlite"
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
-    conn.executescript(
-        """
-        CREATE TABLE xref_meta (
-            namespace TEXT, accession TEXT,
-            n_annotations INT, n_loci INT,
-            PRIMARY KEY (namespace, accession)
-        );
-        CREATE TABLE xref_file (
-            namespace TEXT, accession TEXT, annotation_key INT,
-            PRIMARY KEY (namespace, accession, annotation_key)
-        );
-        CREATE TABLE annotation (
-            annotation_key INTEGER PRIMARY KEY,
-            annotation_id TEXT, taxid INT, assembly_accession TEXT,
-            organism_name TEXT, source_database TEXT,
-            source_provider TEXT, profile_id TEXT, gff_path TEXT,
-            release_date TEXT, assembly_name TEXT
-        );
-        CREATE TABLE annotation_lineage (
-            annotation_key INT, taxid INT,
-            PRIMARY KEY (annotation_key, taxid)
-        );
-        """
-    )
-    for i in range(MAX_PREFIX_EXPAND + 1):
-        acc = f"zzz{i:04d}"
-        conn.execute(
-            "INSERT INTO xref_meta VALUES ('symbol', ?, 1, 1)", (acc,)
-        )
-    conn.commit()
-    with pytest.raises(Exception) as excinfo:
-        list_name_hits(conn, "zzz*")
-    conn.close()
-    from helpers.cursor import QueryError
-
-    assert isinstance(excinfo.value, QueryError)
-    assert excinfo.value.code == "prefix_too_broad"
+    assert len(body["terms"]) == 20
+    assert set(body["rows"][0][3]) == set(range(20))

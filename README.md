@@ -8,9 +8,10 @@ This service is a sidecar to Annotrieve. Annotrieve owns the main annotation cat
 
 Typical flow (happy path):
 
-1. **Search by gene names** — `GET|POST /hits?names=…` (symbol∪alias; optional `*` prefix)
-2. **Drill in** — `GET /annotations/{id}/genes?names=…` and `…/xrefs`
-3. **Or browse xrefs** — `…/namespaces` → `…/namespaces/{ns}/accessions?q=…` → `…/genes?curies=ns:acc`
+1. **Discover names (optional)** — `GET /names?prefix=…` (prefix suggestions with categories)
+2. **Search by exact gene names** — `GET|POST /hits?names=…` (symbol∪alias; no wildcards)
+3. **Drill in** — `GET /annotations/{id}/genes?names=…` and `…/xrefs`
+4. **Or browse xrefs** — `…/namespaces` → `…/namespaces/{ns}/accessions?q=…` → `…/genes?curies=ns:acc`
 
 ---
 
@@ -51,48 +52,72 @@ Inside one annotation, browse any harvested namespace (Tier A and chip namespace
 
 Paths bow are relative to the base URL.
 
+### `GET /names`
+
+**Prefix discovery** for the gene-name sheet. Returns distinct symbol∪alias accessions under a prefix, with annotation counts in the current taxon scope and a server-assigned `category`.
+
+
+| Parameter        | Notes                                                                                                                   |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `prefix`         | Required. Casefolded stem, no `*`. At least **3** characters (`422 prefix_too_short`). `*` → `422 invalid_prefix`.     |
+| `include_taxids` | Optional CSV; keep annotations whose lineage includes any listed taxid. Cap **50** (`422 too_many_taxids`).             |
+| `exclude_taxids` | Optional; drop annotations whose lineage includes any listed taxid. Cap **50**.                                         |
+
+
+More than **500** distinct names → `422 prefix_too_broad`. No pagination (bounded by that expand cap). Results ordered by `n_annotations` desc, then `name`. Categories (first-match-wins): `pseudogene`, `numbered`, `homeolog`, `predicted`, `exact`, `other`.
+
+```http
+GET /names?prefix=seleno&include_taxids=7742
+```
+
+```json
+{
+  "prefix": "seleno",
+  "include_taxids": [7742],
+  "exclude_taxids": [],
+  "total": 37,
+  "results": [
+    {"name": "selenop", "category": "exact", "n_annotations": 8123}
+  ]
+}
+```
+
 ### `GET` / `POST /hits`
 
-**Gene-name presence search** (primary API). Names are matched against **symbol ∪ alias** (casefolded). Optional trailing `*` expands a prefix (min 3 characters before `*`; at most 500 accessions or `422 prefix_too_broad`).
+**Gene-name presence search** (primary API). Exact names only against **symbol ∪ alias** (casefolded). A name containing `*` → `422 wildcard_not_supported` (use `GET /names` for prefix discovery).
 
 
-| Parameterel      | Notes                                                                                                                   |
+| Parameter        | Notes                                                                                                                   |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `names`          | Required. CSV (GET) or JSON list (POST). Cap GET **50** / POST **200**.                                                 |
+| `names`          | Required. CSV (GET) or JSON list (POST). Cap GET **200** / POST **200**. Casefolded duplicates count once.             |
 | `include_taxids` | Optional CSV/list; keep annotations whose lineage includes any listed taxid. Cap **50** taxids (`422 too_many_taxids`). |
 | `exclude_taxids` | Optional; drop annotations whose lineage includes any listed taxid. Cap **50**.                                         |
-| `match`          | `any` (default) or `all` — union vs intersection over **input names**                                                   |
 
 
 ```http
-GET /hits?names=SELENOP,SEPP1,gpx4*&include_taxids=7742&match=any
+GET /hits?names=SELENOP,SEPP1,TP53&include_taxids=7742
 POST /hits
-{"names": ["SELENOP", "SEPP1", "gpx4*"], "match": "all", "include_taxids": [9606]}
+{"names": ["SELENOP", "SEPP1", "TP53"], "include_taxids": [9606]}
 ```
 
 ```json
 {
   "terms": [
-    {"input": "SELENOP", "name": "selenop", "matched_namespaces": ["symbol"], "n_hits": 1},
-    {"input": "gpx4*", "name": "gpx4*", "matched_namespaces": ["symbol"],
-     "expanded": ["gpx4", "gpx4a", "gpx4b"], "n_hits": 2}
-  ],
-  "keys": [
-    {"term": 0, "name": "selenop", "ns": "symbol"},
-    {"term": 1, "name": "gpx4", "ns": "symbol"}
+    {"input": "SELENOP", "name": "selenop", "namespaces": ["symbol"], "n_hits": 1},
+    {"input": "TP53", "name": "tp53", "namespaces": ["symbol"], "n_hits": 1}
   ],
   "sources": {"1": {"label": "Ensembl"}, "2": {"label": "GenBank"}, "3": {"label": "RefSeq"}},
   "include_taxids": [7742],
   "exclude_taxids": [],
   "total": 2,
-  "fields": ["annotation_id", "taxid", "source", "n_matched", "matched", "release_date", "assembly_name"],
+  "fields": ["annotation_id", "taxid", "source", "matched", "release_date", "assembly_name"],
   "rows": [
-    ["ann-human", 9606, 3, 2, [0, 1], "2024-01-02T00:00:00", "GRCh38.p14"]
+    ["ann-human", 9606, 3, [0, 1], "2024-01-02T00:00:00", "GRCh38.p14"]
   ]
 }
 ```
 
-`matched` lists indices into `keys`. `n_matched` is the number of distinct input **terms** those keys cover. `release_date` is the annotation source release (ISO string or `null`); `assembly_name` is the assembly display name (or `null`). `matched_namespaces` / `n_hits` on each term reflect postings **after** tax filters. The response is the full hit set (no pagination); clients derive taxon sets from row `taxid`s.
+`matched` lists **term indices** into `terms`. `namespaces` / `n_hits` on each term reflect postings **after** tax filters. The response is the full hit set (no pagination); clients derive taxon sets from row `taxid`s. Prefer GET with a canonical query string so nginx can cache identical sets.
 
 ### `GET /annotations/{annotation_id}/namespaces`
 
@@ -132,21 +157,21 @@ GET /annotations/ann-human/namespaces/refseq_transcript/accessions?q=XM_&limit=5
 
 ### `GET /annotations/{annotation_id}/genes`
 
-Browse / filter genes inside one annotation. Use **`names`** (symbol∪alias; same token rules as `/hits`, optional `*` prefix) when drilling in from `/hits`, or **`curies`** (`ns:accession` exact keys for any shard namespace) after picking from `/namespaces/{ns}/accessions`. `names` and `curies` are mutually exclusive (`422 names_and_curies`). Taxid filters stay on `/hits` only. `annotation_id` is path-only (not repeated in the JSON).
+Browse / filter genes inside one annotation. Use **`names`** (exact symbol∪alias; wildcards rejected) when drilling in from `/hits`, or **`curies`** (`ns:accession` exact keys for any shard namespace) after picking from `/namespaces/{ns}/accessions`. `names` and `curies` are mutually exclusive (`422 names_and_curies`). Taxid filters stay on `/hits` only. `annotation_id` is path-only (not repeated in the JSON).
 
 
-| Parameter         | Notes                                                                                          |
-| ----------------- | ---------------------------------------------------------------------------------------------- |
-| `names`           | Optional CSV gene names (cap **50**). Omit to browse all genes. Mutually exclusive with `curies`. |
-| `curies`          | Optional CSV CURIEs (cap **20**). Exact accessions only. Mutually exclusive with `names`.       |
-| `match`           | `any` (default) or `all` — union vs intersection over **input names or CURIEs**                 |
-| `limit`, `offset` | Pagination; response includes exact `total`                                                    |
+| Parameter         | Notes                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------ |
+| `names`           | Optional CSV exact gene names (cap **200**). Omit to browse all genes. Mutually exclusive with `curies`. |
+| `curies`          | Optional CSV CURIEs (cap **20**). Exact accessions only. Mutually exclusive with `names`.         |
+| `match`           | `any` (default) or `all` — union vs intersection over **input names or CURIEs**                   |
+| `limit`, `offset` | Pagination; response includes exact `total`                                                      |
 
 
 When `names` is set, each gene includes `matches`: `{input, name, ns}`. When `curies` is set: `{input, ns, accession}`. Omitted when browsing without a filter.
 
 ```http
-GET /annotations/ann-human/genes?names=SELENOP,gpx4*&match=any&limit=50
+GET /annotations/ann-human/genes?names=SELENOP,TP53&match=any&limit=50
 GET /annotations/ann-human/genes?curies=refseq_transcript:XM_015139305.2
 ```
 

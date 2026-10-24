@@ -174,20 +174,13 @@ def test_annotation_genes_names_exact(client: TestClient) -> None:
     ]
 
 
-def test_annotation_genes_names_prefix(client: TestClient) -> None:
+def test_annotation_genes_names_rejects_wildcard(client: TestClient) -> None:
     r = client.get(
         "/annotations/ann-human/genes",
         params={"names": "tp5*"},
     )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["total"] == 1
-    gene = body["results"][0]
-    assert gene["primary_name"] == "TP53"
-    assert gene["matches"] == [
-        {"input": "tp5*", "name": "tp53", "ns": "alias"},
-        {"input": "tp5*", "name": "tp53", "ns": "symbol"},
-    ]
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "wildcard_not_supported"
 
 
 def test_annotation_genes_names_match_any_all(client: TestClient) -> None:
@@ -226,7 +219,7 @@ def test_annotation_genes_names_validation(client: TestClient) -> None:
         params={"names": "ab*"},
     )
     assert short.status_code == 422
-    assert short.json()["detail"]["code"] == "prefix_too_short"
+    assert short.json()["detail"]["code"] == "wildcard_not_supported"
 
     bad = client.get(
         "/annotations/ann-human/genes",

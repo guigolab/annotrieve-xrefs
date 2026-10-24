@@ -19,11 +19,7 @@ from helpers.match import (
     parse_curie_list,
     parse_match,
 )
-from helpers.names import (
-    MAX_PREFIX_EXPAND,
-    parse_name_list,
-    split_name_term,
-)
+from helpers.names import parse_exact_name, parse_name_list
 from helpers.paths import per_gff_root, shard_genes_path
 from helpers.pagination import (
     DEFAULT_LIMIT,
@@ -296,35 +292,6 @@ def list_namespace_accessions(
     )
 
 
-def _expand_name_prefix(conn: sqlite3.Connection, prefix: str) -> list[str]:
-    """
-    Distinct symbol∪alias accessions with accession prefix on this shard.
-
-    Raises ``prefix_too_broad`` when more than ``MAX_PREFIX_EXPAND`` match.
-    """
-    rows = conn.execute(
-        """
-        SELECT DISTINCT accession
-        FROM gene_xref
-        WHERE namespace IN ('symbol', 'alias')
-          AND accession >= ?
-          AND accession < ?
-        ORDER BY accession ASC
-        LIMIT ?
-        """,
-        (prefix, prefix + "\uffff", MAX_PREFIX_EXPAND + 1),
-    ).fetchall()
-    if len(rows) > MAX_PREFIX_EXPAND:
-        raise QueryError(
-            f"prefix expands to more than {MAX_PREFIX_EXPAND} accessions",
-            code="prefix_too_broad",
-            max=MAX_PREFIX_EXPAND,
-            expanded=len(rows),
-            prefix=prefix,
-        )
-    return [str(r["accession"]) for r in rows]
-
-
 def _local_ids_for_accessions(
     conn: sqlite3.Connection, accessions: list[str]
 ) -> set[int]:
@@ -402,21 +369,17 @@ def _resolve_name_terms(
     max_names: int,
 ) -> tuple[list[dict], set[int]]:
     """
-    Expand ``names`` into term specs and the filtered local_id set.
+    Resolve exact ``names`` into term specs and the filtered local_id set.
 
-    Each term spec: ``{input, candidates}`` (candidates are casefolded
-    accessions; empty when the prefix expands to nothing).
+    Each term spec: ``{input, candidates}`` (one casefolded accession).
+    Wildcards are rejected (``wildcard_not_supported``).
     """
     raw_names = parse_name_list(names, max_names=max_names)
     terms: list[dict] = []
     per_term: list[set[int]] = []
     for raw in raw_names:
-        inp, name_form, is_prefix = split_name_term(raw)
-        if is_prefix:
-            stem = name_form[:-1]
-            candidates = _expand_name_prefix(conn, stem)
-        else:
-            candidates = [name_form]
+        inp, name_form = parse_exact_name(raw)
+        candidates = [name_form]
         terms.append({"input": inp, "candidates": candidates})
         per_term.append(_local_ids_for_accessions(conn, candidates))
 
@@ -565,8 +528,8 @@ def list_annotation_genes(
     """
     Paginated gene cards for one annotation shard.
 
-    Optional ``names``: symbol∪alias filter (``match=any`` / ``match=all``),
-    same token rules as ``/hits`` including trailing ``*`` prefixes.
+    Optional ``names``: exact symbol∪alias filter (``match=any`` / ``match=all``).
+    Wildcards are rejected (``wildcard_not_supported``).
     Optional ``curies``: exact ``ns:accession`` keys (any shard namespace).
     ``names`` and ``curies`` are mutually exclusive.
     When either filter is set, each gene card includes ``matches``.

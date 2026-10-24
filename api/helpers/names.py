@@ -1,4 +1,4 @@
-"""Parse gene-name lists and taxid filters for ``/hits``."""
+"""Parse gene-name lists, prefixes, and taxid filters."""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -28,19 +28,28 @@ def parse_name_list(
     """
     Split comma-separated (or sequence) name tokens; preserve order, keep raw.
 
-    Empty segments are dropped. Raises if none remain or count exceeds cap.
+    Empty segments are dropped. Casefolded duplicates collapse to the first
+    spelling before the cap is applied (``too_many_names`` counts uniques).
     """
     pieces: Sequence[str] = (
         (raw_values,) if isinstance(raw_values, str) else raw_values
     )
     names: list[str] = []
+    seen: set[str] = set()
     for raw in pieces:
         if raw is None:
             continue
         for part in str(raw).split(","):
             text = part.strip()
-            if text:
-                names.append(text)
+            if not text:
+                continue
+            folded = normalize_name_token(text)
+            # Keep raw spelling for terms[].input; fold for uniqueness.
+            key = folded or text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            names.append(text)
     if not names:
         raise QueryError(
             "at least one name is required",
@@ -120,12 +129,11 @@ def parse_taxid_list(
     return out
 
 
-def split_name_term(raw: str) -> tuple[str, str, bool]:
+def parse_exact_name(raw: str) -> tuple[str, str]:
     """
-    Return ``(input_raw, normalized_name_form, is_prefix)``.
+    Return ``(input_raw, normalized_name)`` for an exact gene name.
 
-    ``normalized_name_form`` keeps a trailing ``*`` for prefix terms.
-    Raises ``QueryError`` for empty fold or too-short prefix stem.
+    Raises ``wildcard_not_supported`` when the token contains ``*``.
     """
     text = (raw or "").strip()
     if not text:
@@ -133,23 +141,46 @@ def split_name_term(raw: str) -> tuple[str, str, bool]:
             "name tokens must be non-empty",
             code="names_required",
         )
-    is_prefix = text.endswith("*")
-    stem = text[:-1] if is_prefix else text
-    folded = normalize_name_token(stem)
+    if "*" in text:
+        raise QueryError(
+            "wildcards are not supported on this endpoint; use GET /names?prefix=",
+            code="wildcard_not_supported",
+        )
+    folded = normalize_name_token(text)
     if not folded:
         raise QueryError(
             "name tokens must be non-empty",
             code="names_required",
         )
-    if is_prefix and len(folded) < MIN_PREFIX_LEN:
+    return text, folded
+
+
+def parse_prefix_query(raw: str) -> str:
+    """
+    Normalize a ``GET /names`` prefix (no wildcard character).
+
+    Strips quotes, casefolds, rejects ``*``, and requires ``MIN_PREFIX_LEN``.
+    """
+    text = (raw or "").strip()
+    if not text:
         raise QueryError(
-            f"prefix names require at least {MIN_PREFIX_LEN} characters "
-            f"before *",
+            "prefix is required",
             code="prefix_too_short",
             min_length=MIN_PREFIX_LEN,
         )
-    name_form = f"{folded}*" if is_prefix else folded
-    return text, name_form, is_prefix
+    if "*" in text:
+        raise QueryError(
+            "prefix must not contain *; pass the stem only",
+            code="invalid_prefix",
+        )
+    folded = normalize_name_token(text)
+    if len(folded) < MIN_PREFIX_LEN:
+        raise QueryError(
+            f"prefix requires at least {MIN_PREFIX_LEN} characters",
+            code="prefix_too_short",
+            min_length=MIN_PREFIX_LEN,
+        )
+    return folded
 
 
 # Re-export caps for services
@@ -157,7 +188,8 @@ __all__ = [
     "MAX_PREFIX_EXPAND",
     "MAX_TAXIDS_FILTER",
     "normalize_name_token",
+    "parse_exact_name",
     "parse_name_list",
+    "parse_prefix_query",
     "parse_taxid_list",
-    "split_name_term",
 ]

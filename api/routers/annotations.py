@@ -35,7 +35,7 @@ _VALIDATION_CODES = frozenset(
         "too_many_curies",
         "names_and_curies",
         "prefix_too_short",
-        "prefix_too_broad",
+        "wildcard_not_supported",
         "invalid_match",
         "missing_colon",
         "empty_prefix",
@@ -125,8 +125,8 @@ def get_annotation_genes(
     names: str | None = Query(
         None,
         description=(
-            "Comma-separated gene names; optional trailing * for prefix "
-            "(symbol∪alias). Mutually exclusive with curies."
+            "Comma-separated exact gene names (symbol∪alias). "
+            "Wildcards are not supported. Mutually exclusive with curies."
         ),
     ),
     curies: str | None = Query(
