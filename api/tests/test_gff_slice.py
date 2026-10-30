@@ -117,7 +117,7 @@ def test_shift_gff_lines_fails_closed_on_garbage():
         )
 
 
-def test_dedupe_gff_lines_by_id():
+def test_dedupe_gff_lines_same_id_same_locus_collapses():
     from helpers.gff_slice import dedupe_gff_lines
 
     lines = [
@@ -129,3 +129,38 @@ def test_dedupe_gff_lines_by_id():
     assert len(out) == 2
     assert "ID=ex1;Parent=txA" in out[0]
     assert "ID=ex2" in out[1]
+
+
+def test_dedupe_keeps_shared_id_cds_segments():
+    """NCBI/RefSeq reuses one CDS ID across exons — all segments must survive."""
+    from helpers.gff_slice import dedupe_gff_lines
+
+    lines = [
+        "chr1\tsrc\tCDS\t120\t200\t.\t+\t0\tID=cds-NP1;Parent=tx1",
+        "chr1\tsrc\tCDS\t300\t380\t.\t+\t2\tID=cds-NP1;Parent=tx1",
+        "chr1\tsrc\tCDS\t400\t450\t.\t+\t1\tID=cds-NP1;Parent=tx1",
+    ]
+    out = dedupe_gff_lines(lines)
+    assert len(out) == 3
+    assert "120\t200" in out[0]
+    assert "300\t380" in out[1]
+    assert "400\t450" in out[2]
+
+
+def test_dedupe_keeps_anonymous_exons_at_different_coords():
+    from helpers.gff_slice import dedupe_gff_lines
+
+    lines = [
+        "chr1\tsrc\texon\t100\t200\t.\t+\t.\tParent=txA",
+        "chr1\tsrc\texon\t300\t400\t.\t+\t.\tParent=txA",
+    ]
+    out = dedupe_gff_lines(lines)
+    assert len(out) == 2
+
+
+def test_dedupe_collapses_identical_anonymous_lines():
+    from helpers.gff_slice import dedupe_gff_lines
+
+    line = "chr1\tsrc\texon\t100\t200\t.\t+\t.\tParent=txA"
+    out = dedupe_gff_lines([line, line])
+    assert len(out) == 1

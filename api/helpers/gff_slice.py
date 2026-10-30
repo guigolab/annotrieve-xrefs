@@ -326,8 +326,13 @@ def _synthetic_transcript(
 
 def dedupe_gff_lines(lines: list[str]) -> list[str]:
     """
-    Keep first occurrence of each feature ``ID``; lines without an ID are
-    keyed by their full content so identical rows collapse once.
+    Collapse duplicate GFF rows while keeping multi-segment features.
+
+    NCBI/RefSeq often reuses one ``ID`` across CDS (or exon) segments at
+    different coordinates. Key those as ``id:{ID}:{start}-{end}:{type}`` so
+    segments are kept; identical locus+ID+type still collapse (e.g. shared
+    exon with different Parent lists). Features without an ID are keyed by
+    the full line so anonymous exons with distinct coords remain distinct.
     """
     out: list[str] = []
     seen: set[str] = set()
@@ -336,7 +341,10 @@ def dedupe_gff_lines(lines: list[str]) -> list[str]:
         if feat is None:
             key = line.rstrip("\n")
         elif feat.feature_id:
-            key = f"id:{feat.feature_id}"
+            key = (
+                f"id:{feat.feature_id}:{feat.start}-{feat.end}:"
+                f"{feat.type.casefold()}"
+            )
         else:
             key = f"line:{feat.raw_line}"
         if key in seen:
