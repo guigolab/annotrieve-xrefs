@@ -125,11 +125,15 @@ class _WindowCache:
             self._nbytes = 0
 
 
-def _per_process_rate() -> float:
-    workers = max(1, int(settings.NCBI_WORKERS))
+def _default_rate() -> float:
+    """Full NCBI budget for this process (shared by all fetch threads).
+
+    ``NCBI_WORKERS`` only controls thread-pool parallelism; it must not shrink
+    the token-bucket rate. One ``NcbiEutilsClient`` / bucket per process via
+    ``get_ncbi_client()``.
+    """
     key = (settings.NCBI_API_KEY or "").strip()
-    total = _RATE_WITH_KEY if key else _RATE_WITHOUT_KEY
-    return total / workers
+    return _RATE_WITH_KEY if key else _RATE_WITHOUT_KEY
 
 
 def _parse_fasta_body(text: str) -> str:
@@ -188,7 +192,7 @@ class NcbiEutilsClient:
         self._api_key = key or None
         self._email = (settings.NCBI_EMAIL or "").strip() or "annotrieve-xrefs@crg.eu"
         self._tool = (settings.NCBI_TOOL or "").strip() or "annotrieve-xrefs"
-        rate = rate_per_sec if rate_per_sec is not None else _per_process_rate()
+        rate = rate_per_sec if rate_per_sec is not None else _default_rate()
         self._bucket = _TokenBucket(rate)
         mb = settings.SEQUENCES_CACHE_MB if cache_mb is None else cache_mb
         self._cache = _WindowCache(max(0, int(mb)) * 1024 * 1024)
@@ -199,10 +203,12 @@ class NcbiEutilsClient:
         )
         self._closed = False
         logger.info(
-            "NCBI efetch client ready: rate=%.2f/s key=%s cache_mb=%s",
+            "NCBI efetch client ready: rate=%.2f/s key=%s cache_mb=%s "
+            "ncbi_workers=%d (shared bucket)",
             rate,
             "yes" if self._api_key else "no",
             mb,
+            max(1, int(settings.NCBI_WORKERS)),
         )
 
     @property

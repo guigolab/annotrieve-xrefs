@@ -62,6 +62,23 @@ def test_rate_with_key(monkeypatch: pytest.MonkeyPatch):
     client.close()
 
 
+def test_default_rate_not_divided_by_workers(monkeypatch: pytest.MonkeyPatch):
+    """NCBI_WORKERS must not shrink the shared process rate bucket."""
+    monkeypatch.setenv("NCBI_API_KEY", "demo-key")
+    import settings as settings_mod
+
+    settings_mod.settings.NCBI_API_KEY = "demo-key"
+    settings_mod.settings.NCBI_WORKERS = 4
+
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(200, text=_fasta("ACGT"))
+    )
+    client = NcbiEutilsClient(cache_mb=0, transport=transport)
+    # Full ~9/s budget, not 9/4.
+    assert abs(client.rate_interval - (1 / 9.0)) < 1e-9
+    client.close()
+
+
 def test_fetch_success_and_cache(monkeypatch: pytest.MonkeyPatch):
     calls = {"n": 0}
 

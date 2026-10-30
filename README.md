@@ -253,7 +253,8 @@ Items are grouped by gene: several isoforms of one gene cost one tabix query, on
 
 - `ANNOTATIONS_DIR` — mount of Annotrieve’s annotation files (prod: `/data/annotations`).
 - `ANNOTATIONS_GFF_PATH_PREFIX` — optional harvest `--files-root` to rebase `annotation.gff_path`.
-- `NCBI_API_KEY` — optional; with key ~9 req/s total, without ~2.5 req/s (split across `NCBI_WORKERS`).
+- `NCBI_API_KEY` — optional; with key ~9 req/s, without ~2.5 req/s (one shared token bucket per API process).
+- `NCBI_WORKERS` — fetch thread-pool size only (does not divide the rate).
 - `NCBI_EMAIL`, `NCBI_TOOL`, gunicorn `--timeout 900`, nginx `proxy_read_timeout 900s` on this location.
 
 ---
