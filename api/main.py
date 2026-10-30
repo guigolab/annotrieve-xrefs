@@ -10,13 +10,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from helpers.errors import error_detail
+from helpers.ncbi_eutils import close_ncbi_client
 from helpers.session import close_reader
 from routers import api_router
+from services.sequences import close_tabix_handles
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     yield
+    close_tabix_handles()
+    close_ncbi_client()
     close_reader()
 
 
@@ -73,7 +77,13 @@ def create_app() -> FastAPI:
         allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS", "HEAD"],
         allow_headers=["Content-Type", "Accept", "Cache-Control"],
-        expose_headers=["Content-Length", "Content-Type", "Cache-Control"],
+        expose_headers=[
+            "Content-Length",
+            "Content-Type",
+            "Cache-Control",
+            "Content-Disposition",
+            "X-Sequence-Count",
+        ],
         max_age=86400,
     )
 

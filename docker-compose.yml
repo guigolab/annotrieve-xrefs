@@ -32,16 +32,27 @@ services:
       dockerfile: api/Dockerfile
     container_name: annotrieve-xrefs-api
     restart: always
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - /data/annotrieve/gene_corpus:/data/gene_corpus:ro
+      - ${ANNOTATIONS_DATA_PATH:-/data/annotrieve/files}:/data/annotations:ro
+      - xrefs_tmp:/tmp
     environment:
       - GENE_CORPUS_DIR=/data/gene_corpus
+      - ANNOTATIONS_DIR=/data/annotations
+      - NCBI_WORKERS=2
       - PYTHONPATH=/home/appuser
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
+      - TMPDIR=/tmp
     expose:
       - "5000"
     networks:
       - monstre
+
+volumes:
+  xrefs_tmp:
 
 networks:
   monstre:

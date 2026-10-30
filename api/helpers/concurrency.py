@@ -5,13 +5,19 @@ import threading
 from contextlib import contextmanager
 from collections.abc import Iterator
 
+from settings import settings
+
 # Cap overlapping annotation-search work per gunicorn worker (RAM back-pressure).
 HITS_MAX_INFLIGHT = 16
 _HITS_SEMAPHORE = threading.Semaphore(HITS_MAX_INFLIGHT)
 
+_SEQUENCES_SEMAPHORE = threading.Semaphore(
+    max(1, int(settings.SEQUENCES_MAX_INFLIGHT))
+)
+
 
 class BusyError(Exception):
-    """Raised when the hits concurrency gate is saturated."""
+    """Raised when a concurrency gate is saturated."""
 
 
 @contextmanager
@@ -27,3 +33,18 @@ def hits_slot(*, blocking: bool = False) -> Iterator[None]:
         yield
     finally:
         _HITS_SEMAPHORE.release()
+
+
+@contextmanager
+def sequences_slot(*, blocking: bool = False) -> Iterator[None]:
+    """
+    Acquire a sequences in-flight slot.
+
+    Non-blocking by default: raises ``BusyError`` if all slots are taken.
+    """
+    if not _SEQUENCES_SEMAPHORE.acquire(blocking=blocking):
+        raise BusyError("too many concurrent sequences requests")
+    try:
+        yield
+    finally:
+        _SEQUENCES_SEMAPHORE.release()

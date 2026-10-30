@@ -23,6 +23,7 @@ server {
     gzip on;
     gzip_types
         text/plain
+        text/x-fasta
         application/json
         application/javascript
         text/css
@@ -59,6 +60,32 @@ server {
         proxy_read_timeout 30s;
 
         add_header Cache-Control "no-store" always;
+    }
+
+    # Bulk FASTA export: long timeout, no buffering/cache (POST-only).
+    location = /annotrieve-xrefs/api/v1/sequences {
+        access_log /var/log/nginx/api.log analytics_json;
+
+        limit_req zone=xrefs_global burst=40 nodelay;
+        limit_req_status 429;
+
+        rewrite ^/annotrieve-xrefs/api/v1/?(.*)$ /$1 break;
+        proxy_pass http://annotrieve-xrefs-api:5000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin $http_origin;
+        client_max_body_size 1M;
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 900s;
+        proxy_read_timeout 900s;
+
+        proxy_buffering off;
+        proxy_request_buffering on;
+
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
     }
 
     location /annotrieve-xrefs/api/v1/ {

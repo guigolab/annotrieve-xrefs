@@ -2,5 +2,6 @@ fastapi
 uvicorn[standard]
 gunicorn
 httpx
+pysam
 pytest
 pytest-asyncio

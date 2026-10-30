@@ -15,6 +15,11 @@ MAX_PREFIX_EXPAND = 500
 MIN_PREFIX_LEN = 3
 MAX_TAXIDS_FILTER = 50
 
+# POST /sequences (bulk FASTA export)
+MAX_SEQUENCES_POST = 200
+MAX_SEQUENCES_BUFFER_BP = 10_000
+MAX_SEQUENCES_ID_CHARS = 256
+
 
 def clamp_limit(limit: int) -> int:
     return max(1, min(int(limit), MAX_LIMIT))

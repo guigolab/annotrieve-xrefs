@@ -202,6 +202,60 @@ One gene card (coordinates, name, prose). No `annotation_id` field (path-scoped)
 
 Paginated xref chips for one gene (`limit` / `offset` / `total`). `annotation_id` and `local_id` are path-only (not repeated in the JSON).
 
+### `POST /sequences`
+
+Bulk transcript FASTA export (POST only; never cached). For each item the API resolves the gene from the shard, finds the requested transcript in the on-disk GFF (one tabix query per gene), fetches only that transcript’s genomic window from NCBI E-utilities, and runs **gffread** to emit CDS, spliced transcript, or protein sequence. Fail-first: the first unresolved seqid / missing transcript / NCBI / gffread error aborts with **no partial body**.
+
+```http
+POST /sequences
+Content-Type: application/json
+
+{
+  "action": "cds",
+  "buffer_bp": 0,
+  "include_exon_coords": false,
+  "items": [
+    {
+      "annotation_id": "ann-human",
+      "local_id": 10,
+      "transcript_id": "XM_015139305.2"
+    }
+  ]
+}
+```
+
+| Field | Notes |
+| --- | --- |
+| `action` | Required. `cds` (gffread `-x`), `transcript` (spliced exons+UTRs, `-w`), or `protein` (`-y`). |
+| `items` | Required. 1..**200** `{annotation_id, local_id, transcript_id}`. `transcript_id` is always required (no longest-transcript default). Duplicates are dropped, first-seen order kept. |
+| `buffer_bp` | Optional. 0..**10000** (default 0). Extra flank on each side; passed to gffread as `--w-add`. Only valid with `action=transcript` (`422 buffer_not_supported` otherwise). |
+| `include_exon_coords` | Optional bool (default false). Passes gffread `-W`. |
+
+**200** `text/x-fasta` with `Content-Disposition: attachment` and `X-Sequence-Count`. Deflines look like:
+
+```text
+>XM_015139305.2|TP53|Homo_sapiens|ann-huma NC_000017.11:7661779-7687550(-) buffer=0
+```
+
+Items are grouped by gene: several isoforms of one gene cost one tabix query, one NCBI fetch (union of requested spans ± buffer), and one gffread run. Overlapping windows on the same accession within 10 kb are coalesced.
+
+**Errors** use the shared `{"detail": {"code", "message", …}}` shape (extras include `index`, `annotation_id`, `local_id`, `transcript_id` when relevant):
+
+| Status | Codes |
+| --- | --- |
+| 422 | `validation_error`, `too_many_items`, `items_required`, `buffer_not_supported`, `seqid_not_resolved`, `no_cds`, `transcript_incomplete`, `transcript_outside_gene`, `transcript_strand_unknown`, `window_too_large` |
+| 404 | `shard_not_found`, `gene_not_found`, `annotation_not_found`, `annotation_file_not_found`, `transcript_not_found` |
+| 503 | `sequences_busy` (+ `Retry-After: 1`), `annotations_unavailable`, `ncbi_rate_limited` (+ `Retry-After`), `gffread_unavailable` |
+| 502/504 | `ncbi_sequence_not_found`, `ncbi_error`, `ncbi_timeout`, `ncbi_sequence_truncated`, `sequences_timeout` |
+| 500 | `gffread_failed` |
+
+**Ops / env** (see `.env.example`; never put the NCBI key in compose):
+
+- `ANNOTATIONS_DIR` — mount of Annotrieve’s annotation files (prod: `/data/annotations`).
+- `ANNOTATIONS_GFF_PATH_PREFIX` — optional harvest `--files-root` to rebase `annotation.gff_path`.
+- `NCBI_API_KEY` — optional; with key ~9 req/s total, without ~2.5 req/s (split across `NCBI_WORKERS`).
+- `NCBI_EMAIL`, `NCBI_TOOL`, gunicorn `--timeout 900`, nginx `proxy_read_timeout 900s` on this location.
+
 ---
 
 
@@ -225,7 +279,9 @@ PYTHONPATH=. python -m gene_corpus.labels --work-dir /path/to/gene_corpus
 ## Appendix: local development
 
 ```bash
+cp .env.example .env   # optional NCBI_API_KEY=
 export GENE_CORPUS_HOST_DIR=/path/to/gene_corpus
+export ANNOTATIONS_HOST_DIR=../annotrieve/files
 docker compose -f docker-compose-dev.yml up --build
 ```
 

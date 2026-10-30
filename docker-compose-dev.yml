@@ -19,13 +19,20 @@ services:
     container_name: annotrieve-xrefs-api
     restart: always
     command: uvicorn main:app --host 0.0.0.0 --port 5000 --reload
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./api:/home/appuser/app
       - ./gene_corpus:/home/appuser/gene_corpus:ro
       - ${GENE_CORPUS_HOST_DIR:-./data/gene_corpus}:/data/gene_corpus:ro
+      - ${ANNOTATIONS_HOST_DIR:-../annotrieve/files}:/data/annotations:ro
     environment:
       - GENE_CORPUS_DIR=/data/gene_corpus
+      - ANNOTATIONS_DIR=/data/annotations
+      - NCBI_WORKERS=1
       - PYTHONPATH=/home/appuser
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
+      - TMPDIR=/tmp
     ports:
       - "5003:5000"
