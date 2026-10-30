@@ -13,3 +13,5 @@ data/
 *.sqlite-shm
 # Local spill for repair_symbol_deletes (part TSVs + cursors at repo root)
 /repair_symbol_deletes/
+# Local spill for repair_gene_hit_deletes (part TSVs + cursors at repo root)
+/repair_gene_hit_deletes/
