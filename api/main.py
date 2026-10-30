@@ -10,14 +10,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from helpers.errors import error_detail
+from helpers.logging_config import configure_logging
 from helpers.ncbi_eutils import close_ncbi_client
 from helpers.session import close_reader
 from routers import api_router
 from services.sequences import close_tabix_handles
 
+# Before create_app / worker serve: INFO must reach stderr for ``docker logs``.
+configure_logging()
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # Re-run after worker boot — gunicorn may have reconfigured logging.
+    configure_logging()
     yield
     close_tabix_handles()
     close_ncbi_client()
@@ -51,6 +57,7 @@ def _compact_validation_errors(exc: RequestValidationError) -> list[dict]:
 
 
 def create_app() -> FastAPI:
+    configure_logging()
     app = FastAPI(
         title="Annotrieve xrefs",
         description=(

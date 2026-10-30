@@ -66,4 +66,4 @@ USER appuser
 
 EXPOSE 5000
 
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "900", "--access-logfile", "-", "--error-logfile", "-", "main:app"]
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "900", "--log-level", "info", "--access-logfile", "-", "--error-logfile", "-", "--capture-output", "main:app"]
