@@ -313,8 +313,12 @@ def _annotation_row(
     }
 
 
-def _open_tabix(gff_path: Path):
-    """Thread-local LRU of TabixFile handles (pysam is not thread-safe)."""
+def _open_tabix(gff_path: Path, index_path: Path | None = None):
+    """Thread-local LRU of TabixFile handles (pysam is not thread-safe).
+
+    Annotrieve indexes with ``tabix --csi`` (``.csi``), not ``.tbi``. Pass the
+    resolved index path so pysam does not default to looking for ``.tbi``.
+    """
     cache: OrderedDict[str, pysam.TabixFile] | None = getattr(
         _TABIX_LOCAL, "handles", None
     )
@@ -323,12 +327,17 @@ def _open_tabix(gff_path: Path):
         _TABIX_LOCAL.handles = cache
         with _TABIX_REGISTRY_LOCK:
             _TABIX_REGISTRY[threading.get_ident()] = cache
-    key = str(gff_path)
+    index = str(index_path) if index_path is not None else None
+    key = f"{gff_path}\0{index or ''}"
     handle = cache.get(key)
     if handle is not None:
         cache.move_to_end(key)
         return handle
-    handle = pysam.TabixFile(str(gff_path))
+    handle = (
+        pysam.TabixFile(str(gff_path), index=index)
+        if index
+        else pysam.TabixFile(str(gff_path))
+    )
     cache[key] = handle
     while len(cache) > _TABIX_MAX_HANDLES:
         _old_key, old = cache.popitem(last=False)
@@ -366,7 +375,7 @@ def _fetch_gene_lines(
     start0 = max(0, int(gene_start) - 1)
     end0 = max(start0 + 1, int(gene_end))
     try:
-        tbx = _open_tabix(files.gff_path)
+        tbx = _open_tabix(files.gff_path, files.csi_path)
         return list(tbx.fetch(seqid, start0, end0))
     except ValueError as exc:
         # Unknown contig etc.
