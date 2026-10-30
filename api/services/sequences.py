@@ -392,6 +392,14 @@ def _fetch_gene_lines(
             status=404,
             gff_path=str(files.gff_path),
         ) from exc
+    except Exception as exc:
+        # pysam.SamtoolsError and other htslib failures are bare Exception.
+        raise SequencesError(
+            "annotation_file_not_found",
+            f"failed to read GFF: {exc}",
+            status=404,
+            gff_path=str(files.gff_path),
+        ) from exc
 
 
 def _group_items(items: list[SequenceItem]) -> list[GeneGroup]:
@@ -418,6 +426,22 @@ def _item_extra(item: SequenceItem, **more: Any) -> dict[str, Any]:
         "transcript_id": item.transcript_id,
     }
     out.update(more)
+    return out
+
+
+_RESERVED_EXTRA_KEYS = frozenset({"status", "retry_after", "code", "message"})
+
+
+def _merge_extra(*parts: dict[str, Any]) -> dict[str, Any]:
+    """Merge error extras; drop keys that collide with SequencesError kwargs."""
+    out: dict[str, Any] = {}
+    for part in parts:
+        if not part:
+            continue
+        for key, value in part.items():
+            if key in _RESERVED_EXTRA_KEYS:
+                continue
+            out[key] = value
     return out
 
 
@@ -478,8 +502,7 @@ def _resolve_group(
                     exc.code,
                     str(exc),
                     status=status,
-                    **_item_extra(first),
-                    **exc.extra,
+                    **_merge_extra(_item_extra(first), exc.extra),
                 ) from exc
         files = files_cache[group.annotation_id]
         group.files = files
@@ -494,8 +517,10 @@ def _resolve_group(
                     exc.code,
                     str(exc),
                     status=422 if exc.code == "seqid_not_resolved" else 404,
-                    **_item_extra(first, seqid=seqid),
-                    **exc.extra,
+                    **_merge_extra(
+                        _item_extra(first, seqid=seqid),
+                        exc.extra,
+                    ),
                 ) from exc
         group.accession = accession_cache[acc_key]
 
@@ -558,11 +583,15 @@ def _resolve_group(
                         f"bounds {gene_start}-{gene_end}"
                     ),
                     status=422,
-                    **_item_extra(item, seqid=seqid),
-                    gene_start=gene_start,
-                    gene_end=gene_end,
-                    tx_start=model.start,
-                    tx_end=model.end,
+                    **_merge_extra(
+                        _item_extra(item, seqid=seqid),
+                        {
+                            "gene_start": gene_start,
+                            "gene_end": gene_end,
+                            "tx_start": model.start,
+                            "tx_end": model.end,
+                        },
+                    ),
                 )
             if action in {SequenceAction.cds, SequenceAction.protein} and not model.has_cds:
                 raise SequencesError(
@@ -584,9 +613,13 @@ def _resolve_group(
                 "window_too_large",
                 f"fetch window {window_len} bp exceeds limit {max_window}",
                 status=422,
-                **_item_extra(first, seqid=seqid),
-                window_bp=window_len,
-                max_window_bp=max_window,
+                **_merge_extra(
+                    _item_extra(first, seqid=seqid),
+                    {
+                        "window_bp": window_len,
+                        "max_window_bp": max_window,
+                    },
+                ),
             )
         group.window = GenomicWindow(
             accession=group.accession,
@@ -740,8 +773,7 @@ def _run_group_gffread(
             exc.code,
             str(exc),
             status=status,
-            **_group_error_extra(group),
-            **exc.extra,
+            **_merge_extra(_group_error_extra(group), exc.extra),
         ) from exc
 
     expected = len(group.items)
@@ -751,9 +783,10 @@ def _run_group_gffread(
             "gffread_failed",
             f"gffread returned {got} records, expected {expected}",
             status=500,
-            **_group_error_extra(group),
-            expected=expected,
-            got=got,
+            **_merge_extra(
+                _group_error_extra(group),
+                {"expected": expected, "got": got},
+            ),
         )
 
     try:
@@ -767,8 +800,7 @@ def _run_group_gffread(
             exc.code,
             str(exc),
             status=500,
-            **_group_error_extra(group),
-            **exc.extra,
+            **_merge_extra(_group_error_extra(group), exc.extra),
         ) from exc
 
     for item in group.items:
@@ -817,9 +849,10 @@ def _validate_truncation(
                     f"transcript ends at {model.end})"
                 ),
                 status=502,
-                **_item_extra(item),
-                expected=expected,
-                got=got,
+                **_merge_extra(
+                    _item_extra(item),
+                    {"expected": expected, "got": got},
+                ),
             )
     # Shortfall must lie only in the 3' buffer (efetch clips at chromosome end).
     # 5' is already clipped to 1 when building the window.
@@ -912,7 +945,7 @@ def export_sequences(
                             str(exc),
                             status=exc.status,
                             retry_after=exc.retry_after,
-                            **exc.extra,
+                            **_merge_extra(exc.extra),
                         ) from exc
                     except SequencesError:
                         for pending in futures:

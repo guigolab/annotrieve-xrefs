@@ -9,7 +9,6 @@ import pytest
 from helpers.annotation_files import (
     AnnotationFilesError,
     clear_annotation_file_caches,
-    is_insdc_accession,
     resolve_annotation_files,
     resolve_seqid_accession,
 )
@@ -27,14 +26,6 @@ def _write_gff_pair(path: Path) -> Path:
     path.write_bytes(b"##gff-version 3\n")
     (Path(str(path) + ".csi")).write_bytes(b"csi")
     return path
-
-
-def test_is_insdc_accession():
-    assert is_insdc_accession("NC_000017.11")
-    assert is_insdc_accession("CM085869.1")
-    assert not is_insdc_accession("1")
-    assert not is_insdc_accession("chr1")
-    assert not is_insdc_accession("NC_000017")  # needs version
 
 
 def test_resolve_by_convention(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -111,7 +102,10 @@ def test_missing_gff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     assert exc.value.code == "annotation_file_not_found"
 
 
-def test_seqid_already_insdc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_seqid_passthrough_when_unmapped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """No chromosomes/aliases → raw seqid is the accession (no regex gate)."""
     root = tmp_path / "annotations"
     gff = _write_gff_pair(root / "9606" / "GCF_1" / "x.gff.gz")
     import settings as settings_mod
@@ -124,6 +118,8 @@ def test_seqid_already_insdc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         source_database="RefSeq",
     )
     assert resolve_seqid_accession(files, "NC_000017.11") == "NC_000017.11"
+    assert resolve_seqid_accession(files, "JAGHMJ010000030.1") == "JAGHMJ010000030.1"
+    assert resolve_seqid_accession(files, "chrZ") == "chrZ"
 
 
 def test_seqid_via_chromosomes_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -187,10 +183,25 @@ def test_seqid_prefer_refseq(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     assert resolve_seqid_accession(files, "17") == "NC_000017.11"
 
 
-def test_seqid_unresolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_seqid_mapped_row_without_accession_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     root = tmp_path / "annotations"
     ass = root / "9606" / "GCA_1"
     gff = _write_gff_pair(ass / "x.gff.gz")
+    (ass / "chromosomes.json").write_text(
+        json.dumps(
+            [
+                {
+                    "chr_name": "1",
+                    "genbank_accession": "",
+                    "refseq_accession": "",
+                    "canonical_id": "",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
     import settings as settings_mod
 
     settings_mod.settings.ANNOTATIONS_DIR = str(root)
@@ -201,5 +212,45 @@ def test_seqid_unresolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         source_database="Ensembl",
     )
     with pytest.raises(AnnotationFilesError) as exc:
-        resolve_seqid_accession(files, "chrZ")
+        resolve_seqid_accession(files, "1")
     assert exc.value.code == "seqid_not_resolved"
+
+
+def test_seqid_empty_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    root = tmp_path / "annotations"
+    gff = _write_gff_pair(root / "9606" / "GCA_1" / "x.gff.gz")
+    import settings as settings_mod
+
+    settings_mod.settings.ANNOTATIONS_DIR = str(root)
+    files = resolve_annotation_files(
+        taxid=9606,
+        assembly_accession="GCA_1",
+        gff_path=str(gff),
+        source_database="Ensembl",
+    )
+    with pytest.raises(AnnotationFilesError) as exc:
+        resolve_seqid_accession(files, "  ")
+    assert exc.value.code == "seqid_not_resolved"
+
+
+def test_seqid_via_alias_refname_passthrough(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Alias maps to a refName that is not in chromosomes.json → use refName."""
+    root = tmp_path / "annotations"
+    ass = root / "9606" / "GCA_2"
+    gff = _write_gff_pair(ass / "x.gff.gz")
+    (ass / "chr_aliases.tsv").write_text(
+        "CM085869.1\tchr1\t1\n",
+        encoding="utf-8",
+    )
+    import settings as settings_mod
+
+    settings_mod.settings.ANNOTATIONS_DIR = str(root)
+    files = resolve_annotation_files(
+        taxid=9606,
+        assembly_accession="GCA_2",
+        gff_path=str(gff),
+        source_database="Ensembl",
+    )
+    assert resolve_seqid_accession(files, "chr1") == "CM085869.1"

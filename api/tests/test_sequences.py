@@ -13,6 +13,26 @@ from fastapi.testclient import TestClient
 from helpers.gffread_runner import SequenceAction
 from helpers.ncbi_eutils import NcbiEutilsClient, close_ncbi_client, reset_ncbi_client
 from helpers.pagination import MAX_SEQUENCES_POST
+from services.sequences import SequencesError, _merge_extra
+
+
+def test_merge_extra_strips_reserved_keys():
+    merged = _merge_extra(
+        {"annotation_id": "a", "status": 999, "code": "x", "message": "y"},
+        {"retry_after": "1", "seqid": "chr1"},
+    )
+    assert merged == {"annotation_id": "a", "seqid": "chr1"}
+    # Must not TypeError when reserved keys were present in helper extras.
+    err = SequencesError(
+        "ncbi_error",
+        "boom",
+        status=502,
+        retry_after="2",
+        **_merge_extra({"status": 503, "retry_after": "9", "accession": "X"}),
+    )
+    assert err.status == 502
+    assert err.retry_after == "2"
+    assert err.extra == {"accession": "X"}
 
 
 def _write_tabix_gff(path: Path, text: str) -> Path:

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import random
-import re
 import threading
 import time
 from collections import OrderedDict
@@ -17,13 +16,6 @@ from settings import settings
 logger = logging.getLogger(__name__)
 
 EUTILS_EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
-
-_ACCESSION_RE = re.compile(
-    r"^(?:"
-    r"[A-Z]{1,2}_\d+\.\d+"
-    r"|[A-Z]{1,2}\d{5,}\.\d+"
-    r")$"
-)
 
 # NCBI: 10 req/s with key, 3 without. Stay under.
 _RATE_WITH_KEY = 9.0
@@ -243,10 +235,10 @@ class NcbiEutilsClient:
         clipping pass True and validate the shortfall themselves.
         """
         accession = window.accession.strip()
-        if not _ACCESSION_RE.match(accession):
+        if not accession:
             raise NcbiError(
                 "ncbi_error",
-                f"invalid INSDC accession {accession!r}",
+                "empty accession",
                 status=502,
                 accession=accession,
             )

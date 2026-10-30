@@ -14,14 +14,11 @@ from settings import annotations_dir, settings
 CHROMOSOMES_FILENAME = "chromosomes.json"
 CHR_ALIASES_FILENAME = "chr_aliases.tsv"
 
-# RefSeq (NC_000017.11) or GenBank chromosome/contig (CM085869.1, CP012345.1).
-_INSDC_ACCESSION_RE = re.compile(
-    r"^(?:"
-    r"[A-Z]{1,2}_\d+\.\d+"
-    r"|[A-Z]{1,2}\d{5,}\.\d+"
-    r")$"
-)
 _ASSEMBLY_RE = re.compile(r"^(GC[AF])_(\d+)(?:\.\d+)?$", re.IGNORECASE)
+
+
+class _MappedWithoutAccession(Exception):
+    """chromosomes/aliases matched a row that has empty genbank+refseq fields."""
 
 _CACHE_LOCK = threading.Lock()
 
@@ -60,10 +57,6 @@ def annotations_root() -> Path:
             f"annotations directory not found: {root}",
         )
     return root
-
-
-def is_insdc_accession(seqid: str) -> bool:
-    return bool(_INSDC_ACCESSION_RE.match((seqid or "").strip()))
 
 
 def _rebase_gff_path(gff_path: str, root: Path) -> Path | None:
@@ -278,19 +271,12 @@ def _prefer_refseq(source_database: str) -> bool:
 
 
 def _pick_accession(row: dict, *, prefer_refseq: bool) -> str | None:
+    """Return preferred non-empty genbank/refseq field (no format filter)."""
     rs = str(row.get("refseq_accession") or "").strip()
     gb = str(row.get("genbank_accession") or "").strip()
-    if prefer_refseq:
-        for cand in (rs, gb):
-            if cand and is_insdc_accession(cand):
-                return cand
-    else:
-        for cand in (gb, rs):
-            if cand and is_insdc_accession(cand):
-                return cand
-    # Fall back to any INSDC-looking identifier on the row.
-    for cand in _chromosome_identifiers(row):
-        if is_insdc_accession(cand):
+    order = (rs, gb) if prefer_refseq else (gb, rs)
+    for cand in order:
+        if cand:
             return cand
     return None
 
@@ -302,13 +288,12 @@ def _resolve_seqid_accession_cached(
     seqid: str,
 ) -> str:
     """
-    Cached resolver core. Raises ``AnnotationFilesError`` via the public wrapper.
+    Cached resolver core.
 
-    Returns the accession string, or raises ValueError with a code for the
-    wrapper to re-raise as AnnotationFilesError (lru_cache cannot store
-    exceptions cleanly across call sites).
+    Returns a mapped accession, an alias ``refName``, or the raw ``seqid``
+    (pass-through). Raises ``_MappedWithoutAccession`` when a chromosome row
+    matches but both accession fields are empty.
     """
-    # Reconstruct a minimal AnnotationFiles-like view for candidate paths.
     ass_dir = Path(assembly_dir)
     files = AnnotationFiles(
         gff_path=ass_dir / "_unused.gff.gz",
@@ -319,6 +304,7 @@ def _resolve_seqid_accession_cached(
         source_database=source_database,
     )
     prefer_refseq = _prefer_refseq(source_database)
+
     # Match via chromosomes.json
     for cand in _chromosomes_candidates(files):
         if not cand.is_file():
@@ -328,11 +314,11 @@ def _resolve_seqid_accession_cached(
         except (OSError, json.JSONDecodeError, ValueError):
             continue
         for row in rows:
-            identifiers = _chromosome_identifiers(row)
-            if seqid in identifiers:
+            if seqid in _chromosome_identifiers(row):
                 acc = _pick_accession(row, prefer_refseq=prefer_refseq)
                 if acc:
                     return acc
+                raise _MappedWithoutAccession(seqid)
 
     # Match via chr_aliases.tsv → refName → chromosomes.json
     ref_name: str | None = None
@@ -360,10 +346,11 @@ def _resolve_seqid_accession_cached(
                     acc = _pick_accession(row, prefer_refseq=prefer_refseq)
                     if acc:
                         return acc
-        if is_insdc_accession(ref_name):
-            return ref_name
+                    raise _MappedWithoutAccession(seqid)
+        return ref_name
 
-    raise LookupError(seqid)
+    # No chromosomes/aliases hit — pass the GFF seqid through to NCBI.
+    return seqid
 
 
 def resolve_seqid_accession(
@@ -371,9 +358,11 @@ def resolve_seqid_accession(
     seqid: str,
 ) -> str:
     """
-    Map a GFF seqid to a versioned INSDC accession for NCBI efetch.
+    Map a GFF seqid to an accession for NCBI efetch.
 
-    Raises ``AnnotationFilesError`` with code ``seqid_not_resolved``.
+    Looks up ``chromosomes.json`` / ``chr_aliases.tsv``. Unmapped seqids are
+    returned as-is (pass-through). Raises ``AnnotationFilesError`` only for
+    empty seqid or a matched chromosome row with empty genbank+refseq fields.
     """
     raw = unquote((seqid or "").strip())
     if not raw:
@@ -382,8 +371,6 @@ def resolve_seqid_accession(
             "empty seqid",
             seqid=seqid,
         )
-    if is_insdc_accession(raw):
-        return raw
 
     try:
         return _resolve_seqid_accession_cached(
@@ -391,10 +378,13 @@ def resolve_seqid_accession(
             files.source_database or "",
             raw,
         )
-    except LookupError:
+    except _MappedWithoutAccession:
         raise AnnotationFilesError(
             "seqid_not_resolved",
-            f"could not resolve seqid {raw!r} to an INSDC accession",
+            (
+                f"could not resolve seqid {raw!r} to an accession "
+                "(chromosome row has no genbank/refseq)"
+            ),
             seqid=raw,
             assembly_accession=files.assembly_accession,
             taxid=files.taxid,
