@@ -27,6 +27,7 @@ from helpers.annotation_files import (
     resolve_annotation_files,
     resolve_seqid_accession,
 )
+from helpers.process_stats import rss_mb
 from helpers.gff_slice import (
     TranscriptModel,
     dedupe_gff_lines,
@@ -876,6 +877,7 @@ def export_sequences(
     """
     Fail-first bulk export. Caller owns cleaning ``result.temp_dir``.
     """
+    t_export = time.monotonic()
     deadline = time.monotonic() + float(settings.SEQUENCES_DEADLINE_S)
     groups = _group_items(request.items)
 
@@ -886,6 +888,7 @@ def export_sequences(
 
     try:
         # Phase 2: local resolve (no network).
+        t_resolve = time.monotonic()
         for group in groups:
             _deadline_check(deadline)
             _resolve_group(
@@ -898,6 +901,15 @@ def export_sequences(
                 action=request.action,
                 buffer_bp=request.buffer_bp,
             )
+        resolve_s = time.monotonic() - t_resolve
+        logger.info(
+            "sequences phase=resolve groups=%d annotations=%d wall_s=%.2f "
+            "rss_mb=%.1f",
+            len(groups),
+            len(ann_cache),
+            resolve_s,
+            rss_mb(),
+        )
 
         _deadline_check(deadline)
 
@@ -911,8 +923,10 @@ def export_sequences(
 
         client = get_ncbi_client()
         fetched: dict[tuple[str, int, int], str] = {}
+        fetch_bp = 0
 
         def _fetch_one(cw):
+            t_one = time.monotonic()
             slice_ = client.fetch_window(
                 GenomicWindow(
                     accession=cw.accession,
@@ -921,14 +935,37 @@ def export_sequences(
                 ),
                 allow_truncation=True,
             )
+            logger.info(
+                "sequences ncbi_fetch accession=%s start=%d stop=%d "
+                "bp=%d wall_s=%.2f",
+                cw.accession,
+                cw.start,
+                cw.stop,
+                len(slice_.sequence),
+                time.monotonic() - t_one,
+            )
             return (cw.accession, cw.start, cw.stop), slice_.sequence
 
         # Bound parallelism; share the process rate limiter.
+        # Hard cap of 4 — NCBI_WORKERS above that has no effect.
         max_workers = min(
             4,
             max(1, len(coalesced)),
             max(1, int(settings.NCBI_WORKERS)),
         )
+        logger.info(
+            "sequences phase=ncbi_start windows=%d coalesced=%d "
+            "ncbi_workers_cfg=%d max_workers=%d has_api_key=%s "
+            "rate_interval_s=%.3f rss_mb=%.1f",
+            len(windows),
+            len(coalesced),
+            int(settings.NCBI_WORKERS),
+            max_workers,
+            client.has_api_key,
+            client.rate_interval,
+            rss_mb(),
+        )
+        t_ncbi = time.monotonic()
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_fetch_one, cw): cw for cw in coalesced}
             try:
@@ -937,6 +974,7 @@ def export_sequences(
                     try:
                         key, seq = fut.result()
                         fetched[key] = seq
+                        fetch_bp += len(seq)
                     except NcbiError as exc:
                         for pending in futures:
                             pending.cancel()
@@ -953,6 +991,15 @@ def export_sequences(
                         raise
             except SequencesError:
                 raise
+        ncbi_s = time.monotonic() - t_ncbi
+        logger.info(
+            "sequences phase=ncbi_done coalesced=%d fetched_bp=%d "
+            "wall_s=%.2f rss_mb=%.1f",
+            len(coalesced),
+            fetch_bp,
+            ncbi_s,
+            rss_mb(),
+        )
 
         # Map each group window to a sequence cut from its coalesced parent.
         group_sequences: dict[str, tuple[GenomicWindow, str]] = {}
@@ -1023,6 +1070,7 @@ def export_sequences(
         _deadline_check(deadline)
 
         # Phase 4: gffread per group (monotonic gids), stream-assemble final FASTA.
+        t_gffread = time.monotonic()
         temp = TemporaryDirectory(prefix="annotrieve-sequences-")
         work = Path(temp.name)
         # item.index -> path to a single-record FASTA file
@@ -1054,6 +1102,25 @@ def export_sequences(
 
             filename = (
                 f"annotrieve-{request.action.value}-{len(request.items)}.fa"
+            )
+            gffread_s = time.monotonic() - t_gffread
+            logger.info(
+                "sequences phase=gffread groups=%d wall_s=%.2f rss_mb=%.1f",
+                len(groups),
+                gffread_s,
+                rss_mb(),
+            )
+            logger.info(
+                "sequences export_summary items=%d groups=%d "
+                "resolve_s=%.2f ncbi_s=%.2f gffread_s=%.2f total_s=%.2f "
+                "rss_mb=%.1f",
+                len(request.items),
+                len(groups),
+                resolve_s,
+                ncbi_s,
+                gffread_s,
+                time.monotonic() - t_export,
+                rss_mb(),
             )
             return SequencesResult(
                 fasta_path=final_path,

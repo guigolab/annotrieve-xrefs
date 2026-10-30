@@ -1,6 +1,8 @@
 """Bulk transcript FASTA export (``POST /sequences``)."""
 from __future__ import annotations
 
+import logging
+import time
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -15,10 +17,12 @@ from helpers.pagination import (
     MAX_SEQUENCES_ID_CHARS,
     MAX_SEQUENCES_POST,
 )
+from helpers.process_stats import rss_mb
 from helpers.session import GeneCorpusUnavailable
 from services.sequences import SequencesError, build_request, export_sequences
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class SequenceItemBody(BaseModel):
@@ -102,6 +106,18 @@ def post_sequences(body: SequencesBody, background_tasks: BackgroundTasks):
     Fail-first: any unresolved seqid / missing transcript / NCBI error aborts
     with no partial body. Response is ``text/x-fasta``.
     """
+    t0 = time.monotonic()
+    rss0 = rss_mb()
+    logger.info(
+        "POST /sequences start action=%s items=%d buffer_bp=%d "
+        "exon_coords=%s rss_mb=%.1f",
+        body.action,
+        len(body.items),
+        body.buffer_bp,
+        body.include_exon_coords,
+        rss0,
+    )
+
     try:
         request = build_request(
             action=body.action,
@@ -110,6 +126,12 @@ def post_sequences(body: SequencesBody, background_tasks: BackgroundTasks):
             include_exon_coords=body.include_exon_coords,
         )
     except SequencesError as exc:
+        logger.warning(
+            "POST /sequences validation failed code=%s after=%.2fs rss_mb=%.1f",
+            exc.code,
+            time.monotonic() - t0,
+            rss_mb(),
+        )
         raise _http_for_sequences_error(exc) from exc
 
     try:
@@ -118,17 +140,49 @@ def post_sequences(body: SequencesBody, background_tasks: BackgroundTasks):
             try:
                 result = export_sequences(request, corpus=corpus)
             except GeneCorpusUnavailable as exc:
+                logger.error(
+                    "POST /sequences corpus unavailable after=%.2fs rss_mb=%.1f",
+                    time.monotonic() - t0,
+                    rss_mb(),
+                )
                 raise http_error(
                     503,
                     "gene_corpus_unavailable",
                     str(exc),
                 ) from exc
             except SequencesError as exc:
+                logger.warning(
+                    "POST /sequences failed code=%s status=%s after=%.2fs "
+                    "rss_mb=%.1f msg=%s",
+                    exc.code,
+                    exc.status,
+                    time.monotonic() - t0,
+                    rss_mb(),
+                    str(exc),
+                )
                 raise _http_for_sequences_error(exc) from exc
     except BusyError:
+        logger.warning(
+            "POST /sequences busy after=%.2fs rss_mb=%.1f",
+            time.monotonic() - t0,
+            rss_mb(),
+        )
         return _busy_response()
 
     background_tasks.add_task(_cleanup_temp, result.temp_dir)
+
+    rss1 = rss_mb()
+    logger.info(
+        "POST /sequences done action=%s sequences=%d wall_s=%.2f "
+        "rss_mb=%.1f->%.1f delta_mb=%.1f file=%s",
+        body.action,
+        result.sequence_count,
+        time.monotonic() - t0,
+        rss0,
+        rss1,
+        (rss1 - rss0) if rss0 >= 0 and rss1 >= 0 else -1.0,
+        result.filename,
+    )
 
     return FileResponse(
         path=result.fasta_path,
