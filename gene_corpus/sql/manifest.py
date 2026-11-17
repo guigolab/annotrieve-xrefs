@@ -29,10 +29,13 @@ STATUS_FAILED = "failed"
 STATUS_SKIPPED_COMMUNITY = "skipped_community"
 STATUS_REMOVED = "removed"
 
-# source_database values that are indexed. Compared casefolded. Anything else is
-# recorded with its own status and not indexed (D9: confirm the real spellings in M2).
+# Allow-list: only these ``source_database`` values (casefolded) are ever indexed.
+# Community annotations (community_annotations.tsv of the annotation tracker, already
+# skipped upstream by the import) are recorded as skipped if they ever show up: any
+# value containing "community" (for example "Community" or "CommunityRegistry").
+# Every other unknown value is recorded as ``failed`` so it is visible, never indexed.
 INDEXED_SOURCES = frozenset({"ensembl", "genbank", "refseq"})
-COMMUNITY_SOURCE = "community"
+COMMUNITY_MARKER = "community"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -82,7 +85,7 @@ def classify_source(source_database: str | None) -> str | None:
     key = (source_database or "").strip().casefold()
     if key in INDEXED_SOURCES:
         return None
-    if key == COMMUNITY_SOURCE:
+    if COMMUNITY_MARKER in key:
         return STATUS_SKIPPED_COMMUNITY
     return STATUS_FAILED
 

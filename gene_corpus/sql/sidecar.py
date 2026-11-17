@@ -14,7 +14,9 @@ Layout (``<per_gff>/<annotation_id>/sidecar.tsv.gz``, gzip text, see
     #end names=<n> genes=<n>
 
 * ``#names`` is sorted by (name, kind, local_id); names are casefolded.
-* ``#genes`` is sorted by ``local_id``. NULL text values are written as an empty field.
+* ``#genes`` is sorted by ``local_id`` and holds **only genes that have at least one
+  name row in ``#names``** (unnamed genes cannot be reached by name; the shard keeps
+  every gene). NULL text values are written as an empty field.
 * The trailing ``#end`` line lets readers detect a truncated file.
 * The header stores a fingerprint of the shard it was built from. Shards are
   rewritten in place, so staleness is detected by fingerprint, never by path.
@@ -51,7 +53,8 @@ class SidecarError(Exception):
 class SidecarInfo:
     annotation_id: str
     path: Path
-    n_genes: int
+    n_genes: int            # all genes in the shard
+    n_genes_named: int      # genes written to #genes
     n_name_rows: int
     n_distinct_names: int
     n_casefold_changed: int
@@ -163,6 +166,25 @@ def _build_sorted_names(
     return scratch, scratch_path, n_rows, n_distinct, changed, skipped
 
 
+def _iter_named_genes(conn: sqlite3.Connection, scratch: sqlite3.Connection):
+    """
+    Yield gene rows, ordered by ``local_id``, only for ids that appear in the names
+    scratch table. Uses primary-key lookups in bounded batches, so a shard with
+    millions of unnamed genes is never scanned.
+    """
+    ids = scratch.execute("SELECT DISTINCT local_id FROM n ORDER BY local_id")
+    while True:
+        chunk = [r[0] for r in ids.fetchmany(500)]
+        if not chunk:
+            return
+        marks = ",".join("?" for _ in chunk)
+        yield from conn.execute(
+            "SELECT local_id, source_gene_id, seqid, start, end, strand, feature_type, "
+            f"biotype, primary_name FROM gene WHERE local_id IN ({marks}) ORDER BY local_id",
+            chunk,
+        )
+
+
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -205,6 +227,7 @@ def write_sidecar(
         scratch, scratch_path, n_rows, n_distinct, changed, skipped = _build_sorted_names(
             conn, tmp_dir
         )
+        n_named = scratch.execute("SELECT COUNT(DISTINCT local_id) FROM n").fetchone()[0]
         header = [
             ("sidecar_version", SIDECAR_VERSION),
             ("annotation_id", annotation_id),
@@ -215,6 +238,7 @@ def write_sidecar(
             ("source_provider", _clean(meta.get("source_provider", ""))),
             ("gff_path", _clean(meta.get("gff_path", ""))),
             ("n_genes", n_genes),
+        ("n_genes_named", n_named),
             ("n_name_rows", n_rows),
             ("n_distinct_names", n_distinct),
             ("n_casefold_changed", changed),
@@ -222,10 +246,6 @@ def write_sidecar(
             ("shard_fingerprint", fingerprint),
             ("built_at", built_at),
         ]
-        genes_cur = conn.execute(
-            "SELECT local_id, source_gene_id, seqid, start, end, strand, feature_type, "
-            "biotype, primary_name FROM gene ORDER BY local_id"
-        )
         n_genes_written = 0
         with open(tmp, "wb") as fh:
             # mtime=0 and no filename keep the gzip bytes deterministic for equal content.
@@ -239,7 +259,7 @@ def write_sidecar(
                 ):
                     text.write(f"{name}\t{kind}\t{local_id}\n")
                 text.write("#genes\n")
-                for g in genes_cur:
+                for g in _iter_named_genes(conn, scratch):
                     local_id, sgid, seqid, start, end, strand, ftype, biotype, pname = g
                     text.write(
                         f"{local_id}\t{_clean(sgid)}\t{_clean(seqid)}\t{start}\t{end}\t{strand}\t"
@@ -251,9 +271,10 @@ def write_sidecar(
                 text.detach()
             fh.flush()
             os.fsync(fh.fileno())
-        if n_genes_written != n_genes:
+        if n_genes_written != n_named:
             raise SidecarError(
-                f"shard changed while reading ({n_genes} genes counted, {n_genes_written} written)"
+                f"shard changed while reading ({n_named} named genes expected, "
+                f"{n_genes_written} written)"
             )
         os.replace(tmp, out_path)
     except BaseException:
@@ -269,7 +290,8 @@ def write_sidecar(
     return SidecarInfo(
         annotation_id=annotation_id,
         path=out_path,
-        n_genes=n_genes_written,
+        n_genes=n_genes,
+        n_genes_named=n_genes_written,
         n_name_rows=n_rows,
         n_distinct_names=n_distinct,
         n_casefold_changed=changed,

@@ -244,6 +244,8 @@ def test_classify_source():
     assert classify_source("GenBank") is None
     assert classify_source("Community") == STATUS_SKIPPED_COMMUNITY
     assert classify_source("community") == STATUS_SKIPPED_COMMUNITY
+    assert classify_source("CommunityRegistry") == STATUS_SKIPPED_COMMUNITY
+    assert classify_source("Community Registry") == STATUS_SKIPPED_COMMUNITY
     assert classify_source("Something") == STATUS_FAILED
     assert classify_source(None) == STATUS_FAILED
 
@@ -364,3 +366,32 @@ def test_failed_write_leaves_no_tmp_and_keeps_old_sidecar(tmp_path):
         write_sidecar(shard, built_at=BUILT_AT)
     assert not list(shard.parent.glob("*.tmp"))
     assert good.path.is_file()
+
+
+def test_genes_section_holds_only_named_genes(tmp_path):
+    genes = [(g, f"g{g}", "gene", "chr1", g, g + 5, 1, None, f"N{g}", None, None, 0)
+             for g in range(1, 1201)]
+    xrefs = [(g, "symbol", f"name{g}", None, "gff", 0) for g in range(1, 1201, 3)]   # every 3rd gene
+    xrefs.append((7, "alias", "seven", None, "gff", 0))                              # gene 7 has two names
+    shard = make_shard(tmp_path, "a1", genes=genes, xrefs=xrefs)
+    info = write_sidecar(shard, built_at=BUILT_AT)
+    named = sorted({lid for _n, _k, lid in iter_names(info.path)})
+    assert [g[0] for g in iter_genes(info.path)] == named
+    assert info.n_genes == 1200 and info.n_genes_named == len(named) == 400
+    assert read_header(info.path)["n_genes_named"] == "400"
+
+
+def test_shard_without_any_names_writes_no_genes(tmp_path):
+    genes = [(g, f"g{g}", "gene", "chr1", g, g + 5, 1, None, None, None, None, 0) for g in range(1, 50)]
+    shard = make_shard(tmp_path, "a1", genes=genes, xrefs=[(1, "go", "GO:1", None, "gff", 0)])
+    info = write_sidecar(shard, built_at=BUILT_AT)
+    assert (info.n_genes, info.n_genes_named, info.n_name_rows) == (49, 0, 0)
+    assert list(iter_genes(info.path)) == []
+
+
+def test_community_registry_shard_is_never_indexed(tmp_path):
+    root = tmp_path / "per_gff"
+    make_shard(root, "c1", source="CommunityRegistry")
+    conn = open_manifest(tmp_path / "manifest.sqlite")
+    assert index_shard(conn, root, "c1") == STATUS_SKIPPED_COMMUNITY
+    assert not sidecar_path_for(root / "c1" / "genes.sqlite").exists()

@@ -97,15 +97,25 @@ def verify_sidecar(shard: Path, out: Path, n_skipped: int) -> dict:
         full = n_src <= FULL_VERIFY_MAX_ROWS
         # genes: streamed side by side
         genes_ok = True
-        gcur = conn.execute("SELECT local_id, start, end, strand FROM gene ORDER BY local_id")
+        # the sidecar holds only genes that have a symbol/alias row
+        gcur = conn.execute(
+            "SELECT local_id, start, end, strand FROM gene WHERE local_id IN "
+            "(SELECT local_id FROM gene_xref WHERE namespace IN ('symbol','alias') "
+            "AND accession IS NOT NULL) ORDER BY local_id"
+        )
+        n_got = 0
         for fresh, got in zip(gcur, iter_genes(out)):
+            n_got += 1
             if tuple(fresh) != (got[0], got[3], got[4], got[5]):
                 genes_ok = False
                 break
         else:
-            genes_ok = conn.execute("SELECT COUNT(*) FROM gene").fetchone()[0] == sum(
-                1 for _ in iter_genes(out)
-            )
+            n_fresh = conn.execute(
+                "SELECT COUNT(DISTINCT local_id) FROM gene_xref WHERE namespace IN "
+                "('symbol','alias') AND accession IS NOT NULL").fetchone()[0]
+            n_side = sum(1 for _ in iter_genes(out))
+            # unsafe names can drop a gene whose only names were skipped
+            genes_ok = n_side == n_fresh if n_skipped == 0 else n_side <= n_fresh
         if full:
             fresh_names = {
                 (a.casefold(), "s" if ns == "symbol" else "a", int(lid))
@@ -166,6 +176,7 @@ def measure_one(args: tuple[str, str, str, bool, bool]) -> dict:
         rec["seconds"] = time.perf_counter() - t0
         rec.update(
             n_genes=info.n_genes,
+            n_genes_named=info.n_genes_named,
             n_name_rows=info.n_name_rows,
             n_distinct_names=info.n_distinct_names,
             n_casefold_changed=info.n_casefold_changed,
@@ -400,9 +411,9 @@ def main() -> int:
         *[f"  - `{r['dir']}`: {r.get('verify_detail')}" for r in bad_verify[:10]],
         "",
         "## Slowest shards",
-        "| dir | shard | seconds | genes | name rows |",
+        "| dir | shard | seconds | genes (named) | name rows |",
         "|---|---|---|---|---|",
-        *[f"| `{r['dir']}` | {fmt_bytes(r['shard_bytes'])} | {r['seconds']:.1f} | {r['n_genes']:,} | {r['n_name_rows']:,} |"
+        *[f"| `{r['dir']}` | {fmt_bytes(r['shard_bytes'])} | {r['seconds']:.1f} | {r['n_genes']:,} ({r['n_genes_named']:,}) | {r['n_name_rows']:,} |"
           for r in report["slowest"]],
         "",
         "## Errors",
