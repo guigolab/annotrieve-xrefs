@@ -75,3 +75,18 @@ def test_alias_path_rejects_organism_style() -> None:
     assert ("alias", "homo sapiens") not in ns_acc
     assert ("alias", "candida glabrata") not in ns_acc
     assert ("alias", "p53") in ns_acc
+
+
+def test_symbol_gate_keeps_copy_suffixed_symbols() -> None:
+    for v in ("Polq_1", "Zan_0", "selenot_1", "selenot2_1", "ABC_12"):
+        assert symbol_ok(v), v
+    for v in ("LOC123", "BINO364_LOCUS16796", "gene-1", "gene:12", ""):
+        assert not symbol_ok(v), v
+    assert not symbol_ok("SS1G_00001", locus_tag="SS1G_00001")      # echo of locus_tag
+    assert not symbol_ok("x1", feature_id="x1")                      # echo of ID
+
+
+def test_alias_gate_stays_strict() -> None:
+    assert not alias_ok("Polq_1")          # letters_digits shape still rejected for aliases
+    assert not alias_ok("Tco_12345")
+    assert alias_ok("p53") and alias_ok("TaGW2-A1")

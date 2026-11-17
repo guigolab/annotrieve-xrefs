@@ -4,21 +4,48 @@ from __future__ import annotations
 import re
 
 # Locus-shaped / ID-echo patterns (Name audit + source map locked gate).
-_LOCUS_SHAPED = re.compile(
+#
+# Two tiers (decision of 2026-11): symbols (Name, gene, standard_name) are only rejected
+# for the *core* patterns, so copy-suffixed symbols such as ``Polq_1``, ``Zan_0`` or
+# ``selenot_1`` (homeologs, paralog copies) are kept. Aliases keep the strict tier, which
+# also rejects ``letters_digits`` shapes, so old_locus_tag-style values do not flood the
+# index. A locus tag used as a symbol is still caught when it equals the gene's own
+# ``locus_tag`` or ``ID`` (see ``symbol_ok``).
+_CORE_LOCUS_SHAPED = re.compile(
     r"(?i)^(?:"
     r"LOC\d+"
     r"|.*_LOCUS.*"
-    r"|[A-Za-z]+_\d+$"  # e.g. Tco_12345
     r"|gene[-:]?\d+"
     r")$"
 )
+_ALIAS_LOCUS_SHAPED = re.compile(r"(?i)^[A-Za-z]+_\d+$")  # e.g. Tco_12345
 
 
-def is_locus_shaped(value: str) -> bool:
+def is_locus_shaped_core(value: str) -> bool:
+    """Shapes rejected for symbols and aliases alike."""
     text = (value or "").strip()
     if not text:
         return True
-    return _LOCUS_SHAPED.match(text) is not None
+    return _CORE_LOCUS_SHAPED.match(text) is not None
+
+
+def is_locus_shaped(value: str) -> bool:
+    """Strict tier (used for aliases): core shapes plus ``letters_digits``."""
+    if is_locus_shaped_core(value):
+        return True
+    return _ALIAS_LOCUS_SHAPED.match((value or "").strip()) is not None
+
+
+def _echo_or_empty(
+    text: str, locus_tag: str | None, feature_id: str | None
+) -> bool:
+    if not text:
+        return True
+    if locus_tag and text == locus_tag.strip():
+        return True
+    if feature_id and text == feature_id.strip():
+        return True
+    return False
 
 
 def symbol_ok(
@@ -29,15 +56,9 @@ def symbol_ok(
 ) -> bool:
     """True when value may be emitted as symbol (not locus/ID echo)."""
     text = (value or "").strip()
-    if not text:
+    if _echo_or_empty(text, locus_tag, feature_id):
         return False
-    if locus_tag and text == locus_tag.strip():
-        return False
-    if feature_id and text == feature_id.strip():
-        return False
-    if is_locus_shaped(text):
-        return False
-    return True
+    return not is_locus_shaped_core(text)
 
 
 def alias_ok(
@@ -49,15 +70,16 @@ def alias_ok(
     """
     True when value may be emitted as alias.
 
-    Same gates as symbol_ok, plus reject any whitespace (organism-style
-    gb-synonym / old-name strings).
+    Strict tier: same echo and core-shape gates as symbol_ok, the extra
+    ``letters_digits`` shape, and no whitespace (organism-style gb-synonym /
+    old-name strings).
     """
     text = (value or "").strip()
-    if not text:
+    if _echo_or_empty(text, locus_tag, feature_id):
         return False
     if any(ch.isspace() for ch in text):
         return False
-    return symbol_ok(text, locus_tag=locus_tag, feature_id=feature_id)
+    return not is_locus_shaped(text)
 
 
 def strip_wrapping_quotes(value: str) -> str:
