@@ -106,6 +106,12 @@ _MEMORY_ROWS = 1_000_000
 _BATCH = 50_000
 
 
+def _flush(scratch: sqlite3.Connection, batch: list[tuple[str, str, int]]) -> None:
+    scratch.executemany("INSERT OR IGNORE INTO n VALUES (?, ?, ?)", batch)
+    scratch.executemany("INSERT OR IGNORE INTO g VALUES (?)", [(b[2],) for b in batch])
+    batch.clear()
+
+
 def _build_sorted_names(
     conn: sqlite3.Connection, tmp_dir: Path
 ) -> tuple[sqlite3.Connection, Path | None, int, int, int, int]:
@@ -136,6 +142,9 @@ def _build_sorted_names(
         "CREATE TABLE n (name TEXT NOT NULL, kind TEXT NOT NULL, local_id INTEGER NOT NULL, "
         "PRIMARY KEY (name, kind, local_id)) WITHOUT ROWID"
     )
+    # Named gene ids, kept in a keyed table so later queries need no temporary sort or
+    # DISTINCT structure (those can spill to the temp directory, possibly local disk).
+    scratch.execute("CREATE TABLE g (local_id INTEGER PRIMARY KEY)")
     changed = 0
     skipped = 0
     batch: list[tuple[str, str, int]] = []
@@ -156,10 +165,9 @@ def _build_sorted_names(
             continue
         batch.append((name, _NAMESPACE_KIND[namespace], int(local_id)))
         if len(batch) >= _BATCH:
-            scratch.executemany("INSERT OR IGNORE INTO n VALUES (?, ?, ?)", batch)
-            batch.clear()
+            _flush(scratch, batch)
     if batch:
-        scratch.executemany("INSERT OR IGNORE INTO n VALUES (?, ?, ?)", batch)
+        _flush(scratch, batch)
     scratch.commit()
     n_rows = scratch.execute("SELECT COUNT(*) FROM n").fetchone()[0]
     n_distinct = scratch.execute("SELECT COUNT(DISTINCT name) FROM n").fetchone()[0]
@@ -172,7 +180,7 @@ def _iter_named_genes(conn: sqlite3.Connection, scratch: sqlite3.Connection):
     scratch table. Uses primary-key lookups in bounded batches, so a shard with
     millions of unnamed genes is never scanned.
     """
-    ids = scratch.execute("SELECT DISTINCT local_id FROM n ORDER BY local_id")
+    ids = scratch.execute("SELECT local_id FROM g ORDER BY local_id")
     while True:
         chunk = [r[0] for r in ids.fetchmany(500)]
         if not chunk:
@@ -227,7 +235,7 @@ def write_sidecar(
         scratch, scratch_path, n_rows, n_distinct, changed, skipped = _build_sorted_names(
             conn, tmp_dir
         )
-        n_named = scratch.execute("SELECT COUNT(DISTINCT local_id) FROM n").fetchone()[0]
+        n_named = scratch.execute("SELECT COUNT(*) FROM g").fetchone()[0]
         header = [
             ("sidecar_version", SIDECAR_VERSION),
             ("annotation_id", annotation_id),

@@ -69,6 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--sample", type=int, default=None, help="only N random shards (testing)")
     s.add_argument("--limit", type=int, default=None, help="only the first N shards (testing)")
     s.add_argument("--seed", type=int, default=1)
+    s.add_argument("--max-worker-mib", type=int, default=768,
+                   help="per-worker address-space cap; 0 disables (default 768)")
 
     t = sub.add_parser("status", help="show manifest counts")
     _common(t)
@@ -123,9 +125,29 @@ def _list_dirs(per_gff: Path, args) -> list[str]:
     return dirs
 
 
+def _init_worker(max_mib: int) -> None:
+    """
+    Hard memory cap for a worker (address space). A shard that would exceed it raises
+    MemoryError inside ``work_shard`` and is recorded as ``failed``, instead of the kernel
+    killing a process (or a neighbouring service) when RAM runs out.
+    """
+    if max_mib > 0:
+        try:
+            import resource
+
+            limit = max_mib * 1024 * 1024
+            resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+        except (ImportError, ValueError, OSError):
+            pass
+
+
 def _work(task: tuple[str, str, bool]) -> dict:
+    import resource
+
     per_gff, annotation_dir, force = task
-    return work_shard(per_gff, annotation_dir, force)
+    res = work_shard(per_gff, annotation_dir, force)
+    res["maxrss_mib"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+    return res
 
 
 def _cmd_sidecars(args) -> int:
@@ -142,12 +164,14 @@ def _cmd_sidecars(args) -> int:
     written = 0
     bytes_written = 0
     failures: list[tuple[str, str]] = []
+    peak_rss = 0.0
     t0 = time.perf_counter()
     pending_commit = 0
     interrupted = False
 
     def handle(res: dict, i: int) -> None:
-        nonlocal written, bytes_written, pending_commit
+        nonlocal written, bytes_written, pending_commit, peak_rss
+        peak_rss = max(peak_rss, res.get("maxrss_mib", 0.0))
         status = record_result(conn, res)
         counts[status] += 1
         if res.get("written"):
@@ -164,14 +188,16 @@ def _cmd_sidecars(args) -> int:
             rate = i / el if el else 0
             eta = (len(tasks) - i) / rate if rate else 0
             _log(f"  {i:,}/{len(tasks):,}  {rate:.1f} shards/s  eta {eta / 60:.1f} min  "
-                 f"written={written:,} failed={counts[STATUS_FAILED]}")
+                 f"written={written:,} failed={counts[STATUS_FAILED]} peak_rss={peak_rss:.0f}MiB")
 
     try:
         if args.workers <= 1:
+            _init_worker(args.max_worker_mib)
             for i, task in enumerate(tasks, 1):
                 handle(_work(task), i)
         else:
-            with ProcessPoolExecutor(max_workers=args.workers) as ex:
+            with ProcessPoolExecutor(max_workers=args.workers, initializer=_init_worker,
+                                     initargs=(args.max_worker_mib,)) as ex:
                 # ordered results: ordinals are assigned in sorted shard order, deterministically
                 for i, res in enumerate(ex.map(_work, tasks, chunksize=4), 1):
                     handle(res, i)
@@ -188,7 +214,7 @@ def _cmd_sidecars(args) -> int:
 
     el = time.perf_counter() - t0
     print(f"done in {el / 60:.1f} min: {dict(counts)}; sidecars written {written:,} "
-          f"({bytes_written / 2**20:.1f} MiB)")
+          f"({bytes_written / 2**20:.1f} MiB); peak worker RSS {peak_rss:.0f} MiB")
     for d, err in failures[:20]:
         print(f"  FAILED {d}: {err}")
     if len(failures) > 20:

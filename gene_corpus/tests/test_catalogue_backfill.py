@@ -200,3 +200,25 @@ def test_legacy_build_arguments_still_dispatch_to_the_old_build(tmp_path, capsys
     rc = serve_build_main(["--work-dir", str(tmp_path)])     # no gene_corpus.sqlite there
     assert rc == 2
     assert "gene_corpus.sqlite missing" in capsys.readouterr().err
+
+
+def _try_alloc(_):
+    try:
+        bytearray(400 * 1024 * 1024)
+        return "allocated"
+    except MemoryError:
+        return "memory_error"
+
+
+def test_worker_memory_cap_turns_overuse_into_an_exception():
+    import sys
+    from concurrent.futures import ProcessPoolExecutor
+
+    from gene_corpus.serve_backfill_cli import _init_worker
+
+    if not sys.platform.startswith("linux"):
+        pytest.skip("RLIMIT_AS cap is applied on Linux")
+    with ProcessPoolExecutor(max_workers=1, initializer=_init_worker, initargs=(256,)) as ex:
+        assert ex.submit(_try_alloc, 0).result() == "memory_error"
+    with ProcessPoolExecutor(max_workers=1, initializer=_init_worker, initargs=(0,)) as ex:
+        assert ex.submit(_try_alloc, 0).result() == "allocated"
