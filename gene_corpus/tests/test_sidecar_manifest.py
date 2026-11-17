@@ -337,3 +337,30 @@ def test_in_place_shard_rewrite_is_picked_up_by_reindex(tmp_path):
     new = conn.execute("SELECT sidecar_fingerprint, n_genes FROM annotation").fetchone()
     assert new[0] != old[0] and new[1] == old[1] + 1
     assert ("newname", "s", 9) in set(iter_names(sidecar_path_for(shard)))
+
+
+def test_large_shard_uses_file_scratch_and_cleans_up(tmp_path, monkeypatch):
+    from gene_corpus.sql import sidecar as sc
+
+    monkeypatch.setattr(sc, "_MEMORY_ROWS", 1)       # force the file-backed scratch table
+    monkeypatch.setattr(sc, "_BATCH", 2)
+    shard = make_shard(tmp_path / "per_gff", "a1")
+    tmpd = tmp_path / "scratch"
+    info = write_sidecar(shard, built_at=BUILT_AT, tmp_dir=tmpd)
+    assert list(iter_names(info.path)) == [("other", "s", 2), ("p53", "a", 1), ("tp53", "s", 1)]
+    assert not list(tmpd.glob("*")), "scratch file must be removed"
+    ref = write_sidecar(shard, tmp_path / "ref.gz", built_at=BUILT_AT)
+    assert ref.sidecar_fingerprint == info.sidecar_fingerprint   # same bytes either way
+
+
+def test_failed_write_leaves_no_tmp_and_keeps_old_sidecar(tmp_path):
+    shard = make_shard(tmp_path, "a1")
+    good = write_sidecar(shard, built_at=BUILT_AT)
+    conn = sqlite3.connect(shard)
+    conn.execute("DELETE FROM meta WHERE key='annotation_id'")
+    conn.commit()
+    conn.close()
+    with pytest.raises(SidecarError):
+        write_sidecar(shard, built_at=BUILT_AT)
+    assert not list(shard.parent.glob("*.tmp"))
+    assert good.path.is_file()

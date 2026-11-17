@@ -35,6 +35,7 @@ import sys
 import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -77,23 +78,79 @@ def list_shards(per_gff: Path) -> list[tuple[str, int]]:
     return sorted(out)
 
 
-def fresh_sets(shard: Path) -> tuple[set, list]:
-    """Independent query used only for validation (does not reuse writer code)."""
+FULL_VERIFY_MAX_ROWS = 1_000_000
+SPOT_CHECK = 2000
+
+
+def verify_sidecar(shard: Path, out: Path, n_skipped: int) -> dict:
+    """
+    Validation 1 (sidecar vs a fresh query of the shard), bounded in memory.
+
+    Small shards: full set comparison. Big shards: gene rows are compared by streaming,
+    and ``SPOT_CHECK`` random name rows must be present in the sidecar.
+    """
     conn = sqlite3.connect(f"file:{shard}?mode=ro", uri=True)
     try:
-        names = {
-            (a.casefold(), "s" if ns == "symbol" else "a", int(lid))
-            for a, ns, lid in conn.execute(
-                "SELECT accession, namespace, local_id FROM gene_xref "
-                "WHERE namespace IN ('symbol','alias') AND accession IS NOT NULL"
+        n_src = conn.execute(
+            "SELECT COUNT(*) FROM gene_xref WHERE namespace IN ('symbol','alias')"
+        ).fetchone()[0]
+        full = n_src <= FULL_VERIFY_MAX_ROWS
+        # genes: streamed side by side
+        genes_ok = True
+        gcur = conn.execute("SELECT local_id, start, end, strand FROM gene ORDER BY local_id")
+        for fresh, got in zip(gcur, iter_genes(out)):
+            if tuple(fresh) != (got[0], got[3], got[4], got[5]):
+                genes_ok = False
+                break
+        else:
+            genes_ok = conn.execute("SELECT COUNT(*) FROM gene").fetchone()[0] == sum(
+                1 for _ in iter_genes(out)
             )
-        }
-        genes = conn.execute(
-            "SELECT local_id, start, end, strand FROM gene ORDER BY local_id"
-        ).fetchall()
+        if full:
+            fresh_names = {
+                (a.casefold(), "s" if ns == "symbol" else "a", int(lid))
+                for a, ns, lid in conn.execute(
+                    "SELECT accession, namespace, local_id FROM gene_xref "
+                    "WHERE namespace IN ('symbol','alias') AND accession IS NOT NULL"
+                )
+            }
+            got_names = set(iter_names(out))
+            missing = len(fresh_names - got_names)
+            extra = len(got_names - fresh_names)
+            ok = genes_ok and extra == 0 and missing <= n_skipped
+            return {"verify_ok": ok, "verify_mode": "full",
+                    "verify_detail": None if ok else
+                    {"missing": missing, "extra": extra, "skipped": n_skipped, "genes_ok": genes_ok}}
+        # spot check: random rows by rowid
+        mx = conn.execute("SELECT MAX(rowid) FROM gene_xref").fetchone()[0] or 0
+        rng = random.Random(7)
+        ids = [rng.randint(1, mx) for _ in range(SPOT_CHECK * 3)]
+        targets = set()
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            q = ",".join("?" for _ in chunk)
+            for a, ns, lid in conn.execute(
+                f"SELECT accession, namespace, local_id FROM gene_xref WHERE rowid IN ({q}) "
+                "AND namespace IN ('symbol','alias') AND accession IS NOT NULL", chunk):
+                nm = a.casefold()
+                if nm == nm.translate(str.maketrans({"\t": " ", "\n": " ", "\r": " ", "\0": ""})):
+                    targets.add((nm, "s" if ns == "symbol" else "a", int(lid)))
+            if len(targets) >= SPOT_CHECK:
+                break
+        found = 0
+        remaining = set(targets)
+        for row in iter_names(out):
+            if row in remaining:
+                remaining.discard(row)
+                found += 1
+                if not remaining:
+                    break
+        ok = genes_ok and not remaining
+        return {"verify_ok": ok, "verify_mode": f"spot({len(targets)})",
+                "verify_detail": None if ok else
+                {"not_found": len(remaining), "genes_ok": genes_ok}}
     finally:
         conn.close()
-    return names, genes
 
 
 def measure_one(args: tuple[str, str, str, bool, bool]) -> dict:
@@ -105,7 +162,7 @@ def measure_one(args: tuple[str, str, str, bool, bool]) -> dict:
         if do_evict:
             evict(shard)
         t0 = time.perf_counter()
-        info = write_sidecar(shard, out)
+        info = write_sidecar(shard, out, tmp_dir=Path(out_dir) / "_tmp")
         rec["seconds"] = time.perf_counter() - t0
         rec.update(
             n_genes=info.n_genes,
@@ -118,27 +175,21 @@ def measure_one(args: tuple[str, str, str, bool, bool]) -> dict:
             source_provider=info.meta.get("source_provider", ""),
         )
         if verify:
-            names, genes = fresh_sets(shard)
-            got_names = set(iter_names(out))
-            got_genes = [(g[0], g[3], g[4], g[5]) for g in iter_genes(out)]
-            # sidecar skips unsafe names; compare allowing exactly that many missing
-            missing = len(names - got_names)
-            extra = len(got_names - names)
-            rec["verify_ok"] = (
-                extra == 0
-                and missing <= info.n_skipped_names
-                and got_genes == [tuple(g) for g in genes]
-            )
-            if not rec["verify_ok"]:
-                rec["verify_detail"] = {
-                    "missing": missing, "extra": extra,
-                    "skipped": info.n_skipped_names,
-                    "genes_equal": got_genes == [tuple(g) for g in genes],
-                }
+            rec.update(verify_sidecar(shard, out, info.n_skipped_names))
     except Exception as exc:  # report, do not stop the sample
         rec["error"] = f"{type(exc).__name__}: {exc}"
     rec["maxrss_mib"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
     return rec
+
+
+def run_isolated(w: tuple) -> dict:
+    """Run one shard in its own process so a killed worker (OOM) names the culprit."""
+    try:
+        with ProcessPoolExecutor(max_workers=1) as ex:
+            return ex.submit(measure_one, w).result()
+    except BrokenProcessPool:
+        return {"dir": w[0], "shard_bytes": Path(w[1], w[0], SHARD_NAME).stat().st_size,
+                "error": "worker killed (most likely out of memory)"}
 
 
 def fmt_bytes(n: float) -> str:
@@ -165,6 +216,8 @@ def main() -> int:
                     help="worker count used for the projected backfill time")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--no-verify", action="store_true")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue from report-dir/results.jsonl, skipping measured shards")
     ap.add_argument("--no-evict", action="store_true", help="do not drop shard pages before reading")
     args = ap.parse_args()
 
@@ -189,20 +242,46 @@ def main() -> int:
             for d in sorted(picked)]
     log(f"measuring {len(work)} shards ({args.largest} largest + random), workers={args.workers}")
 
+    jsonl = args.report_dir / "results.jsonl"
     results: list[dict] = []
+    done: set[str] = set()
+    if args.resume and jsonl.exists():
+        for line in jsonl.read_text().splitlines():
+            r = json.loads(line)
+            results.append(r)
+            done.add(r["dir"])
+        log(f"resuming: {len(done)} shards already measured")
+    todo = [w for w in work if w[0] not in done]
+    out_fh = open(jsonl, "a" if args.resume else "w")
+
+    def keep(rec: dict) -> None:
+        results.append(rec)
+        out_fh.write(json.dumps(rec) + "\n")
+        out_fh.flush()
+
     wall0 = time.perf_counter()
     if args.workers <= 1:
-        for i, w in enumerate(work, 1):
-            results.append(measure_one(w))
-            if i % 20 == 0 or i == len(work):
-                log(f"  {i}/{len(work)}")
+        for i, w in enumerate(todo, 1):
+            keep(measure_one(w))
+            if i % 20 == 0 or i == len(todo):
+                log(f"  {i}/{len(todo)}")
     else:
-        with ProcessPoolExecutor(max_workers=args.workers) as ex:
-            futs = [ex.submit(measure_one, w) for w in work]
-            for i, f in enumerate(as_completed(futs), 1):
-                results.append(f.result())
-                if i % 20 == 0 or i == len(work):
-                    log(f"  {i}/{len(work)}")
+        finished: set[str] = set()
+        try:
+            with ProcessPoolExecutor(max_workers=args.workers) as ex:
+                futs = {ex.submit(measure_one, w): w for w in todo}
+                for i, f in enumerate(as_completed(futs), 1):
+                    keep(f.result())
+                    finished.add(futs[f][0])
+                    if i % 20 == 0 or i == len(todo):
+                        log(f"  {i}/{len(todo)}")
+        except BrokenProcessPool:
+            left = [w for w in todo if w[0] not in finished]
+            log(f"a worker was killed (likely out of memory); re-running {len(left)} "
+                "unfinished shards one at a time to find the culprit")
+            for w in left:
+                keep(run_isolated(w))
+    out_fh.close()
     wall = time.perf_counter() - wall0
 
     ok = [r for r in results if "error" not in r]

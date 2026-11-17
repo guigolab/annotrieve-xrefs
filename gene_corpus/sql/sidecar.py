@@ -26,6 +26,7 @@ import hashlib
 import io
 import os
 import sqlite3
+import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -96,11 +97,45 @@ def shard_fingerprint(shard_path: Path, conn: sqlite3.Connection | None = None) 
     return f"v1:{st.st_size}:{st.st_mtime_ns}:{n}:{mx}"
 
 
-def _collect_names(conn: sqlite3.Connection) -> tuple[list[tuple[str, str, int]], int, int]:
-    """Return sorted distinct (name, kind, local_id), n_casefold_changed, n_skipped."""
-    seen: set[tuple[str, str, int]] = set()
+# Above this many name rows the dedupe/sort scratch table lives in a file (in
+# ``tmp_dir``) instead of memory, so memory stays bounded for very large shards.
+_MEMORY_ROWS = 1_000_000
+_BATCH = 50_000
+
+
+def _build_sorted_names(
+    conn: sqlite3.Connection, tmp_dir: Path
+) -> tuple[sqlite3.Connection, Path | None, int, int, int, int]:
+    """
+    Fill a scratch SQLite table with distinct casefolded ``(name, kind, local_id)``.
+
+    SQLite's BINARY collation compares UTF-8 bytes, which orders like Python's
+    code-point order, so iterating the primary key yields the sidecar order without
+    holding the rows in Python. Returns
+    ``(scratch_conn, scratch_path, n_rows, n_distinct_names, n_changed, n_skipped)``.
+    """
+    n_src = conn.execute(
+        "SELECT COUNT(*) FROM gene_xref WHERE namespace IN ('symbol', 'alias')"
+    ).fetchone()[0]
+    scratch_path: Path | None = None
+    if n_src > _MEMORY_ROWS:
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(dir=tmp_dir, suffix=".names.sqlite")
+        os.close(fd)
+        scratch_path = Path(name)
+        scratch = sqlite3.connect(name)
+    else:
+        scratch = sqlite3.connect(":memory:")
+    scratch.execute("PRAGMA journal_mode=OFF")
+    scratch.execute("PRAGMA synchronous=OFF")
+    scratch.execute("PRAGMA cache_size=-65536")
+    scratch.execute(
+        "CREATE TABLE n (name TEXT NOT NULL, kind TEXT NOT NULL, local_id INTEGER NOT NULL, "
+        "PRIMARY KEY (name, kind, local_id)) WITHOUT ROWID"
+    )
     changed = 0
     skipped = 0
+    batch: list[tuple[str, str, int]] = []
     cur = conn.execute(
         "SELECT accession, namespace, local_id FROM gene_xref "
         "WHERE namespace IN ('symbol', 'alias')"
@@ -116,8 +151,24 @@ def _collect_names(conn: sqlite3.Connection) -> tuple[list[tuple[str, str, int]]
         if not name or name != name.translate(_BAD):
             skipped += 1
             continue
-        seen.add((name, _NAMESPACE_KIND[namespace], int(local_id)))
-    return sorted(seen), changed, skipped
+        batch.append((name, _NAMESPACE_KIND[namespace], int(local_id)))
+        if len(batch) >= _BATCH:
+            scratch.executemany("INSERT OR IGNORE INTO n VALUES (?, ?, ?)", batch)
+            batch.clear()
+    if batch:
+        scratch.executemany("INSERT OR IGNORE INTO n VALUES (?, ?, ?)", batch)
+    scratch.commit()
+    n_rows = scratch.execute("SELECT COUNT(*) FROM n").fetchone()[0]
+    n_distinct = scratch.execute("SELECT COUNT(DISTINCT name) FROM n").fetchone()[0]
+    return scratch, scratch_path, n_rows, n_distinct, changed, skipped
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def write_sidecar(
@@ -125,86 +176,107 @@ def write_sidecar(
     out_path: Path | None = None,
     *,
     built_at: str | None = None,
+    tmp_dir: Path | None = None,
 ) -> SidecarInfo:
-    """Write the sidecar for ``shard_path`` atomically and return its summary."""
+    """
+    Write the sidecar for ``shard_path`` atomically and return its summary.
+
+    Memory is bounded: names are deduplicated and sorted in a scratch SQLite table
+    (in a file under ``tmp_dir`` for large shards, default: next to the output; keep
+    it off local disk), genes and names are streamed into the gzip file.
+    """
     shard_path = Path(shard_path)
     out_path = Path(out_path) if out_path else sidecar_path_for(shard_path)
+    tmp_dir = Path(tmp_dir) if tmp_dir else out_path.parent
     built_at = built_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.with_name(out_path.name + ".tmp")
     conn = _open_ro(shard_path)
+    scratch = None
+    scratch_path: Path | None = None
     try:
         fingerprint = shard_fingerprint(shard_path, conn)
         meta = {str(k): str(v) for k, v in conn.execute("SELECT key, value FROM meta")}
         annotation_id = meta.get("annotation_id", "")
         if not annotation_id:
             raise SidecarError(f"shard has no annotation_id in meta: {shard_path}")
-        names, changed, skipped = _collect_names(conn)
-        genes = conn.execute(
+        n_genes = conn.execute("SELECT COUNT(*) FROM gene").fetchone()[0]
+        scratch, scratch_path, n_rows, n_distinct, changed, skipped = _build_sorted_names(
+            conn, tmp_dir
+        )
+        header = [
+            ("sidecar_version", SIDECAR_VERSION),
+            ("annotation_id", annotation_id),
+            ("taxid", meta.get("taxid", "")),
+            ("assembly_accession", meta.get("assembly_accession", "")),
+            ("organism_name", _clean(meta.get("organism_name", ""))),
+            ("source_database", _clean(meta.get("source_database", ""))),
+            ("source_provider", _clean(meta.get("source_provider", ""))),
+            ("gff_path", _clean(meta.get("gff_path", ""))),
+            ("n_genes", n_genes),
+            ("n_name_rows", n_rows),
+            ("n_distinct_names", n_distinct),
+            ("n_casefold_changed", changed),
+            ("n_skipped_names", skipped),
+            ("shard_fingerprint", fingerprint),
+            ("built_at", built_at),
+        ]
+        genes_cur = conn.execute(
             "SELECT local_id, source_gene_id, seqid, start, end, strand, feature_type, "
             "biotype, primary_name FROM gene ORDER BY local_id"
-        ).fetchall()
+        )
+        n_genes_written = 0
+        with open(tmp, "wb") as fh:
+            # mtime=0 and no filename keep the gzip bytes deterministic for equal content.
+            with gzip.GzipFile(filename="", mode="wb", fileobj=fh, mtime=0, compresslevel=6) as gz:
+                text = io.TextIOWrapper(gz, encoding="utf-8", newline="\n")
+                for key, value in header:
+                    text.write(f"#{key}={value}\n")
+                text.write("#names\n")
+                for name, kind, local_id in scratch.execute(
+                    "SELECT name, kind, local_id FROM n ORDER BY name, kind, local_id"
+                ):
+                    text.write(f"{name}\t{kind}\t{local_id}\n")
+                text.write("#genes\n")
+                for g in genes_cur:
+                    local_id, sgid, seqid, start, end, strand, ftype, biotype, pname = g
+                    text.write(
+                        f"{local_id}\t{_clean(sgid)}\t{_clean(seqid)}\t{start}\t{end}\t{strand}\t"
+                        f"{_clean(ftype)}\t{_clean(biotype)}\t{_clean(pname)}\n"
+                    )
+                    n_genes_written += 1
+                text.write(f"#end names={n_rows} genes={n_genes_written}\n")
+                text.flush()
+                text.detach()
+            fh.flush()
+            os.fsync(fh.fileno())
+        if n_genes_written != n_genes:
+            raise SidecarError(
+                f"shard changed while reading ({n_genes} genes counted, {n_genes_written} written)"
+            )
+        os.replace(tmp, out_path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     finally:
         conn.close()
-
-    n_distinct = len({n for n, _k, _l in names})
-    header = [
-        ("sidecar_version", SIDECAR_VERSION),
-        ("annotation_id", annotation_id),
-        ("taxid", meta.get("taxid", "")),
-        ("assembly_accession", meta.get("assembly_accession", "")),
-        ("organism_name", _clean(meta.get("organism_name", ""))),
-        ("source_database", _clean(meta.get("source_database", ""))),
-        ("source_provider", _clean(meta.get("source_provider", ""))),
-        ("gff_path", _clean(meta.get("gff_path", ""))),
-        ("n_genes", len(genes)),
-        ("n_name_rows", len(names)),
-        ("n_distinct_names", n_distinct),
-        ("n_casefold_changed", changed),
-        ("n_skipped_names", skipped),
-        ("shard_fingerprint", fingerprint),
-        ("built_at", built_at),
-    ]
-
-    buf = io.BytesIO()
-    # mtime=0 and no filename keep the gzip bytes deterministic for equal content.
-    with gzip.GzipFile(filename="", mode="wb", fileobj=buf, mtime=0, compresslevel=6) as gz:
-        text = io.TextIOWrapper(gz, encoding="utf-8", newline="\n")
-        for key, value in header:
-            text.write(f"#{key}={value}\n")
-        text.write("#names\n")
-        for name, kind, local_id in names:
-            text.write(f"{name}\t{kind}\t{local_id}\n")
-        text.write("#genes\n")
-        for g in genes:
-            local_id, sgid, seqid, start, end, strand, ftype, biotype, pname = g
-            text.write(
-                f"{local_id}\t{_clean(sgid)}\t{_clean(seqid)}\t{start}\t{end}\t{strand}\t"
-                f"{_clean(ftype)}\t{_clean(biotype)}\t{_clean(pname)}\n"
-            )
-        text.write(f"#end names={len(names)} genes={len(genes)}\n")
-        text.flush()
-        text.detach()
-    data = buf.getvalue()
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_path.with_name(out_path.name + ".tmp")
-    with open(tmp, "wb") as fh:
-        fh.write(data)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, out_path)
+        if scratch is not None:
+            scratch.close()
+        if scratch_path is not None:
+            scratch_path.unlink(missing_ok=True)
 
     return SidecarInfo(
         annotation_id=annotation_id,
         path=out_path,
-        n_genes=len(genes),
-        n_name_rows=len(names),
+        n_genes=n_genes_written,
+        n_name_rows=n_rows,
         n_distinct_names=n_distinct,
         n_casefold_changed=changed,
         n_skipped_names=skipped,
         shard_fingerprint=fingerprint,
-        sidecar_fingerprint=hashlib.sha256(data).hexdigest(),
-        size_bytes=len(data),
+        sidecar_fingerprint=_sha256_file(out_path),
+        size_bytes=out_path.stat().st_size,
         meta=meta,
     )
 
