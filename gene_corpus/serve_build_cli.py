@@ -4,6 +4,10 @@ Build the served presence index from the global gene_corpus DB.
     python -m gene_corpus.serve_build --work-dir /data/gene_corpus
     python -m gene_corpus.serve_build --work-dir /data/gene_corpus --name-prefix tp5 --out-dir /tmp/trial
 
+Sub-commands ``catalogue``, ``sidecars`` and ``status`` (sidecars and manifest, see
+``serve_backfill_cli``) are dispatched from here; without one of them this is the legacy
+build from ``xref_file``.
+
 Writes ``<out-dir>/v<data_version>/presence.sqlite`` and switches the
 ``<out-dir>/current`` symlink atomically. Partial builds (``--name-prefix`` /
 ``--limit-names``) are written to ``<out-dir>/partial-<data_version>/`` and never
@@ -40,6 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from gene_corpus.serve_backfill_cli import COMMANDS, main as backfill_main
+
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw and raw[0] in COMMANDS:
+        return backfill_main(raw)
     args = build_parser().parse_args(argv)
     src = args.work_dir / "gene_corpus.sqlite"
     if not src.is_file():

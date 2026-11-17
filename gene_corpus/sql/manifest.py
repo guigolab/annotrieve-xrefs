@@ -3,7 +3,15 @@ Manifest: the record of which annotations are indexed and under which ordinal.
 
 ``manifest.sqlite`` (see ``PLAN-build-tables.md`` section 4). Ordinals are assigned
 once and never reused. This module does **not** reconcile against Annotrieve
-(decision D6, postponed): it only registers shards found on disk.
+(decision D6, postponed): it registers the shards found on disk and stores the
+catalogue metadata loaded by ``gene_corpus.sql.catalogue``.
+
+Work is split so it can run in parallel without SQLite write contention:
+
+* ``work_shard`` (any process): read the shard meta, classify the source, write the
+  sidecar when needed. Touches no manifest. Returns a plain dict.
+* ``record_result`` (the single manifest-owning process): register the annotation
+  and store the outcome.
 """
 from __future__ import annotations
 
@@ -15,13 +23,12 @@ from gene_corpus.sql.per_gff import SHARD_META_KEYS
 from gene_corpus.sql.sidecar import (
     SHARD_NAME,
     SidecarError,
-    SidecarInfo,
     is_stale,
     sidecar_path_for,
     write_sidecar,
 )
 
-MANIFEST_VERSION = "1"
+MANIFEST_VERSION = "2"
 
 STATUS_INDEXED = "indexed"
 STATUS_PENDING = "pending"
@@ -54,11 +61,28 @@ CREATE TABLE IF NOT EXISTS annotation (
     shard_fingerprint TEXT,
     sidecar_fingerprint TEXT,
     n_genes INTEGER,
+    n_genes_named INTEGER,
     n_name_rows INTEGER,
+    in_catalogue INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL,
     error TEXT
 );
 CREATE INDEX IF NOT EXISTS annotation_status ON annotation(status);
+
+-- One row per annotation in the live Annotrieve catalogue (report endpoint, D8).
+CREATE TABLE IF NOT EXISTS catalogue (
+    annotation_id TEXT PRIMARY KEY,
+    assembly_accession TEXT,
+    assembly_name TEXT,
+    organism_name TEXT,
+    taxid INTEGER,
+    database TEXT,
+    provider TEXT,
+    source_url TEXT,
+    bgzip_path TEXT,
+    release_date TEXT,
+    taxon_lineage TEXT              -- ';'-joined taxids as served by the report
+) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS lineage (
     taxid INTEGER NOT NULL,
@@ -73,7 +97,8 @@ def open_manifest(path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=DELETE")
     conn.executescript(_SCHEMA)
     conn.execute(
-        "INSERT OR IGNORE INTO meta (key, value) VALUES ('manifest_version', ?)",
+        "INSERT INTO meta (key, value) VALUES ('manifest_version', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (MANIFEST_VERSION,),
     )
     conn.commit()
@@ -136,8 +161,86 @@ def _read_shard_meta_ro(shard_path: Path) -> dict[str, str]:
         conn.close()
 
 
-def _set_status(conn, ord_: int, status: str, error: str | None = None) -> None:
-    conn.execute("UPDATE annotation SET status=?, error=? WHERE ord=?", (status, error, ord_))
+# --------------------------------------------------------------------------
+# worker side (no manifest access)
+# --------------------------------------------------------------------------
+def work_shard(per_gff_root: str | Path, annotation_dir: str, force: bool = False) -> dict:
+    """
+    Inspect one shard and write its sidecar when it is allowed and stale.
+
+    Returns a picklable dict: ``dir``, ``status`` (a STATUS_* value), ``meta`` (shard
+    meta, when readable), ``error`` and, when a sidecar was written, ``info`` (counts and
+    fingerprints). Never raises for a bad shard.
+    """
+    shard_path = Path(per_gff_root) / annotation_dir / SHARD_NAME
+    result: dict = {"dir": annotation_dir, "status": STATUS_FAILED, "meta": None,
+                    "error": None, "info": None, "written": False}
+    try:
+        meta = _read_shard_meta_ro(shard_path)
+        missing = [k for k in SHARD_META_KEYS if k not in meta]
+        if missing or not meta.get("annotation_id"):
+            raise SidecarError(f"shard meta incomplete (missing {missing})")
+    except Exception as exc:  # unreadable shard: nothing to register under
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        return result
+    result["meta"] = meta
+
+    skip = classify_source(meta.get("source_database"))
+    if skip == STATUS_SKIPPED_COMMUNITY:
+        result["status"] = skip
+        return result
+    if skip == STATUS_FAILED:
+        result["error"] = f"unknown source_database {meta.get('source_database')!r}"
+        return result
+
+    try:
+        sidecar = sidecar_path_for(shard_path)
+        if force or is_stale(shard_path, sidecar):
+            info = write_sidecar(shard_path, sidecar)
+            result["written"] = True
+            result["info"] = {
+                "shard_fingerprint": info.shard_fingerprint,
+                "sidecar_fingerprint": info.sidecar_fingerprint,
+                "n_genes": info.n_genes,
+                "n_genes_named": info.n_genes_named,
+                "n_name_rows": info.n_name_rows,
+                "size_bytes": info.size_bytes,
+            }
+        result["status"] = STATUS_INDEXED
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
+# --------------------------------------------------------------------------
+# manifest side
+# --------------------------------------------------------------------------
+def record_result(conn: sqlite3.Connection, result: Mapping) -> str:
+    """Store one ``work_shard`` outcome. Does not commit; returns the final status."""
+    meta = result.get("meta")
+    if not meta:
+        annotation_dir = result["dir"]
+        conn.execute(
+            "INSERT INTO annotation (ord, annotation_id, source_database, status, error) "
+            "VALUES ((SELECT COALESCE(MAX(ord), 0) + 1 FROM annotation), ?, '', ?, ?) "
+            "ON CONFLICT(annotation_id) DO UPDATE SET status=excluded.status, error=excluded.error",
+            (annotation_dir, STATUS_FAILED, result.get("error")),
+        )
+        return STATUS_FAILED
+    ord_ = register_annotation(conn, meta)
+    info = result.get("info")
+    if info:
+        conn.execute(
+            "UPDATE annotation SET shard_fingerprint=?, sidecar_fingerprint=?, n_genes=?, "
+            "n_genes_named=?, n_name_rows=? WHERE ord=?",
+            (info["shard_fingerprint"], info["sidecar_fingerprint"], info["n_genes"],
+             info["n_genes_named"], info["n_name_rows"], ord_),
+        )
+    conn.execute(
+        "UPDATE annotation SET status=?, error=? WHERE ord=?",
+        (result["status"], result.get("error"), ord_),
+    )
+    return result["status"]
 
 
 def index_shard(
@@ -147,56 +250,7 @@ def index_shard(
     *,
     force: bool = False,
 ) -> str:
-    """
-    Register one shard and (re)write its sidecar when needed. Returns the final status.
-
-    Never raises for a bad shard: the failure is recorded as ``failed`` with a message.
-    Commits after each shard so a crash loses at most the shard in flight.
-    """
-    shard_path = Path(per_gff_root) / annotation_dir / SHARD_NAME
-    try:
-        meta = _read_shard_meta_ro(shard_path)
-        missing = [k for k in SHARD_META_KEYS if k not in meta]
-        if missing or not meta.get("annotation_id"):
-            raise SidecarError(f"shard meta incomplete (missing {missing})")
-    except Exception as exc:  # unreadable shard: nothing to register under
-        return _record_unreadable(conn, annotation_dir, exc)
-
-    ord_ = register_annotation(conn, meta)
-    skip = classify_source(meta.get("source_database"))
-    if skip == STATUS_SKIPPED_COMMUNITY:
-        _set_status(conn, ord_, skip)
-        conn.commit()
-        return skip
-    if skip == STATUS_FAILED:
-        _set_status(conn, ord_, STATUS_FAILED, f"unknown source_database {meta.get('source_database')!r}")
-        conn.commit()
-        return STATUS_FAILED
-
-    try:
-        sidecar = sidecar_path_for(shard_path)
-        if force or is_stale(shard_path, sidecar):
-            info: SidecarInfo = write_sidecar(shard_path, sidecar)
-            conn.execute(
-                "UPDATE annotation SET shard_fingerprint=?, sidecar_fingerprint=?, "
-                "n_genes=?, n_name_rows=? WHERE ord=?",
-                (info.shard_fingerprint, info.sidecar_fingerprint, info.n_genes,
-                 info.n_name_rows, ord_),
-            )
-        _set_status(conn, ord_, STATUS_INDEXED)
-    except Exception as exc:
-        _set_status(conn, ord_, STATUS_FAILED, f"{type(exc).__name__}: {exc}")
+    """Serial convenience: ``work_shard`` then ``record_result``, committing after each shard."""
+    status = record_result(conn, work_shard(per_gff_root, annotation_dir, force))
     conn.commit()
-    return conn.execute("SELECT status FROM annotation WHERE ord=?", (ord_,)).fetchone()[0]
-
-
-def _record_unreadable(conn: sqlite3.Connection, annotation_dir: str, exc: Exception) -> str:
-    """A shard we cannot even read meta from is recorded by directory name."""
-    conn.execute(
-        "INSERT INTO annotation (ord, annotation_id, source_database, status, error) "
-        "VALUES ((SELECT COALESCE(MAX(ord), 0) + 1 FROM annotation), ?, '', ?, ?) "
-        "ON CONFLICT(annotation_id) DO UPDATE SET status=excluded.status, error=excluded.error",
-        (annotation_dir, STATUS_FAILED, f"{type(exc).__name__}: {exc}"),
-    )
-    conn.commit()
-    return STATUS_FAILED
+    return status

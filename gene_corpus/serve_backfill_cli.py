@@ -1,0 +1,223 @@
+"""
+Sub-commands for the sidecar / manifest side of ``serve_build`` (PLAN-build-tables.md M3).
+
+    python -m gene_corpus.serve_build catalogue --work-dir DIR [--api-base URL | --tsv-file F]
+    python -m gene_corpus.serve_build sidecars  --work-dir DIR [--workers 2] [--force] [--sample N]
+    python -m gene_corpus.serve_build status    --work-dir DIR
+
+Defaults: shards in ``<work-dir>/per_gff``, manifest at ``<work-dir>/serve/manifest.sqlite``.
+Sidecars are written next to the shards (``per_gff/<id>/sidecar.tsv.gz``). Memory stays
+small: workers hold one shard's streaming state (about 50 MiB each in M2), the manifest
+process holds nothing but the current result.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import random
+import sys
+import time
+from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
+
+from gene_corpus.sql.catalogue import (
+    DEFAULT_API_BASE,
+    CatalogueError,
+    apply_catalogue,
+    fetch_report_lines,
+    load_catalogue,
+    report_url,
+)
+from gene_corpus.sql.manifest import (
+    STATUS_FAILED,
+    open_manifest,
+    record_result,
+    work_shard,
+)
+
+COMMANDS = ("catalogue", "sidecars", "status")
+
+
+def _log(msg: str) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", file=sys.stderr, flush=True)
+
+
+def _common(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--work-dir", type=Path, required=True, help="corpus root (contains per_gff/)")
+    p.add_argument("--per-gff", type=Path, default=None, help="default: <work-dir>/per_gff")
+    p.add_argument("--manifest", type=Path, default=None,
+                   help="default: <work-dir>/serve/manifest.sqlite")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="serve_build")
+    sub = ap.add_subparsers(dest="command", required=True)
+
+    c = sub.add_parser("catalogue", help="load Annotrieve annotation metadata into the manifest")
+    _common(c)
+    c.add_argument("--api-base", default=DEFAULT_API_BASE)
+    c.add_argument("--url", default=None, help="full report URL (overrides --api-base)")
+    c.add_argument("--tsv-file", type=Path, default=None, help="read a saved report instead of fetching")
+    c.add_argument("--timeout", type=float, default=120.0)
+
+    s = sub.add_parser("sidecars", help="write missing/stale sidecars and register shards")
+    _common(s)
+    s.add_argument("--workers", type=int, default=2)
+    s.add_argument("--force", action="store_true", help="rewrite every sidecar")
+    s.add_argument("--ids", type=Path, default=None, help="file with one shard directory name per line")
+    s.add_argument("--sample", type=int, default=None, help="only N random shards (testing)")
+    s.add_argument("--limit", type=int, default=None, help="only the first N shards (testing)")
+    s.add_argument("--seed", type=int, default=1)
+
+    t = sub.add_parser("status", help="show manifest counts")
+    _common(t)
+    return ap
+
+
+def _paths(args) -> tuple[Path, Path]:
+    per_gff = args.per_gff or (args.work_dir / "per_gff")
+    manifest = args.manifest or (args.work_dir / "serve" / "manifest.sqlite")
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    return per_gff, manifest
+
+
+def _cmd_catalogue(args) -> int:
+    _per_gff, manifest = _paths(args)
+    conn = open_manifest(manifest)
+    try:
+        if args.tsv_file:
+            with open(args.tsv_file, encoding="utf-8") as fh:
+                stats = load_catalogue(conn, (line.rstrip("\r\n") for line in fh))
+            source = str(args.tsv_file)
+        else:
+            source = args.url or report_url(args.api_base)
+            _log(f"fetching {source}")
+            stats = load_catalogue(conn, fetch_report_lines(source, timeout=args.timeout))
+    except CatalogueError as exc:
+        print(f"CATALOGUE FAILED: {exc}", file=sys.stderr)
+        return 1
+    n_manifest = conn.execute("SELECT COUNT(*) FROM annotation").fetchone()[0]
+    print(f"catalogue: {stats.rows:,} rows from {source}")
+    print(f"  duplicates={stats.duplicate_ids} blank_ids={stats.skipped_blank_id}")
+    print(f"  manifest annotations={n_manifest:,} matched={stats.matched_annotations:,} "
+          f"shard_only={n_manifest - stats.matched_annotations:,} catalogue_only={stats.catalogue_only:,}")
+    print(f"  database_mismatch={stats.database_mismatch} lineage_rows={stats.lineage_rows:,}")
+    if n_manifest == 0:
+        print("  (manifest is empty: run `sidecars` too, then `catalogue` again or let `sidecars` re-apply)")
+    if stats.shard_only:
+        print(f"  first shard_only ids: {', '.join(stats.shard_only[:5])}")
+    return 0
+
+
+def _list_dirs(per_gff: Path, args) -> list[str]:
+    if args.ids:
+        dirs = [ln.strip() for ln in args.ids.read_text().splitlines() if ln.strip()]
+    else:
+        with os.scandir(per_gff) as it:
+            dirs = sorted(e.name for e in it if e.is_dir(follow_symlinks=False))
+    if args.sample is not None:
+        dirs = sorted(random.Random(args.seed).sample(dirs, min(args.sample, len(dirs))))
+    if args.limit is not None:
+        dirs = dirs[: args.limit]
+    return dirs
+
+
+def _work(task: tuple[str, str, bool]) -> dict:
+    per_gff, annotation_dir, force = task
+    return work_shard(per_gff, annotation_dir, force)
+
+
+def _cmd_sidecars(args) -> int:
+    per_gff, manifest = _paths(args)
+    if not per_gff.is_dir():
+        print(f"per_gff not found: {per_gff}", file=sys.stderr)
+        return 2
+    dirs = _list_dirs(per_gff, args)
+    conn = open_manifest(manifest)
+    _log(f"{len(dirs):,} shards, workers={args.workers}, manifest={manifest}")
+    tasks = [(str(per_gff), d, args.force) for d in dirs]
+
+    counts: Counter = Counter()
+    written = 0
+    bytes_written = 0
+    failures: list[tuple[str, str]] = []
+    t0 = time.perf_counter()
+    pending_commit = 0
+    interrupted = False
+
+    def handle(res: dict, i: int) -> None:
+        nonlocal written, bytes_written, pending_commit
+        status = record_result(conn, res)
+        counts[status] += 1
+        if res.get("written"):
+            written += 1
+            bytes_written += res["info"]["size_bytes"]
+        if status == STATUS_FAILED:
+            failures.append((res["dir"], res.get("error") or ""))
+        pending_commit += 1
+        if pending_commit >= 200:
+            conn.commit()
+            pending_commit = 0
+        if i % 500 == 0 or i == len(tasks):
+            el = time.perf_counter() - t0
+            rate = i / el if el else 0
+            eta = (len(tasks) - i) / rate if rate else 0
+            _log(f"  {i:,}/{len(tasks):,}  {rate:.1f} shards/s  eta {eta / 60:.1f} min  "
+                 f"written={written:,} failed={counts[STATUS_FAILED]}")
+
+    try:
+        if args.workers <= 1:
+            for i, task in enumerate(tasks, 1):
+                handle(_work(task), i)
+        else:
+            with ProcessPoolExecutor(max_workers=args.workers) as ex:
+                # ordered results: ordinals are assigned in sorted shard order, deterministically
+                for i, res in enumerate(ex.map(_work, tasks, chunksize=4), 1):
+                    handle(res, i)
+    except KeyboardInterrupt:
+        interrupted = True
+        _log("interrupted: saving progress (a re-run continues where this stopped)")
+    conn.commit()
+
+    if not interrupted and conn.execute("SELECT COUNT(*) FROM catalogue").fetchone()[0]:
+        st = apply_catalogue(conn)
+        conn.commit()
+        _log(f"catalogue re-applied: matched={st.matched_annotations:,} "
+             f"shard_only={conn.execute('SELECT COUNT(*) FROM annotation WHERE in_catalogue=0').fetchone()[0]:,}")
+
+    el = time.perf_counter() - t0
+    print(f"done in {el / 60:.1f} min: {dict(counts)}; sidecars written {written:,} "
+          f"({bytes_written / 2**20:.1f} MiB)")
+    for d, err in failures[:20]:
+        print(f"  FAILED {d}: {err}")
+    if len(failures) > 20:
+        print(f"  ... and {len(failures) - 20} more (see `status`)")
+    return 130 if interrupted else (1 if failures else 0)
+
+
+def _cmd_status(args) -> int:
+    _per_gff, manifest = _paths(args)
+    if not manifest.exists():
+        print(f"no manifest at {manifest}", file=sys.stderr)
+        return 2
+    conn = open_manifest(manifest)
+    q = lambda sql: conn.execute(sql).fetchall()  # noqa: E731
+    print(f"manifest: {manifest}")
+    for status, n in q("SELECT status, COUNT(*) FROM annotation GROUP BY status ORDER BY 2 DESC"):
+        print(f"  {status:<20} {n:>8,}")
+    (tot,) = q("SELECT COUNT(*) FROM annotation")[0]
+    (in_cat,) = q("SELECT COUNT(*) FROM annotation WHERE in_catalogue=1")[0]
+    (cat,) = q("SELECT COUNT(*) FROM catalogue")[0]
+    (nonames,) = q("SELECT COUNT(*) FROM annotation WHERE status='indexed' AND n_name_rows=0")[0]
+    print(f"  annotations={tot:,} in_catalogue={in_cat:,} catalogue_rows={cat:,} "
+          f"indexed_without_names={nonames:,}")
+    for aid, err in q("SELECT annotation_id, error FROM annotation WHERE status='failed' LIMIT 10"):
+        print(f"  failed {aid}: {err}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return {"catalogue": _cmd_catalogue, "sidecars": _cmd_sidecars, "status": _cmd_status}[
+        args.command](args)
