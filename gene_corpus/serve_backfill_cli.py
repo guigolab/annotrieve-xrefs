@@ -36,7 +36,7 @@ from gene_corpus.sql.manifest import (
     work_shard,
 )
 
-COMMANDS = ("catalogue", "sidecars", "status")
+COMMANDS = ("catalogue", "sidecars", "status", "build")
 
 
 def _log(msg: str) -> None:
@@ -71,6 +71,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--seed", type=int, default=1)
     s.add_argument("--max-worker-mib", type=int, default=768,
                    help="per-worker address-space cap; 0 disables (default 768)")
+
+    b = sub.add_parser("build", help="build presence.sqlite from the manifest and the sidecars")
+    _common(b)
+    b.add_argument("--out-dir", type=Path, default=None, help="default: <work-dir>/serve")
+    b.add_argument("--tmp-dir", type=Path, default=None,
+                   help="scratch for merge runs; default <work-dir>/serve/tmp (NFS, not local disk)")
+    b.add_argument("--batch", type=int, default=256, help="sidecars merged per run (default 256)")
+    b.add_argument("--name-prefix", default=None, help="trial build: only names starting with this")
+    b.add_argument("--limit-annotations", type=int, default=None, help="trial build: first N annotations")
+    b.add_argument("--verify-annotations", type=int, default=30)
+    b.add_argument("--keep-runs", action="store_true")
 
     t = sub.add_parser("status", help="show manifest counts")
     _common(t)
@@ -243,7 +254,43 @@ def _cmd_status(args) -> int:
     return 0
 
 
+def _cmd_build(args) -> int:
+    import json
+
+    from gene_corpus.sql.presence_from_sidecars import build_from_sidecars
+    from gene_corpus.sql.serve_presence import BuildError, publish_version
+
+    per_gff, manifest = _paths(args)
+    if not manifest.exists():
+        print(f"no manifest at {manifest}", file=sys.stderr)
+        return 2
+    out_dir = args.out_dir or (args.work_dir / "serve")
+    tmp_dir = args.tmp_dir or (out_dir / "tmp")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    building = out_dir / ".presence.building.sqlite"
+    try:
+        stats = build_from_sidecars(
+            manifest, per_gff, building, tmp_dir=tmp_dir, batch=args.batch,
+            name_prefix=args.name_prefix, limit_annotations=args.limit_annotations,
+            verify_annotations=args.verify_annotations, keep_runs=args.keep_runs)
+    except BuildError as exc:
+        print(f"BUILD FAILED: {exc}", file=sys.stderr)
+        building.unlink(missing_ok=True)
+        return 1
+    if stats["partial"]:
+        part = out_dir / f"partial-{stats['data_version']}"
+        part.mkdir(parents=True, exist_ok=True)
+        os.replace(building, part / "presence.sqlite")
+        (part / "build_report.json").write_text(json.dumps(stats, indent=2))
+        print(f"partial build written to {part / 'presence.sqlite'} (current not changed)")
+    else:
+        final = publish_version(out_dir, building, stats)
+        print(f"published {final}; current -> {(out_dir / 'current').resolve().name}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return {"catalogue": _cmd_catalogue, "sidecars": _cmd_sidecars, "status": _cmd_status}[
+    return {"catalogue": _cmd_catalogue, "sidecars": _cmd_sidecars, "status": _cmd_status,
+            "build": _cmd_build}[
         args.command](args)
