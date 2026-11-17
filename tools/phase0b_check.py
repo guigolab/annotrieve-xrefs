@@ -20,7 +20,8 @@ Answers three questions before anything is built:
         --corpus-dir /data/annotrieve/gene_corpus \
         --out-dir /tmp/phase0b > /tmp/phase0b.log 2>&1 &
 
-Quick dry run: add ``--max-pairs 2000000``. Skip a section with
+Section 3 compares 30 random windows by default (``--consist-sample``); the full scan
+(``--consist-sample 0``) took hours cold in testing. Skip a section with
 ``--skip timing,case,consist``. The report (report.md / report.json) is
 rewritten after every section; SIGINT / SIGTERM save a partial report.
 
@@ -356,6 +357,68 @@ def step_consist(conn: sqlite3.Connection, namespaces: list[str], max_pairs: int
         save_report()
 
 
+def step_consist_sample(conn: sqlite3.Connection, namespaces: list[str], n_ranges: int,
+                        range_pairs: int, seed: int) -> None:
+    """Compare xref_file and gene_hit on random name windows (cheap, cold-read friendly)."""
+    out: dict = {}
+    rng = random.Random(seed)
+    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    for ns in namespaces:
+        only_x = only_h = both = windows = 0
+        by_x: dict[int, int] = {}
+        by_h: dict[int, int] = {}
+        samples: list[str] = []
+        for i in range(n_ranges):
+            stem = "".join(rng.choice(alphabet) for _ in range(rng.choice((2, 3, 4))))
+            set_timeout(conn, QUERY_TIMEOUT_S)
+            try:
+                rows = conn.execute(
+                    "SELECT accession, annotation_key FROM xref_file WHERE namespace=? "
+                    "AND accession >= ? ORDER BY accession, annotation_key LIMIT ?",
+                    (ns, stem, range_pairs)).fetchall()
+                if len(rows) < 2:
+                    continue
+                lo, hi = rows[0][0], rows[-1][0]
+                xs = {(a, k) for a, k in rows if a != hi}
+                hs = {(a, k) for a, k, _n in conn.execute(
+                    "SELECT accession, annotation_key, COUNT(*) FROM gene_hit WHERE namespace=? "
+                    "AND accession >= ? AND accession < ? GROUP BY accession, annotation_key",
+                    (ns, lo, hi))}
+            finally:
+                clear_timeout(conn)
+            windows += 1
+            ox, oh = xs - hs, hs - xs
+            both += len(xs & hs)
+            only_x += len(ox)
+            only_h += len(oh)
+            for a, k in ox:
+                by_x[k] = by_x.get(k, 0) + 1
+                if len(samples) < 25:
+                    samples.append(f"only in xref_file: {a!r}, {k}")
+            for a, k in oh:
+                by_h[k] = by_h.get(k, 0) + 1
+                if len(samples) < 25:
+                    samples.append(f"only in gene_hit: {a!r}, {k}")
+            log(f"consist-sample[{ns}] window {i + 1}/{n_ranges} from {lo!r}: "
+                f"both={len(xs & hs):,} only_xref={len(ox):,} only_hit={len(oh):,}")
+        total = both + only_x + only_h
+        worst = sorted(set(by_x) | set(by_h), key=lambda k: -(by_x.get(k, 0) + by_h.get(k, 0)))[:15]
+        out[ns] = {
+            "summary": {
+                "windows sampled": windows,
+                "pairs per window": range_pairs,
+                "pairs in both": f"{both:,}",
+                "pairs only in xref_file": f"{only_x:,}",
+                "pairs only in gene_hit": f"{only_h:,}",
+                "mismatch share": f"{((only_x + only_h) / total if total else 0):.4%}",
+            },
+            "by_annotation": [[k, by_x.get(k, 0), by_h.get(k, 0)] for k in worst],
+            "samples": samples,
+        }
+        REPORT["consist"] = out
+        save_report()
+
+
 # --------------------------------------------------------------------------
 def main() -> int:
     global OUT_DIR
@@ -373,6 +436,13 @@ def main() -> int:
     ap.add_argument("--namespaces", default="symbol,alias")
     ap.add_argument("--max-pairs", type=int, default=None,
                     help="stop each consistency scan after N pairs (quick dry run)")
+    ap.add_argument("--consist-sample", type=int, default=30,
+                    help="number of random name windows to compare (default 30); "
+                         "0 = full scan, which takes hours cold")
+    ap.add_argument("--range-pairs", type=int, default=20000, help="pairs per sampled window")
+    ap.add_argument("--evict-cache", action="store_true",
+                    help="posix_fadvise(DONTNEED) on the DB file before the timing section "
+                         "(advisory, no root needed)")
     ap.add_argument("--seed", type=int, default=11)
     args = ap.parse_args()
 
@@ -399,6 +469,15 @@ def main() -> int:
     conn = open_db(db, args.cache_mib)
     names = [n.strip().casefold() for n in args.names.split(",") if n.strip()]
 
+    if args.evict_cache:
+        try:
+            fd = os.open(db, os.O_RDONLY)
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            os.close(fd)
+            log("evicted the DB file from the page cache (advisory)")
+        except (OSError, AttributeError) as exc:
+            log(f"evict-cache failed: {exc}")
+
     if "timing" not in skip:
         log("section 1: timed range reads from gene_hit (run first, cache coldest)")
         step_timing(conn, names, args.random_names, args.seed)
@@ -406,9 +485,13 @@ def main() -> int:
         log("section 2: primary_name vs accession")
         step_case(conn, args.case_sample, args.seed)
     if "consist" not in skip:
-        log("section 3: xref_file vs gene_hit consistency (long)")
-        step_consist(conn, [n.strip() for n in args.namespaces.split(",") if n.strip()],
-                     args.max_pairs)
+        nss = [n.strip() for n in args.namespaces.split(",") if n.strip()]
+        if args.consist_sample > 0:
+            log("section 3: sampled xref_file vs gene_hit consistency")
+            step_consist_sample(conn, nss, args.consist_sample, args.range_pairs, args.seed)
+        else:
+            log("section 3: FULL xref_file vs gene_hit consistency (hours when cold)")
+            step_consist(conn, nss, args.max_pairs)
 
     save_report()
     log(f"done. See {OUT_DIR / 'report.md'}")
