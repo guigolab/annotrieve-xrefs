@@ -22,7 +22,7 @@ Answers three questions before anything is built:
 
 Section 3 compares 30 random windows by default (``--consist-sample``); the full scan
 (``--consist-sample 0``) took hours cold in testing. Skip a section with
-``--skip timing,case,consist``. The report (report.md / report.json) is
+``--skip timing,case,variants,consist``. The report (report.md / report.json) is
 rewritten after every section; SIGINT / SIGTERM save a partial report.
 
 Run on a published snapshot, or when no sync/merge is writing the DB.
@@ -120,6 +120,17 @@ def render_md() -> str:
         L += ["## 2. primary_name vs accession (case)", ""]
         L += [f"- {k}: {v}" for k, v in c.items()]
         L.append("")
+    v = REPORT.get("variants")
+    if v:
+        L += ["## 4. Original-case spellings of one folded symbol", ""]
+        for a, b in v.items():
+            if a == "examples":
+                L += ["- examples (spelling xcount):"] + [f"  - {e}" for e in b]
+            else:
+                L.append(f"- {a}: {b}")
+        L += ["", "Reading: if few names have more than one spelling, a casefolded index plus a "
+              "`case_sensitive` filter on loci is enough. Many names with several spellings "
+              "(especially across species) would argue for an exact-case index.", ""]
     k = REPORT.get("consist")
     if k:
         L += ["## 3. xref_file vs gene_hit consistency", ""]
@@ -420,6 +431,53 @@ def step_consist_sample(conn: sqlite3.Connection, namespaces: list[str], n_range
 
 
 # --------------------------------------------------------------------------
+# 4. spelling variants (case sensitivity)
+# --------------------------------------------------------------------------
+def step_variants(conn: sqlite3.Connection, sample: int, seed: int) -> None:
+    """How many original-case spellings does a casefolded symbol name have?"""
+    names = random_names(conn, sample, seed + 1)
+    for n in DEFAULT_NAMES:
+        if n not in names:
+            names.append(n)
+    dist: dict[int, int] = {}
+    multi_examples: list[str] = []
+    rows_total = rows_in_minor = 0
+    for name in names:
+        set_timeout(conn, QUERY_TIMEOUT_S)
+        try:
+            spell = conn.execute(
+                "SELECT primary_name, COUNT(*) FROM gene_hit WHERE namespace='symbol' "
+                "AND accession=? GROUP BY primary_name", (name,)).fetchall()
+        finally:
+            clear_timeout(conn)
+        # spellings that are the name itself in another case (ignore other names/NULL)
+        same = [(p, n) for p, n in spell if p and p.casefold() == name]
+        if not same:
+            continue
+        dist[len(same)] = dist.get(len(same), 0) + 1
+        tot = sum(n for _p, n in same)
+        rows_total += tot
+        if len(same) > 1:
+            same.sort(key=lambda t: -t[1])
+            rows_in_minor += tot - same[0][1]
+            if len(multi_examples) < 15:
+                multi_examples.append(f"{name}: " + ", ".join(f"{p} x{n}" for p, n in same[:6]))
+    n_names = sum(dist.values())
+    REPORT["variants"] = {
+        "names sampled (with at least one matching spelling)": n_names,
+        "names with exactly one spelling": dist.get(1, 0),
+        "names with 2 spellings": dist.get(2, 0),
+        "names with 3 or more spellings": sum(v for k, v in dist.items() if k >= 3),
+        "share of names with more than one spelling":
+            f"{(1 - dist.get(1, 0) / n_names):.1%}" if n_names else "-",
+        "rows whose spelling is not the most common one":
+            f"{(rows_in_minor / rows_total):.1%}" if rows_total else "-",
+        "examples": multi_examples,
+    }
+    save_report()
+
+
+# --------------------------------------------------------------------------
 def main() -> int:
     global OUT_DIR
     ap = argparse.ArgumentParser(description=__doc__,
@@ -428,10 +486,11 @@ def main() -> int:
     ap.add_argument("--out-dir", type=Path, default=None)
     ap.add_argument("--cache-mib", type=int, default=64)
     ap.add_argument("--tmp-dir", default=None, help="local dir for SQLite temp files")
-    ap.add_argument("--skip", default="", help="comma list: timing,case,consist")
+    ap.add_argument("--skip", default="", help="comma list: timing,case,variants,consist")
     ap.add_argument("--names", default=",".join(DEFAULT_NAMES),
                     help="comma list of names for the timed reads")
     ap.add_argument("--random-names", type=int, default=20)
+    ap.add_argument("--variants-sample", type=int, default=300, help="names sampled for the spelling check")
     ap.add_argument("--case-sample", type=int, default=40)
     ap.add_argument("--namespaces", default="symbol,alias")
     ap.add_argument("--max-pairs", type=int, default=None,
@@ -484,6 +543,9 @@ def main() -> int:
     if "case" not in skip:
         log("section 2: primary_name vs accession")
         step_case(conn, args.case_sample, args.seed)
+    if "variants" not in skip:
+        log("section 4: original-case spellings")
+        step_variants(conn, args.variants_sample, args.seed)
     if "consist" not in skip:
         nss = [n.strip() for n in args.namespaces.split(",") if n.strip()]
         if args.consist_sample > 0:
