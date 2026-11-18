@@ -29,6 +29,14 @@ class Settings:
     # alias aware) instead of gene_corpus.sqlite xref_file. Empty = legacy behaviour.
     PRESENCE_DIR: str = os.getenv("PRESENCE_DIR", "")
 
+    # /loci: base URL of the Annotrieve API (used to build ready-made GFF slice links),
+    # export row cap, per-request page cache and concurrent streams per worker.
+    ANNOTRIEVE_API_BASE: str = os.getenv(
+        "ANNOTRIEVE_API_BASE", "https://genome.crg.es/annotrieve/api/v0")
+    LOCI_MAX_ROWS: int = _env_int("LOCI_MAX_ROWS", 2_000_000)
+    LOCI_CACHE_KIB: int = _env_int("LOCI_CACHE_KIB", 16384)
+    LOCI_MAX_INFLIGHT: int = _env_int("LOCI_MAX_INFLIGHT", 4)
+
     # Negative cache_size is KiB (~256 MiB).
     READ_CACHE_SIZE: int = _env_int("READ_CACHE_SIZE", -262144)
 

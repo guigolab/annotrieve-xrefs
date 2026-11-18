@@ -175,7 +175,7 @@ def list_names_by_prefix_presence(
     for name, (n_sym, n_extra) in counts.items():
         n_ann = n_sym + n_extra if mode == "include" else n_sym
         extra = 0 if mode in ("off", "include") else n_extra
-        if n_ann == 0 and extra == 0:
+        if n_ann == 0:      # alias-only names are listed only with alias=include
             continue
         results.append({"name": name, "category": classify_name(name),
                         "n_annotations": n_ann, "n_alias_extra": extra})

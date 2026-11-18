@@ -91,3 +91,52 @@ def scope_mask(conn: sqlite3.Connection, all_mask: int,
     if exclude:
         mask &= ~union(exclude)
     return mask & all_mask
+
+
+LOCI_FILE = "loci.sqlite"
+
+
+def loci_db_path() -> Path | None:
+    root = presence_dir()
+    return None if root is None else root / "current" / LOCI_FILE
+
+
+def open_request_connections() -> tuple[sqlite3.Connection, sqlite3.Connection, str]:
+    """
+    Dedicated read-only connections ``(presence, loci, data_version)`` for one /loci request.
+
+    Streaming responses are iterated from different worker threads, so these connections are
+    not thread-bound; each belongs to one request and is used sequentially. The caller must
+    close them. Raises 503 when loci.sqlite is missing or built for another presence version.
+    """
+    reader = presence_reader()
+    path = loci_db_path()
+    if path is None or not path.is_file():
+        raise http_error(503, "loci_unavailable", "Loci index is not published")
+    # Resolve both through the same version directory so a switch of `current` cannot split them.
+    version_dir = reader.path.parent
+    loci_path = version_dir / LOCI_FILE
+    if not loci_path.is_file():
+        raise http_error(503, "loci_unavailable", "Loci index is not published for this version")
+
+    def connect(p: Path) -> sqlite3.Connection:
+        conn = sqlite3.connect(f"file:{p}?mode=ro&immutable=1", uri=True, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA cache_size=-{settings.LOCI_CACHE_KIB}")
+        conn.execute("PRAGMA temp_store=FILE")
+        conn.execute("PRAGMA mmap_size=0")
+        conn.execute("PRAGMA query_only=ON")
+        return conn
+
+    pres = connect(reader.path)
+    loci = connect(loci_path)
+    try:
+        v = loci.execute("SELECT value FROM meta WHERE key='data_version'").fetchone()
+        if v is None or v[0] != reader.data_version:
+            raise http_error(503, "loci_version_mismatch",
+                             "loci.sqlite was built for a different presence version")
+    except Exception:
+        pres.close()
+        loci.close()
+        raise
+    return pres, loci, reader.data_version

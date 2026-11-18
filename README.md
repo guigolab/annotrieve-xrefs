@@ -252,6 +252,7 @@ Items are grouped by gene: several isoforms of one gene cost one tabix query, on
 **Ops / env** (see `.env.example`; never put the NCBI key in compose):
 
 - `ANNOTATIONS_DIR` — mount of Annotrieve’s annotation files (prod: `/data/annotations`).
+- `PRESENCE_DIR` — directory with the `current` symlink to `v<version>/presence.sqlite` (built by `serve_build build`). When set, `/names` and `/hits` read it and support `alias=off|suggest|include` (default `suggest`: symbol hits are matches, alias-only annotations are listed as `alias_only`, `n_alias_extra` per term/name). Unset = legacy `xref_file` behaviour. `/loci` also needs `loci.sqlite` in the same version directory; related settings: `ANNOTRIEVE_API_BASE` (for `gff_url`), `LOCI_MAX_ROWS`, `LOCI_CACHE_KIB`, `LOCI_MAX_INFLIGHT`.
 - `ANNOTATIONS_GFF_PATH_PREFIX` — optional harvest `--files-root` to rebase `annotation.gff_path`.
 - `NCBI_API_KEY` — optional; with key ~9 req/s, without ~2.5 req/s (one shared token bucket per API process).
 - `NCBI_WORKERS` — fetch thread-pool size only (does not divide the rate).

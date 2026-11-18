@@ -124,12 +124,14 @@ def test_names_prefix_counts(presence_client) -> None:
     client, _ = presence_client
     body = client.get("/names", params={"prefix": "seleno"}).json()
     got = {r["name"]: (r["n_annotations"], r["n_alias_extra"]) for r in body["results"]}
-    assert got == {"selenow": (2, 0), "seleno1": (1, 0), "selenoh": (0, 1)}
-    assert [r["name"] for r in body["results"]] == ["selenow", "seleno1", "selenoh"]
+    assert got == {"selenow": (2, 0), "seleno1": (1, 0)}      # alias-only selenoh is hidden
+    assert [r["name"] for r in body["results"]] == ["selenow", "seleno1"]
     off = client.get("/names", params={"prefix": "seleno", "alias": "off"}).json()
     assert {r["name"] for r in off["results"]} == {"selenow", "seleno1"}
     inc = client.get("/names", params={"prefix": "seleno", "alias": "include"}).json()
     assert {r["name"]: r["n_annotations"] for r in inc["results"]}["selenoh"] == 1
+    tp = client.get("/names", params={"prefix": "tp5"}).json()
+    assert [(r["name"], r["n_annotations"], r["n_alias_extra"]) for r in tp["results"]] == [("tp53", 2, 1)]
 
 
 def test_names_scoped_counts(presence_client) -> None:

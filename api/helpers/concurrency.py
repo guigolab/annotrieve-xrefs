@@ -16,6 +16,9 @@ _SEQUENCES_SEMAPHORE = threading.Semaphore(
 )
 
 
+_LOCI_SEMAPHORE = threading.Semaphore(max(1, int(settings.LOCI_MAX_INFLIGHT)))
+
+
 class BusyError(Exception):
     """Raised when a concurrency gate is saturated."""
 
@@ -48,3 +51,13 @@ def sequences_slot(*, blocking: bool = False) -> Iterator[None]:
         yield
     finally:
         _SEQUENCES_SEMAPHORE.release()
+
+
+def acquire_loci_slot() -> None:
+    """Take a /loci slot (non-blocking); the caller must call ``release_loci_slot``."""
+    if not _LOCI_SEMAPHORE.acquire(blocking=False):
+        raise BusyError("too many concurrent loci requests")
+
+
+def release_loci_slot() -> None:
+    _LOCI_SEMAPHORE.release()

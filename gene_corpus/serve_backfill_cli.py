@@ -36,7 +36,7 @@ from gene_corpus.sql.manifest import (
     work_shard,
 )
 
-COMMANDS = ("catalogue", "sidecars", "status", "build", "missing")
+COMMANDS = ("catalogue", "sidecars", "status", "build", "missing", "loci")
 
 
 def _log(msg: str) -> None:
@@ -82,6 +82,15 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--limit-annotations", type=int, default=None, help="trial build: first N annotations")
     b.add_argument("--verify-annotations", type=int, default=30)
     b.add_argument("--keep-runs", action="store_true")
+
+    lo = sub.add_parser("loci", help="build loci.sqlite next to the current presence.sqlite")
+    _common(lo)
+    lo.add_argument("--out-dir", type=Path, default=None, help="default: <work-dir>/serve")
+    lo.add_argument("--tmp-dir", type=Path, default=None, help="default: <out-dir>/tmp (NFS)")
+    lo.add_argument("--gene-budget", type=int, default=300_000,
+                    help="named genes held in memory per batch (default 300000)")
+    lo.add_argument("--verify-annotations", type=int, default=30)
+    lo.add_argument("--keep-runs", action="store_true")
 
     m = sub.add_parser("missing", help="list catalogue annotations that have no shard yet")
     _common(m)
@@ -239,6 +248,35 @@ def _cmd_sidecars(args) -> int:
     return 130 if interrupted else (1 if failures else 0)
 
 
+def _cmd_loci(args) -> int:
+    import json
+
+    from gene_corpus.sql.loci_from_sidecars import LOCI_FILE, build_loci
+    from gene_corpus.sql.serve_presence import BuildError
+
+    per_gff, manifest = _paths(args)
+    out_dir = args.out_dir or (args.work_dir / "serve")
+    current = out_dir / "current"
+    if not current.exists():
+        print(f"no published presence index at {current} (run `build` first)", file=sys.stderr)
+        return 2
+    version_dir = current.resolve()
+    building = out_dir / ".loci.building.sqlite"
+    try:
+        stats = build_loci(
+            version_dir / "presence.sqlite", manifest, per_gff, building,
+            tmp_dir=args.tmp_dir or (out_dir / "tmp"), gene_budget=args.gene_budget,
+            verify_sample=args.verify_annotations, keep_runs=args.keep_runs)
+    except BuildError as exc:
+        print(f"LOCI BUILD FAILED: {exc}", file=sys.stderr)
+        building.unlink(missing_ok=True)
+        return 1
+    os.replace(building, version_dir / LOCI_FILE)
+    (version_dir / "loci_report.json").write_text(json.dumps(stats, indent=2))
+    print(f"published {version_dir / LOCI_FILE}")
+    return 0
+
+
 def _cmd_missing(args) -> int:
     from gene_corpus.sql.manifest import STATUS_SKIPPED_COMMUNITY, classify_source
 
@@ -340,5 +378,6 @@ def _cmd_build(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     return {"catalogue": _cmd_catalogue, "sidecars": _cmd_sidecars, "status": _cmd_status,
-            "build": _cmd_build, "missing": _cmd_missing}[
+            "build": _cmd_build, "missing": _cmd_missing,
+            "loci": _cmd_loci}[
         args.command](args)
