@@ -5,8 +5,6 @@ from collections.abc import Iterable, Sequence
 
 from helpers.cursor import QueryError
 from helpers.names import (
-    parse_exact_name,
-    parse_name_list,
     parse_prefix_query,
     parse_taxid_list,
 )
@@ -15,6 +13,7 @@ from helpers.pagination import MAX_NAMES_GET, MAX_PREFIX_EXPAND
 from helpers.postings import iter_bits, to_bitset
 from helpers.presence import scope_mask
 from helpers.source_codes import SOURCE_NAME_TO_CODE, SOURCES_LEGEND
+from services.terms import parse_terms, resolve_terms, term_echo
 from settings import settings
 
 ALIAS_MODES = ("off", "suggest", "include")
@@ -113,8 +112,9 @@ def _split_by_mode(sym: int, alias: int, mode: str) -> tuple[int, int, int]:
 
 def list_name_hits_presence(
     reader,
-    names: str | Sequence[str],
+    names: str | Sequence[str] | None = None,
     *,
+    terms: Sequence | None = None,
     include_taxids=None,
     exclude_taxids=None,
     alias: str | None = "suggest",
@@ -126,46 +126,51 @@ def list_name_hits_presence(
     mode = parse_alias_mode(alias)
     shape = parse_shape(shape)
     source_codes = parse_sources(sources)
-    raw_names = parse_name_list(names, max_names=max_names)
+    raws = parse_terms(names, terms, max_terms=max_names)
     include = parse_taxid_list(include_taxids, field="include_taxids")
     exclude = parse_taxid_list(exclude_taxids, field="exclude_taxids")
 
-    terms: list[dict] = []
-    name_to_term: dict[str, int] = {}
-    for raw in raw_names:
-        inp, name = parse_exact_name(raw)
-        if name in name_to_term:
-            continue
-        name_to_term[name] = len(terms)
-        terms.append({"input": inp, "name": name, "namespaces": [], "n_hits": 0,
-                      "n_alias_extra": 0})
-
     conn = reader.conn
+    resolved = resolve_terms(conn, raws, mode)
+    # Several terms can share a name (``seleno*`` and ``selenow``): index name_id -> terms.
+    id_to_terms: dict[int, list[int]] = {}
+    terms_out: list[dict] = []
+    for t in resolved:
+        for nid in t["name_ids"]:
+            id_to_terms.setdefault(nid, []).append(t["index"])
+        terms_out.append({**term_echo(t), "namespaces": [], "n_hits": 0, "n_alias_extra": 0})
     scope = scope_mask(conn, reader.all_mask, include, exclude)
+
+    term_sym = [0] * len(resolved)
+    term_alias = [0] * len(resolved)
+    for chunk in _chunks(list(id_to_terms)):
+        ph = ",".join("?" for _ in chunk)
+        for row in conn.execute(
+                f"SELECT name_id, sym, alias FROM posting WHERE name_id IN ({ph})", chunk):
+            sym = to_bitset(row["sym"]) & scope
+            als = to_bitset(row["alias"]) & scope
+            for i in id_to_terms[int(row["name_id"])]:
+                term_sym[i] |= sym
+                term_alias[i] |= als
 
     ann_matched: dict[int, list[int]] = {}
     ann_alias: dict[int, list[int]] = {}
-    for chunk in _chunks(list(name_to_term)):
-        ph = ",".join("?" for _ in chunk)
-        for row in conn.execute(
-            f"SELECT d.name, p.sym, p.alias FROM name_dict d JOIN posting p USING (name_id) "
-            f"WHERE d.name IN ({ph})", chunk):
-            i = name_to_term[row["name"]]
-            sym = to_bitset(row["sym"]) & scope
-            als = to_bitset(row["alias"]) & scope
-            matched, alias_only, extra = _split_by_mode(sym, als, mode)
-            ns = []
-            if sym:
-                ns.append("symbol")
-            if als and mode != "off":
-                ns.append("alias")
-            terms[i]["namespaces"] = ns
-            terms[i]["n_hits"] = matched.bit_count()
-            terms[i]["n_alias_extra"] = extra.bit_count()
-            for o in iter_bits(matched):
-                ann_matched.setdefault(o, []).append(i)
-            for o in iter_bits(alias_only):
-                ann_alias.setdefault(o, []).append(i)
+    for i, out in enumerate(terms_out):
+        sym, als = term_sym[i], term_alias[i]
+        matched, alias_only, extra = _split_by_mode(sym, als, mode)
+        ns = []
+        if sym:
+            ns.append("symbol")
+        if als and mode != "off":
+            ns.append("alias")
+        out["namespaces"] = ns
+        out["n_hits"] = matched.bit_count()
+        out["n_alias_extra"] = extra.bit_count()
+        for o in iter_bits(matched):
+            ann_matched.setdefault(o, []).append(i)
+        for o in iter_bits(alias_only):
+            ann_alias.setdefault(o, []).append(i)
+    terms = terms_out
 
     n_terms = len(terms)
     needed = parse_min_matched(min_matched, n_terms)

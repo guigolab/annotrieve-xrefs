@@ -22,9 +22,11 @@ from helpers.cursor import QueryError
 from helpers.gffread_runner import SequenceAction
 from helpers.pagination import MAX_SEQUENCES_BUFFER_BP, MAX_SEQUENCES_ID_CHARS
 from helpers.transcript_select import Rule, RuleError, parse_rule
+from helpers.pagination import MAX_NAMES_POST
+from services.terms import parse_terms
 from settings import settings
 
-QUERY_FIELDS = ("names", "include_taxids", "exclude_taxids", "alias", "annotation_ids",
+QUERY_FIELDS = ("names", "terms", "include_taxids", "exclude_taxids", "alias", "annotation_ids",
                 "case_sensitive")
 MAX_LOCI_ENTRIES = 5000
 ON_ERROR = ("skip", "fail")
@@ -160,7 +162,10 @@ def _query(raw: Any) -> dict:
     names = raw.get("names")
     if isinstance(names, str):
         names = [n for n in names.split(",") if n.strip()]
-    if not isinstance(names, list) or not names:
+    terms_raw = raw.get("terms")
+    if names is None and terms_raw is not None:
+        names = []
+    if not isinstance(names, list) or not (names or terms_raw):
         raise _bad("query.names must be a non-empty list", "names_required")
     if not all(isinstance(n, str) for n in names):
         raise _bad("query.names must contain strings", "validation_error", field="names")
@@ -169,8 +174,14 @@ def _query(raw: Any) -> dict:
         raise _bad("query.case_sensitive must be true or false", "validation_error",
                    field="case_sensitive")
     norm = [n.strip() if case else n.strip().casefold() for n in names if n.strip()]
-    if not norm:
+    if not norm and not terms_raw:
         raise _bad("query.names must be a non-empty list", "names_required")
+    terms = []
+    if terms_raw is not None:
+        # Validated here so a bad term fails the request, not the job; stored canonically so the
+        # same request always hashes to the same result_id.
+        terms = sorted((t.as_dict() for t in parse_terms(None, terms_raw, max_terms=MAX_NAMES_POST)),
+                       key=lambda t: json.dumps(t, sort_keys=True))
     alias = raw.get("alias") if raw.get("alias") is not None else "suggest"
     if not isinstance(alias, str) or alias.lower() not in ALIAS_MODES:
         raise _bad(f"query.alias must be one of {', '.join(ALIAS_MODES)}", "invalid_alias_mode",
@@ -182,6 +193,7 @@ def _query(raw: Any) -> dict:
                    field="annotation_ids")
     return {
         "names": sorted(set(norm)),
+        "terms": terms,
         "include_taxids": _int_list(raw.get("include_taxids"), "include_taxids"),
         "exclude_taxids": _int_list(raw.get("exclude_taxids"), "exclude_taxids"),
         "alias": alias.lower(),

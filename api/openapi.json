@@ -82,11 +82,19 @@
             "title": "Min Matched"
           },
           "names": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Names",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "exact names or prefixes (seleno*)",
+            "title": "Names"
           },
           "shape": {
             "anyOf": [
@@ -117,11 +125,30 @@
             ],
             "description": "Ensembl, GenBank and/or RefSeq; omit for all",
             "title": "Sources"
+          },
+          "terms": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "terms as strings or objects {q, exclude, categories, split} (options apply to prefix terms)",
+            "title": "Terms"
           }
         },
-        "required": [
-          "names"
-        ],
         "title": "HitsSearchBody",
         "type": "object"
       },
@@ -225,16 +252,41 @@
             "title": "Limit"
           },
           "names": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Names",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Names"
+          },
+          "terms": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terms"
           }
         },
-        "required": [
-          "names"
-        ],
         "title": "LociBody",
         "type": "object"
       },
@@ -1167,12 +1219,12 @@
         "operationId": "get_hits_hits_get",
         "parameters": [
           {
-            "description": "Comma-separated exact gene names (symbol\u222aalias). Wildcards are not supported; use GET /names?prefix=.",
+            "description": "Comma-separated gene names (symbol\u222aalias); a trailing * makes a prefix term (seleno*, at least 3 characters, expanded server-side and echoed in `terms`).",
             "in": "query",
             "name": "names",
             "required": true,
             "schema": {
-              "description": "Comma-separated exact gene names (symbol\u222aalias). Wildcards are not supported; use GET /names?prefix=.",
+              "description": "Comma-separated gene names (symbol\u222aalias); a trailing * makes a prefix term (seleno*, at least 3 characters, expanded server-side and echoed in `terms`).",
               "title": "Names",
               "type": "string"
             }
@@ -1357,12 +1409,12 @@
         "operationId": "get_loci_loci_get",
         "parameters": [
           {
-            "description": "Comma-separated exact gene names (no wildcard)",
+            "description": "Comma-separated gene names; name* is a prefix term (3+ characters, expanded server-side, echoed in `terms`)",
             "in": "query",
             "name": "names",
             "required": true,
             "schema": {
-              "description": "Comma-separated exact gene names (no wildcard)",
+              "description": "Comma-separated gene names; name* is a prefix term (3+ characters, expanded server-side, echoed in `terms`)",
               "title": "Names",
               "type": "string"
             }

@@ -32,6 +32,13 @@ _VALIDATION_CODES = frozenset(
         "invalid_shape",
         "invalid_format",
         "presence_required",
+        "invalid_terms",
+        "unknown_term_field",
+        "invalid_category",
+        "option_needs_prefix",
+        "invalid_prefix",
+        "prefix_too_short",
+        "prefix_too_broad",
     }
 )
 _FORMATS = ("json", "tsv")
@@ -48,7 +55,10 @@ class HitsSearchBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    names: list[str] = Field(...)
+    names: list[str] | None = Field(None, description="exact names or prefixes (seleno*)")
+    terms: list[str | dict] | None = Field(
+        None, description="terms as strings or objects {q, exclude, categories, split} "
+                          "(options apply to prefix terms)")
     include_taxids: list[int] | None = None
     exclude_taxids: list[int] | None = None
     alias: str | None = None
@@ -78,7 +88,7 @@ def _http_for_query_error(exc: QueryError) -> HTTPException:
     return HTTPException(status_code=status, detail=exc.as_detail())
 
 
-def _run(*, names, include_taxids, exclude_taxids, alias, sources, min_matched, shape, fmt, max_names):
+def _run(*, names, terms=None, include_taxids, exclude_taxids, alias, sources, min_matched, shape, fmt, max_names):
     """One search for GET and POST; returns a JSON-able dict or a streaming TSV response."""
     fmt = (fmt or "json").strip().lower()
     if fmt not in _FORMATS:
@@ -87,11 +97,13 @@ def _run(*, names, include_taxids, exclude_taxids, alias, sources, min_matched, 
         if sources or min_matched or (shape or "compact") != "compact" or fmt != "json":
             raise QueryError("sources, min_matched, shape and format need the presence index",
                              code="presence_required")
+        if terms:
+            raise QueryError("terms need the presence index", code="presence_required")
         return list_name_hits(corpus_conn(), names, include_taxids=include_taxids,
                               exclude_taxids=exclude_taxids, max_names=max_names)
     reader = presence_reader()
     result = list_name_hits_presence(
-        reader, names, include_taxids=include_taxids, exclude_taxids=exclude_taxids, alias=alias,
+        reader, names, terms=terms, include_taxids=include_taxids, exclude_taxids=exclude_taxids, alias=alias,
         max_names=max_names, sources=sources, min_matched=min_matched,
         shape="records" if fmt == "tsv" else shape)
     if fmt == "tsv":
@@ -107,8 +119,8 @@ def get_hits(
     names: str = Query(
         ...,
         description=(
-            "Comma-separated exact gene names (symbol∪alias). "
-            "Wildcards are not supported; use GET /names?prefix=."
+            "Comma-separated gene names (symbol∪alias); a trailing * makes a prefix term "
+            "(seleno*, at least 3 characters, expanded server-side and echoed in `terms`)."
         ),
     ),
     include_taxids: str | None = Query(
@@ -161,7 +173,7 @@ def post_hits(body: HitsSearchBody):
     """Presence search for a larger name list (JSON body). Prefer GET when ≤200."""
     try:
         with hits_slot():
-            return _run(names=body.names, include_taxids=body.include_taxids,
+            return _run(names=body.names, terms=body.terms, include_taxids=body.include_taxids,
                         exclude_taxids=body.exclude_taxids, alias=body.alias, sources=body.sources,
                         min_matched=body.min_matched, shape=body.shape, fmt=body.format,
                         max_names=MAX_NAMES_POST)

@@ -16,6 +16,7 @@ from helpers.presence import (
 from services.seq_genes import build_loci_query, query_genes, ref_genes
 from services.seq_request import SeqRequest
 from services.seq_resolve import SeqError
+from services.terms import term_echo
 
 if TYPE_CHECKING:        # the export module needs the NCBI client; keep it out of read-only tools
     from services.seq_export import Item
@@ -76,8 +77,7 @@ class Source:
     def terms(self) -> list[dict]:
         if self.q is None:
             return []
-        return [{"index": i, "input": t["input"], "name": t["name"],
-                 "found": self.q.name_ids[i] is not None} for i, t in enumerate(self.q.terms)]
+        return [term_echo(t) for t in self.q.terms]
 
     def items(self) -> "Iterator[Item]":
         if self.q is not None:

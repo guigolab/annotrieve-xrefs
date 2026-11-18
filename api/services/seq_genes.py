@@ -40,7 +40,7 @@ def build_loci_query(pres: sqlite3.Connection, reader, data_version: str, req: S
                      ) -> LociQuery:
     q = req.query or {}
     return build_query(
-        pres, reader.all_mask, data_version, q["names"],
+        pres, reader.all_mask, data_version, q["names"], terms=q.get("terms") or None,
         include_taxids=q["include_taxids"], exclude_taxids=q["exclude_taxids"], alias=q["alias"],
         annotation_ids=q["annotation_ids"], case_sensitive=q["case_sensitive"], flank_bp=0)
 

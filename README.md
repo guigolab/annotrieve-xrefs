@@ -9,7 +9,7 @@ This service is a sidecar to Annotrieve. Annotrieve owns the main annotation cat
 Typical flow (happy path):
 
 1. **Discover names (optional)** — `GET /names?prefix=…` (prefix suggestions with categories)
-2. **Search by exact gene names** — `GET|POST /hits?names=…` (symbol∪alias; no wildcards)
+2. **Search by gene names** — `GET|POST /hits?names=…` (symbol∪alias; a trailing `*` makes a prefix term)
 3. **Drill in** — `GET /annotations/{id}/genes?names=…` and `…/xrefs`
 4. **Or browse xrefs** — `…/namespaces` → `…/namespaces/{ns}/accessions?q=…` → `…/genes?curies=ns:acc`
 
@@ -84,7 +84,7 @@ GET /names?prefix=seleno&include_taxids=7742
 
 ### `GET` / `POST /hits`
 
-**Gene-name presence search** (primary API). Exact names only against **symbol ∪ alias** (casefolded). A name containing `*` → `422 wildcard_not_supported` (use `GET /names` for prefix discovery).
+**Gene-name presence search** (primary API). Names are matched against **symbol ∪ alias** (casefolded). A term ending in `*` (`seleno*`, same rule on `/hits`, `/loci` and the `query` of `/sequences`) is a **prefix term**: the server expands it against the name dictionary (at least 3 characters; at most 500 names per term and 2,000 per request, else `422 prefix_too_broad`; alias-only names are included only with `alias=include`) and echoes the expansion in `terms` (`kind`, `names`, `n_names`). A term matches if any of its names does, and `min_matched` counts terms. POST accepts `terms`: strings or objects `{q, exclude, categories, split}` (options for prefix terms only; `split` turns each expanded name into its own term; `categories` as in `GET /names`). `*` elsewhere → `422 invalid_prefix`.
 
 
 | Parameter        | Notes                                                                                                                   |

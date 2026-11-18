@@ -24,6 +24,7 @@ from services.presence_loci import (
     estimate,
     iter_loci,
 )
+from services.terms import term_echo
 from settings import settings
 
 router = APIRouter()
@@ -38,7 +39,8 @@ _MEDIA = {"tsv": "text/tab-separated-values", "bed": "text/plain", "ndjson": "ap
 class LociBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    names: list[str]
+    names: list[str] | None = None
+    terms: list[str | dict] | None = None
     include_taxids: list[int] | None = None
     exclude_taxids: list[int] | None = None
     alias: str | None = "suggest"
@@ -59,7 +61,7 @@ def _busy() -> JSONResponse:
     )
 
 
-def _run(names, *, include_taxids, exclude_taxids, alias, annotation_ids, case_sensitive,
+def _run(names, *, terms=None, include_taxids, exclude_taxids, alias, annotation_ids, case_sensitive,
          flank_bp, fmt, dry_run, limit, cursor, max_names):
     if not presence_enabled():
         raise http_error(503, "loci_unavailable", "The presence/loci index is not enabled")
@@ -76,15 +78,13 @@ def _run(names, *, include_taxids, exclude_taxids, alias, annotation_ids, case_s
     handed_off = False
     try:
         pres, loci, data_version = open_request_connections()
-        q = build_query(pres, reader.all_mask, data_version, names,
+        q = build_query(pres, reader.all_mask, data_version, names, terms=terms,
                         include_taxids=include_taxids, exclude_taxids=exclude_taxids, alias=alias,
                         annotation_ids=annotation_ids, case_sensitive=case_sensitive,
                         flank_bp=flank_bp, max_names=max_names)
         est = estimate(pres, loci, q)
         info = annotation_info(reader)
-        terms = [{"index": i, "input": t["input"], "name": t["name"],
-                  "found": q.name_ids[i] is not None} for i, t in enumerate(q.terms)]
-        base = {"terms": terms, "alias": q.mode, "include_taxids": q.include,
+        base = {"terms": [term_echo(t) for t in q.terms], "alias": q.mode, "include_taxids": q.include,
                 "exclude_taxids": q.exclude, "data_version": data_version, **est}
         if dry_run:
             return base
@@ -142,7 +142,7 @@ def _wrap(**kwargs):
 @router.get("/loci")
 def get_loci(
     request: Request,
-    names: str = Query(..., description="Comma-separated exact gene names (no wildcard)"),
+    names: str = Query(..., description="Comma-separated gene names; name* is a prefix term (3+ characters, expanded server-side, echoed in `terms`)"),
     include_taxids: str | None = Query(None, description="Comma-separated NCBI taxids (lineage OR)"),
     exclude_taxids: str | None = Query(None, description="Comma-separated NCBI taxids to exclude"),
     alias: str = Query("suggest", description="off | suggest | include; off drops alias-only genes"),
@@ -165,7 +165,7 @@ def get_loci(
 @router.post("/loci")
 def post_loci(body: LociBody):
     """Same as GET /loci for longer name lists."""
-    return _wrap(names=body.names, include_taxids=body.include_taxids,
+    return _wrap(names=body.names, terms=body.terms, include_taxids=body.include_taxids,
                  exclude_taxids=body.exclude_taxids, alias=body.alias,
                  annotation_ids=body.annotation_ids, case_sensitive=body.case_sensitive,
                  flank_bp=body.flank_bp, fmt=body.format, dry_run=body.dry_run, limit=body.limit,

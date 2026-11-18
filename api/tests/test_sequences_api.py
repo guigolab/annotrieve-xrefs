@@ -519,3 +519,22 @@ def test_full_of_running_jobs_refuses_instead_of_deleting_them(seq_client, limit
     r = client.post("/sequences", json=_variant(0))
     assert r.status_code == 503 and r.json()["detail"]["code"] == "sequences_capacity"
     assert "Retry-After" in r.headers
+
+
+def test_prefix_terms_in_sequences_query(seq_client):
+    client, _ = seq_client
+    body = {"query": {"terms": [{"q": "uniq*", "exclude": ["uniq4"]}], "alias": "off"},
+            "action": "cds"}
+    est = client.post("/sequence-estimates", json=body).json()
+    assert est["n_genes"] == 4
+    t = est["terms"][0]
+    assert t["kind"] == "prefix" and t["n_names"] == 4 and "uniq4" not in t["names"]
+    # option order must not change the cached result
+    same = {"query": {"alias": "off", "terms": [{"exclude": ["UNIQ4"], "q": "uniq*"}]},
+            "action": "cds"}
+    assert client.post("/sequence-estimates", json=same).json()["result_id"] == est["result_id"]
+    bad = client.post("/sequences", json={"query": {"terms": [{"q": "tp53", "split": True}]},
+                                          "action": "cds"})
+    assert bad.status_code == 422 and bad.json()["detail"]["code"] == "option_needs_prefix"
+    short = client.post("/sequences", json={"query": {"names": ["un*"]}, "action": "cds"})
+    assert short.status_code == 422 and short.json()["detail"]["code"] == "prefix_too_short"

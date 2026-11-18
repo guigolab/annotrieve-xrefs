@@ -228,3 +228,30 @@ def test_unknown_parameters_are_rejected_not_ignored(presence_client) -> None:
     assert client.get("/names", params={"prefix": "seleno", "format": "tsv"}).status_code == 422
     assert client.get("/loci", params={"names": "tp53", "limti": 1}).status_code == 422
     assert client.post("/hits", json={"names": ["tp53"], "min_matchd": 2}).status_code == 422
+
+
+def test_hits_prefix_term_is_expanded_and_echoed(presence_client) -> None:
+    presence_client, _ = presence_client
+    r = presence_client.get("/hits", params={"names": "seleno*"})
+    assert r.status_code == 200, r.text
+    t = r.json()["terms"][0]
+    assert t["kind"] == "prefix" and t["names"] == ["seleno1", "selenow"]  # selenoh is alias-only
+    assert t["n_names"] == 2 and t["found"]
+
+
+def test_hits_prefix_options_and_split(presence_client) -> None:
+    presence_client, _ = presence_client
+    body = {"terms": [{"q": "seleno*", "exclude": ["selenow"]}]}
+    t = presence_client.post("/hits", json=body).json()["terms"][0]
+    assert t["names"] == ["seleno1"]
+    t = presence_client.post("/hits", json={"terms": [{"q": "seleno*", "split": True}]}).json()["terms"]
+    assert [x["name"] for x in t] == ["seleno1", "selenow"] and t[0]["from_prefix"] == "seleno*"
+    r = presence_client.post("/hits", json={"terms": [{"q": "tp53", "split": True}]})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "option_needs_prefix"
+
+
+def test_hits_prefix_limits(presence_client) -> None:
+    presence_client, _ = presence_client
+    for q, code in (("se*", "prefix_too_short"), ("sel*no", "invalid_prefix")):
+        r = presence_client.get("/hits", params={"names": q})
+        assert r.status_code == 422 and r.json()["detail"]["code"] == code

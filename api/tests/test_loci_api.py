@@ -244,3 +244,42 @@ def test_unknown_or_hostile_annotation_ids_are_404_not_500(shard_client, ann) ->
     client, _ = shard_client
     for path in ("namespaces", "genes", "genes/1", "genes/1/xrefs"):
         assert client.get(f"/annotations/{ann}/{path}").status_code in (404, 422)
+
+
+def test_loci_prefix_term_expands_and_reports_matched_names(loci_client) -> None:
+    client, _ = loci_client
+    body = client.get("/loci", params={"names": "uniq*", "alias": "off"}).json()
+    t = body["terms"][0]
+    assert t["kind"] == "prefix" and t["names"] == [f"uniq{i}" for i in range(5)]
+    assert len(body["rows"]) == 5
+    assert {r["symbol"] for r in body["rows"]} == set(t["names"])
+    assert all(r["matched_names"] == [r["symbol"]] and r["terms"] == [0] for r in body["rows"])
+    dry = client.get("/loci", params={"names": "uniq*", "dry_run": "true"}).json()
+    assert dry["n_annotations"] == 5 and "rows" not in dry
+
+
+def test_loci_split_prefix_and_pagination(loci_client) -> None:
+    client, _ = loci_client
+    body = client.post("/loci", json={"terms": [{"q": "uniq*", "split": True, "exclude": ["uniq4"]}],
+                                      "alias": "off", "limit": 2}).json()
+    assert [t["name"] for t in body["terms"]] == [f"uniq{i}" for i in range(4)]
+    seen, cur = [], body
+    while True:
+        seen += [r["locus_ref"] for r in cur["rows"]]
+        if not cur["next_cursor"]:
+            break
+        cur = client.post("/loci", json={"terms": [{"q": "uniq*", "split": True,
+                          "exclude": ["uniq4"]}], "alias": "off", "limit": 2,
+                          "cursor": cur["next_cursor"]}).json()
+    assert len(seen) == 4 == len(set(seen))
+
+
+def test_loci_prefix_errors_and_case_sensitive(loci_client) -> None:
+    client, _ = loci_client
+    r = client.get("/loci", params={"names": "un*"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "prefix_too_short"
+    rows = client.get("/loci", params={"names": "UNIQ*", "case_sensitive": "true"}).json()["rows"]
+    assert rows == []
+    # fixture genes have no primary_name, so a case-sensitive prefix cannot match their spelling
+    assert client.get("/loci", params={"names": "uniq*", "case_sensitive": "true",
+                                       "alias": "off"}).json()["rows"] == []
