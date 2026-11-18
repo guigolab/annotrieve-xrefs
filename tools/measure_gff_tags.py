@@ -35,11 +35,11 @@ LOOKS_CANONICAL = ("canon", "select", "mane", "principal", "primary", "ccds", "a
 
 
 def classify(path: Path) -> str:
-    name = path.name
-    if "GCF_" in name:
-        return "refseq"
-    if "GCA_" in name:
-        return "genbank"
+    name = path.name.casefold()
+    for prefix, label in (("refseq_", "refseq"), ("genbank_", "genbank"), ("ensembl", "ensembl"),
+                          ("communityregistry_", "community")):
+        if name.startswith(prefix):
+            return label
     return "other"
 
 
@@ -58,9 +58,9 @@ def find_files(root: Path) -> list[Path]:
     return sorted(out)
 
 
-def scan_file(path: Path, tags: Counter, per_gene: Counter) -> tuple[int, int]:
-    """Return (transcript lines, tagged transcript lines); fill tag counts and flags per gene."""
-    n_tx = n_tagged = 0
+def scan_file(path: Path, tags: Counter, per_gene: Counter) -> tuple[int, int, int]:
+    """Return (transcript lines, tagged transcript lines, gene lines); fill tag counts/flags."""
+    n_tx = n_tagged = n_genes = 0
     for line in open_text(path):
         if not line or line[0] == "#":
             continue
@@ -68,7 +68,10 @@ def scan_file(path: Path, tags: Counter, per_gene: Counter) -> tuple[int, int]:
         if len(cols) < 9:
             continue
         ftype = cols[2].casefold()
-        if ftype in STRUCTURAL or ftype.endswith("_utr") or ftype in GENE_TYPES:
+        if ftype in GENE_TYPES:
+            n_genes += 1
+            continue
+        if ftype in STRUCTURAL or ftype.endswith("_utr"):
             continue
         attrs = cols[8]
         parent = ""
@@ -90,7 +93,7 @@ def scan_file(path: Path, tags: Counter, per_gene: Counter) -> tuple[int, int]:
                 tags[v] += 1
             if any(v in CANONICAL_TAGS for v in vals):
                 per_gene[parent] += 1
-    return n_tx, n_tagged
+    return n_tx, n_tagged, n_genes
 
 
 def main() -> None:
@@ -98,6 +101,8 @@ def main() -> None:
     ap.add_argument("--root", type=Path, required=True)
     ap.add_argument("--sample", type=int, default=300, help="number of files (deterministic)")
     ap.add_argument("--top", type=int, default=25)
+    ap.add_argument("--out", type=Path, default=None,
+                    help="write one line per file: name, class, genes, transcripts, flagged genes")
     a = ap.parse_args()
 
     files = find_files(a.root)
@@ -121,15 +126,20 @@ def main() -> None:
     cls_genes_many: Counter = Counter()
     no_tag_examples: dict[str, list[str]] = defaultdict(list)
 
+    out_f = open(a.out, "w") if a.out else None
+    if out_f:
+        out_f.write("file\tclass\tgenes\ttranscripts\tgenes_with_flagged_transcript\n")
     for i, path in enumerate(sample, 1):
         c = classify(path)
         tags: Counter = Counter()
         per_gene: Counter = Counter()
         try:
-            n_tx, n_tagged = scan_file(path, tags, per_gene)
+            n_tx, n_tagged, n_genes = scan_file(path, tags, per_gene)
         except (OSError, EOFError, UnicodeError) as exc:
             print(f"  skip {path.name}: {type(exc).__name__}: {exc}")
             continue
+        if out_f:
+            out_f.write(f"{path.name}\t{c}\t{n_genes}\t{n_tx}\t{len(per_gene)}\n")
         cls_files[c] += 1
         cls_tx[c] += n_tx
         cls_tagged[c] += n_tagged
@@ -143,6 +153,8 @@ def main() -> None:
         if i % 50 == 0:
             print(f"  {i}/{len(sample)} files", flush=True)
 
+    if out_f:
+        out_f.close()
     for c in sorted(cls_files):
         print(f"\n=== {c}: {cls_files[c]} files ===")
         print(f"transcript-like lines {cls_tx[c]:,}; with a tag attribute {cls_tagged[c]:,}")
