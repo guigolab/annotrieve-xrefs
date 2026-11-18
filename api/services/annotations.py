@@ -72,8 +72,10 @@ def open_shard(
     return conn
 
 
-def _gene_card(row: sqlite3.Row) -> dict:
+def _gene_card(row: sqlite3.Row, annotation_id: str | None = None) -> dict:
     return {
+        # Same reference /loci returns, so a card can be posted to /sequences as it is.
+        "locus_ref": f"{annotation_id}:{int(row['local_id'])}" if annotation_id else None,
         "local_id": int(row["local_id"]),
         "source_gene_id": row["source_gene_id"],
         "feature_type": row["feature_type"],
@@ -91,6 +93,7 @@ def _gene_card(row: sqlite3.Row) -> dict:
 def get_gene(
     conn: sqlite3.Connection,
     local_id: int,
+    annotation_id: str | None = None,
 ) -> dict | None:
     """Return one gene card, or None if missing."""
     if local_id < 0:
@@ -105,7 +108,7 @@ def get_gene(
     ).fetchone()
     if row is None:
         return None
-    return _gene_card(row)
+    return _gene_card(row, annotation_id)
 
 
 def gene_exists(conn: sqlite3.Connection, local_id: int) -> bool:
@@ -603,7 +606,7 @@ def list_annotation_genes(
         [*params, limit, offset],
     ).fetchall()
 
-    results = [_gene_card(row) for row in rows]
+    results = [_gene_card(row, annotation_id) for row in rows]
     if results and name_terms:
         page_ids = [int(card["local_id"]) for card in results]
         by_lid = _matches_for_page(conn, page_ids, name_terms)

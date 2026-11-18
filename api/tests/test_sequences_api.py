@@ -1,4 +1,4 @@
-"""/sequences, /sequences/estimate, /sequences/plan, jobs and cached results (new index only)."""
+"""/sequences, /sequence-estimates, /sequence-plans, jobs and cached results (new index only)."""
 from __future__ import annotations
 
 import sqlite3
@@ -165,7 +165,7 @@ def test_transcript_rules(seq_client):
 
 def test_loci_mode_pinned_transcript_and_fail_by_default(seq_client):
     client, _ = seq_client
-    aid = client.post("/sequences/plan", json=TP53).json()["genes"][0]["annotation_id"]
+    aid = client.post("/sequence-plans", json=TP53).json()["genes"][0]["annotation_id"]
     ok = client.post("/sequences", json={"action": "transcript",
                                          "loci": [{"locus_ref": f"{aid}:1", "transcript_id": "tx1b"}]})
     assert ok.status_code == 200 and headers(ok.text)[0].split("|")[4].split()[0] == "tx1b"
@@ -195,7 +195,7 @@ def test_noncoding_gene_is_skipped_with_reason_and_fails_when_asked(seq_client):
 
 def test_transcript_beyond_gene_bounds_is_fetched_whole(seq_client):
     client, _ = seq_client
-    plan = client.post("/sequences/plan", json={
+    plan = client.post("/sequence-plans", json={
         "query": {"names": ["uniq0"], "alias": "off"}, "action": "cds"}).json()
     tx = plan["genes"][0]["transcripts"][0]
     assert tx["transcript_id"] == "tx2" and tx["spliced_len"] == 51 + 31 and tx["n_exons"] == 2
@@ -204,7 +204,7 @@ def test_transcript_beyond_gene_bounds_is_fetched_whole(seq_client):
 
 def test_plan_lists_candidates_and_a_postable_selection(seq_client):
     client, _ = seq_client
-    plan = client.post("/sequences/plan", json={**TP53, "transcript": "most_exons"}).json()
+    plan = client.post("/sequence-plans", json={**TP53, "transcript": "most_exons"}).json()
     assert plan["n_genes"] == 5 and plan["n_skipped"] == 0 and len(plan["loci"]) == 5
     g = plan["genes"][0]
     assert [t["transcript_id"] for t in g["transcripts"]] == ["tx1a", "tx1b"]
@@ -217,11 +217,11 @@ def test_plan_lists_candidates_and_a_postable_selection(seq_client):
 
 def test_estimate_and_limits(seq_client):
     client, _ = seq_client
-    est = client.post("/sequences/estimate", json=TP53).json()
+    est = client.post("/sequence-estimates", json=TP53).json()
     assert est["n_genes"] == 5 and est["mode"] == "sync" and not est["cached"]
     assert est["est_bp_upper_bound"] == 5 * 51 and est["terms"][0]["found"] is True
     client.post("/sequences", json=TP53)
-    assert client.post("/sequences/estimate", json=TP53).json()["cached"] is True
+    assert client.post("/sequence-estimates", json=TP53).json()["cached"] is True
     big = client.post("/sequences", json={**TP53, "max_genes": 2})
     assert big.status_code == 413 and big.json()["detail"]["code"] == "too_many_genes"
     none = client.post("/sequences", json={"query": {"names": ["zzzzz"]}, "action": "cds"})
@@ -328,7 +328,7 @@ def test_oversized_gff_index_is_skipped_with_a_reason(seq_client):
 
 def test_request_order_is_kept_when_genes_are_resolved_by_annotation(seq_client):
     client, _ = seq_client
-    plan = client.post("/sequences/plan", json=TP53).json()
+    plan = client.post("/sequence-plans", json=TP53).json()
     refs = [g["locus_ref"] for g in plan["genes"]][::-1]           # reverse: annotation order differs
     r = client.post("/sequences", json={"action": "cds", "loci": refs})
     got = [h.split("|")[3] for h in headers(r.text)]
@@ -374,7 +374,7 @@ FUZZ_BODIES = [
 
 
 @pytest.mark.parametrize("body", FUZZ_BODIES)
-@pytest.mark.parametrize("path", ["/sequences", "/sequences/estimate", "/sequences/plan"])
+@pytest.mark.parametrize("path", ["/sequences", "/sequence-estimates", "/sequence-plans"])
 def test_malformed_bodies_never_cause_a_server_error(seq_client, path, body):
     client, _ = seq_client
     r = client.post(path, json=body)

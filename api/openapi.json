@@ -182,6 +182,221 @@
         "title": "LociBody",
         "type": "object"
       },
+      "PlanGene": {
+        "additionalProperties": true,
+        "properties": {
+          "locus_ref": {
+            "title": "Locus Ref",
+            "type": "string"
+          },
+          "message": {
+            "default": "",
+            "title": "Message",
+            "type": "string"
+          },
+          "n_candidates": {
+            "default": 0,
+            "title": "N Candidates",
+            "type": "integer"
+          },
+          "reason": {
+            "default": "",
+            "description": "skip reason code when status is skipped",
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "description": "ok | skipped",
+            "title": "Status",
+            "type": "string"
+          },
+          "transcripts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PlanTranscript"
+            },
+            "title": "Transcripts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "locus_ref",
+          "status"
+        ],
+        "title": "PlanGene",
+        "type": "object"
+      },
+      "PlanLocus": {
+        "properties": {
+          "locus_ref": {
+            "title": "Locus Ref",
+            "type": "string"
+          },
+          "transcript_id": {
+            "title": "Transcript Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "locus_ref",
+          "transcript_id"
+        ],
+        "title": "PlanLocus",
+        "type": "object"
+      },
+      "PlanTranscript": {
+        "additionalProperties": true,
+        "properties": {
+          "biotype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Biotype"
+          },
+          "cds_len": {
+            "title": "Cds Len",
+            "type": "integer"
+          },
+          "coding": {
+            "title": "Coding",
+            "type": "boolean"
+          },
+          "n_exons": {
+            "title": "N Exons",
+            "type": "integer"
+          },
+          "selected": {
+            "title": "Selected",
+            "type": "boolean"
+          },
+          "span": {
+            "title": "Span",
+            "type": "integer"
+          },
+          "spliced_len": {
+            "title": "Spliced Len",
+            "type": "integer"
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "transcript_id": {
+            "title": "Transcript Id",
+            "type": "string"
+          },
+          "utr_len": {
+            "title": "Utr Len",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "transcript_id",
+          "selected",
+          "coding",
+          "cds_len",
+          "spliced_len",
+          "span",
+          "n_exons",
+          "utr_len"
+        ],
+        "title": "PlanTranscript",
+        "type": "object"
+      },
+      "SequenceEstimate": {
+        "description": "What a request would cost, from the index alone (nothing is extracted).",
+        "properties": {
+          "cached": {
+            "description": "a finished result for this request exists",
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "complete": {
+            "description": "false when counting stopped at max_genes",
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "data_version": {
+            "title": "Data Version",
+            "type": "string"
+          },
+          "est_bp_upper_bound": {
+            "description": "Sum of gene lengths: bound of the bases to fetch",
+            "title": "Est Bp Upper Bound",
+            "type": "integer"
+          },
+          "max_genes": {
+            "title": "Max Genes",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "sync (FASTA in the response) | job (202 + polling)",
+            "title": "Mode",
+            "type": "string"
+          },
+          "n_genes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null when over the limit (see n_genes_at_least)",
+            "title": "N Genes"
+          },
+          "n_genes_at_least": {
+            "title": "N Genes At Least",
+            "type": "integer"
+          },
+          "over_limit": {
+            "title": "Over Limit",
+            "type": "boolean"
+          },
+          "result_id": {
+            "description": "Id the finished result would have",
+            "title": "Result Id",
+            "type": "string"
+          },
+          "sync_max_genes": {
+            "title": "Sync Max Genes",
+            "type": "integer"
+          },
+          "terms": {
+            "description": "query mode: each name and whether it was found",
+            "items": {
+              "type": "object"
+            },
+            "title": "Terms",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data_version",
+          "result_id",
+          "n_genes_at_least",
+          "complete",
+          "est_bp_upper_bound",
+          "max_genes",
+          "over_limit",
+          "mode",
+          "sync_max_genes",
+          "cached",
+          "terms"
+        ],
+        "title": "SequenceEstimate",
+        "type": "object"
+      },
       "SequenceJob": {
         "properties": {
           "done": {
@@ -299,6 +514,52 @@
           "state"
         ],
         "title": "SequenceJob",
+        "type": "object"
+      },
+      "SequencePlan": {
+        "description": "The transcripts a request would extract, with the metrics behind the choice.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "data_version": {
+            "title": "Data Version",
+            "type": "string"
+          },
+          "genes": {
+            "items": {
+              "$ref": "#/components/schemas/PlanGene"
+            },
+            "title": "Genes",
+            "type": "array"
+          },
+          "loci": {
+            "description": "the selection, ready to post to /sequences as `loci`",
+            "items": {
+              "$ref": "#/components/schemas/PlanLocus"
+            },
+            "title": "Loci",
+            "type": "array"
+          },
+          "n_genes": {
+            "title": "N Genes",
+            "type": "integer"
+          },
+          "n_skipped": {
+            "title": "N Skipped",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "data_version",
+          "action",
+          "n_genes",
+          "n_skipped",
+          "genes",
+          "loci"
+        ],
+        "title": "SequencePlan",
         "type": "object"
       },
       "SequencesBody": {
@@ -443,7 +704,7 @@
     }
   },
   "info": {
-    "description": "From gene names to annotations, gene coordinates and sequences.\n\n- **search**: `/names` (prefix discovery), `/hits` (which annotations contain these exact gene names).\n- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv, bed or ndjson).\n- **sequences**: `/sequences` (CDS, transcript or protein FASTA for a query or a list of `locus_ref`s), with `/sequences/estimate`, `/sequences/plan`, jobs and cached results.\n- **annotations**: per-annotation genes and cross-references (legacy shard-backed).",
+    "description": "From gene names to annotations, gene coordinates and sequences.\n\n- **search**: `/names` (prefix discovery), `/hits` (which annotations contain these exact gene names).\n- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv, bed or ndjson).\n- **sequences**: `/sequences` (CDS, transcript or protein FASTA for a query or a list of `locus_ref`s), with `/sequence-estimates`, `/sequence-plans`, jobs and cached results.\n- **annotations**: per-annotation genes and cross-references (legacy shard-backed).",
     "title": "Annotrieve xrefs",
     "version": "1.1.0"
   },
@@ -581,6 +842,7 @@
             "name": "local_id",
             "required": true,
             "schema": {
+              "maximum": 9223372036854775807,
               "minimum": 0,
               "title": "Local Id",
               "type": "integer"
@@ -632,6 +894,7 @@
             "name": "local_id",
             "required": true,
             "schema": {
+              "maximum": 9223372036854775807,
               "minimum": 0,
               "title": "Local Id",
               "type": "integer"
@@ -1293,6 +1556,47 @@
         ]
       }
     },
+    "/sequence-estimates": {
+      "post": {
+        "description": "Cheap preview: gene count and an upper bound of the bases to fetch. Reads only the index.",
+        "operationId": "create_sequence_estimate_sequence_estimates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SequencesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SequenceEstimate"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "413": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "422": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "503": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          }
+        },
+        "summary": "Estimate a sequence request",
+        "tags": [
+          "sequences"
+        ]
+      }
+    },
     "/sequence-jobs/{result_id}": {
       "get": {
         "operationId": "get_sequence_job_sequence_jobs__result_id__get",
@@ -1333,6 +1637,47 @@
           }
         },
         "summary": "Job status",
+        "tags": [
+          "sequences"
+        ]
+      }
+    },
+    "/sequence-plans": {
+      "post": {
+        "description": "Which transcripts the request would extract, with the metrics behind the choice.\n\nReads the GFF slices (no network). A client can edit the result and post the selected\n``loci`` back to ``/sequences``.",
+        "operationId": "create_sequence_plan_sequence_plans_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SequencesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SequencePlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "413": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "422": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "503": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          }
+        },
+        "summary": "Plan the transcripts of a sequence request",
         "tags": [
           "sequences"
         ]
@@ -1431,86 +1776,6 @@
           }
         },
         "summary": "FASTA for a query or a list of loci",
-        "tags": [
-          "sequences"
-        ]
-      }
-    },
-    "/sequences/estimate": {
-      "post": {
-        "description": "Cheap preview: gene count and an upper bound of the bases to fetch. Reads only the index.",
-        "operationId": "post_sequences_estimate_sequences_estimate_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SequencesBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Gene count and base-pair bound, no extraction",
-        "tags": [
-          "sequences"
-        ]
-      }
-    },
-    "/sequences/plan": {
-      "post": {
-        "description": "Which transcripts the request would extract, with the metrics behind the choice.\n\nReads the GFF slices (no network). A client can edit the result and post the selected\n``loci`` back to ``/sequences``.",
-        "operationId": "post_sequences_plan_sequences_plan_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SequencesBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Which transcripts would be extracted, with metrics",
         "tags": [
           "sequences"
         ]

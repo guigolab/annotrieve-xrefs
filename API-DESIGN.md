@@ -182,9 +182,11 @@ Rule object: `{"rank_by": ["coding:desc", "cds_len:desc"], "require": ["coding",
 - FASTA header: `>{symbol}|{organism}|{assembly}|{annotation_id}|{transcript_id} {seqid}:{start}-{end}({strand})`, with spaces and `|` inside a field replaced by `_`.
 - Not done yet: the global NCBI limiter across workers (each process has its own bucket), a per-IP quota, `transcript` ids typed as a plain string (`transcript=ENST...`, use a pinned `loci` entry instead).
 
-**Companion endpoints**
-- `POST /sequences/estimate`: index only, no GFF reads: `{n_genes, n_annotations, est_bp_upper_bound, over_limit}`. Transcript counts are unknown at this stage.
-- `POST /sequences/plan`: same body, reads the GFF slices. One row per eligible transcript with its metrics, `selected`, and the rule that applied. A client edits the table and posts it back as `loci`.
+**Companion resources** (stateless, computed from the same body as `POST /sequences`; nothing is stored; renamed from `/sequences/estimate` and `/sequences/plan`; typed in `api/openapi.json`)
+- `POST /sequence-estimates`: index only, no GFF reads: `{n_genes, n_annotations, est_bp_upper_bound, over_limit}`. Transcript counts are unknown at this stage.
+- `POST /sequence-plans`: same body, reads the GFF slices. One row per eligible transcript with its metrics, `selected`, and the rule that applied. A client edits the table and posts it back as `loci`.
+
+**NCBI budget.** All API processes share one request budget through a lock file (`NCBI_RATE_STATE_FILE`); a 429 from NCBI delays every process. Per-client fairness is not enforced beyond the proxy's per-IP limit.
 
 **Response.** Every result has a `result_id` = hash of the normalised request + `data_version`.
 - Small requests (default up to 50 genes): `200 text/x-fasta` with headers `X-Sequence-Count`, `X-Skipped-Count`, `X-Result-Id`, `X-Data-Version`.

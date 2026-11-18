@@ -167,7 +167,7 @@ def get_annotation_genes(
 @router.get("/annotations/{annotation_id}/genes/{local_id}/xrefs")
 def get_annotation_gene_xrefs(
     annotation_id: str,
-    local_id: int = Path(..., ge=0),
+    local_id: int = Path(..., ge=0, le=2**63 - 1),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0, le=MAX_OFFSET),
 ):
@@ -201,12 +201,12 @@ def get_annotation_gene_xrefs(
 @router.get("/annotations/{annotation_id}/genes/{local_id}")
 def get_annotation_gene(
     annotation_id: str,
-    local_id: int = Path(..., ge=0),
+    local_id: int = Path(..., ge=0, le=2**63 - 1),
 ):
     """One gene locus card from this annotation's gene corpus shard."""
     conn = annotation_shard(annotation_id)
     try:
-        row = get_gene(conn, local_id)
+        row = get_gene(conn, local_id, annotation_id)
     finally:
         conn.close()
     if row is None:

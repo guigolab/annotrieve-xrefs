@@ -1,10 +1,15 @@
 """NCBI E-utilities efetch client with process-wide rate limiting and cache."""
 from __future__ import annotations
 
+import fcntl
 import logging
+import os
 import random
+import struct
+import tempfile
 import threading
 import time
+from pathlib import Path
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -59,7 +64,10 @@ class FastaSlice:
 
 
 class _TokenBucket:
-    """Simple process-wide token bucket (one token per request)."""
+    """Rate limiter local to this process (one token per request).
+
+    Used for explicit rates (tests) and as the fallback when the shared state file cannot be used.
+    """
 
     def __init__(self, rate_per_sec: float) -> None:
         self._interval = 1.0 / rate_per_sec if rate_per_sec > 0 else 0.0
@@ -83,6 +91,100 @@ class _TokenBucket:
                 self._next = now + self._interval
         if delay > 0:
             time.sleep(delay)
+
+    def penalize(self, seconds: float) -> None:
+        """No request before ``seconds`` from now (after NCBI answered 429)."""
+        with self._lock:
+            self._next = max(self._next, time.monotonic() + max(0.0, seconds))
+
+
+class SharedRateLimiter:
+    """One NCBI budget for every API process on this host.
+
+    The time of the next free request slot lives in a small file guarded by ``flock``. A caller
+    reserves the next slot under the lock (a few microseconds), releases it and sleeps until the
+    slot, so concurrent processes and threads are spaced ``1/rate`` apart without any of them
+    holding the lock while waiting. A 429 from NCBI pushes the slot of everyone forward.
+    """
+
+    MAX_AHEAD_S = 120.0                     # a "next" further away than this is a corrupt file
+
+    def __init__(self, rate_per_sec: float, state_file: str | Path) -> None:
+        self._interval = 1.0 / rate_per_sec if rate_per_sec > 0 else 0.0
+        self._path = Path(state_file)
+        self._thread_lock = threading.Lock()
+        self._fd: int | None = None
+        self._fallback: _TokenBucket | None = None
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._fd = os.open(self._path, os.O_RDWR | os.O_CREAT, 0o666)
+        except OSError as exc:
+            logger.warning("NCBI rate state %s unusable (%s); limiting per process", self._path, exc)
+            procs = max(1, int(settings.NCBI_PROCESSES))
+            self._fallback = _TokenBucket(rate_per_sec / procs)
+
+    @property
+    def interval(self) -> float:
+        return self._interval if self._fallback is None else self._fallback.interval
+
+    @property
+    def shared(self) -> bool:
+        return self._fallback is None
+
+    def _reserve(self, delta: float, *, push_only: bool = False) -> float:
+        """Take the next slot (``delta`` later than the previous one); return its wall time."""
+        with self._thread_lock:
+            fcntl.flock(self._fd, fcntl.LOCK_EX)
+            try:
+                raw = os.pread(self._fd, 8, 0)
+                nxt = struct.unpack("d", raw)[0] if len(raw) == 8 else 0.0
+                now = time.time()
+                if not (0.0 <= nxt <= now + self.MAX_AHEAD_S):
+                    nxt = 0.0
+                if push_only:
+                    slot = max(nxt, now + delta)
+                    new_next = slot
+                else:
+                    slot = max(nxt, now)
+                    new_next = slot + delta
+                os.pwrite(self._fd, struct.pack("d", new_next), 0)
+                return slot
+            finally:
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+
+    def acquire(self) -> None:
+        if self._fallback is not None:
+            self._fallback.acquire()
+            return
+        if self._interval <= 0:
+            return
+        wait = self._reserve(self._interval) - time.time()
+        if wait > 0:
+            time.sleep(wait)
+
+    def penalize(self, seconds: float) -> None:
+        if self._fallback is not None:
+            self._fallback.penalize(seconds)
+        elif self._interval > 0:
+            self._reserve(max(0.0, seconds), push_only=True)
+
+    def close(self) -> None:
+        if self._fd is not None:
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+            self._fd = None
+
+
+def default_state_file() -> Path:
+    """Where the shared budget lives: next to the results, so replicas that share that volume share
+    the budget too (``NCBI_RATE_STATE_FILE`` overrides)."""
+    if settings.NCBI_RATE_STATE_FILE:
+        return Path(settings.NCBI_RATE_STATE_FILE)
+    root = Path(settings.SEQUENCES_RESULTS_DIR) if settings.SEQUENCES_RESULTS_DIR else (
+        Path(tempfile.gettempdir()) / "annotrieve-sequences")
+    return root / ".ncbi-rate"
 
 
 class _WindowCache:
@@ -126,15 +228,10 @@ class _WindowCache:
 
 
 def _default_rate() -> float:
-    """This process's share of the NCBI budget (shared by all its fetch threads).
-
-    ``NCBI_WORKERS`` only controls thread-pool parallelism; it must not shrink
-    the token-bucket rate. One ``NcbiEutilsClient`` / bucket per process via
-    ``get_ncbi_client()``.
-    """
+    """The whole host's NCBI budget (requests per second); every process shares it through
+    :class:`SharedRateLimiter`. ``NCBI_WORKERS`` only sets thread parallelism."""
     key = (settings.NCBI_API_KEY or "").strip()
-    base = _RATE_WITH_KEY if key else _RATE_WITHOUT_KEY
-    return base / max(1, int(settings.NCBI_PROCESSES))
+    return _RATE_WITH_KEY if key else _RATE_WITHOUT_KEY
 
 
 def _parse_fasta_body(text: str) -> str:
@@ -188,13 +285,18 @@ class NcbiEutilsClient:
         rate_per_sec: float | None = None,
         cache_mb: int | None = None,
         transport: httpx.BaseTransport | None = None,
+        state_file: str | Path | None = None,
     ) -> None:
         key = (settings.NCBI_API_KEY or "").strip()
         self._api_key = key or None
         self._email = (settings.NCBI_EMAIL or "").strip() or "annotrieve-xrefs@crg.eu"
         self._tool = (settings.NCBI_TOOL or "").strip() or "annotrieve-xrefs"
         rate = rate_per_sec if rate_per_sec is not None else _default_rate()
-        self._bucket = _TokenBucket(rate)
+        # An explicit rate is a local limit (tests, scripts); the service uses the shared budget.
+        if rate_per_sec is None or state_file is not None:
+            self._bucket = SharedRateLimiter(rate, state_file or default_state_file())
+        else:
+            self._bucket = _TokenBucket(rate)
         mb = settings.SEQUENCES_CACHE_MB if cache_mb is None else cache_mb
         self._cache = _WindowCache(max(0, int(mb)) * 1024 * 1024)
         self._client = httpx.Client(
@@ -204,9 +306,10 @@ class NcbiEutilsClient:
         )
         self._closed = False
         logger.info(
-            "NCBI efetch client ready: rate=%.2f/s key=%s cache_mb=%s "
-            "ncbi_workers=%d (shared bucket)",
+            "NCBI efetch client ready: rate=%.2f/s %s key=%s cache_mb=%s ncbi_workers=%d",
             rate,
+            "shared across processes" if getattr(self._bucket, "shared", False)
+            else "this process only",
             "yes" if self._api_key else "no",
             mb,
             max(1, int(settings.NCBI_WORKERS)),
@@ -222,6 +325,8 @@ class NcbiEutilsClient:
 
     def close(self) -> None:
         if not self._closed:
+            if isinstance(self._bucket, SharedRateLimiter):
+                self._bucket.close()
             self._client.close()
             self._closed = True
 
@@ -351,7 +456,9 @@ class NcbiEutilsClient:
                     delay = float(retry_after)
                 except ValueError:
                     delay = (2**attempt) + random.uniform(0, 0.25)
-                time.sleep(max(0.1, delay))
+                delay = min(max(0.1, delay), 30.0)
+                # NCBI says we are too fast: hold every process back, not just this request.
+                self._bucket.penalize(delay)
                 continue
 
             if response.status_code >= 500:

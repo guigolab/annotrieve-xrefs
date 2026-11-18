@@ -62,7 +62,7 @@ server {
         add_header Cache-Control "no-store" always;
     }
 
-    # Bulk FASTA export and everything under it (estimate, plan, cached results): long timeout,
+    # Bulk FASTA export and everything under it (finished results and their manifests): long timeout,
     # no buffering, never cached (a cached 200 would freeze a result or a job status).
     location ^~ /annotrieve-xrefs/api/v1/sequences {
         access_log /var/log/nginx/api.log analytics_json;
@@ -81,6 +81,60 @@ server {
         proxy_connect_timeout 10s;
         proxy_send_timeout 900s;
         proxy_read_timeout 900s;
+
+        proxy_buffering off;
+        proxy_request_buffering on;
+        proxy_cache off;
+
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # Transcript plans read GFF slices for up to a few hundred genes: long timeout, never cached.
+    location ^~ /annotrieve-xrefs/api/v1/sequence-plans {
+        access_log /var/log/nginx/api.log analytics_json;
+
+        limit_req zone=xrefs_global burst=40 nodelay;
+        limit_req_status 429;
+
+        rewrite ^/annotrieve-xrefs/api/v1/?(.*)$ /$1 break;
+        proxy_pass http://annotrieve-xrefs-api:5000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin $http_origin;
+        client_max_body_size 1M;
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 900s;
+        proxy_read_timeout 900s;
+
+        proxy_buffering off;
+        proxy_request_buffering on;
+        proxy_cache off;
+
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # Estimates only read the index: short timeout, never cached.
+    location ^~ /annotrieve-xrefs/api/v1/sequence-estimates {
+        access_log /var/log/nginx/api.log analytics_json;
+
+        limit_req zone=xrefs_global burst=40 nodelay;
+        limit_req_status 429;
+
+        rewrite ^/annotrieve-xrefs/api/v1/?(.*)$ /$1 break;
+        proxy_pass http://annotrieve-xrefs-api:5000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin $http_origin;
+        client_max_body_size 1M;
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
 
         proxy_buffering off;
         proxy_request_buffering on;

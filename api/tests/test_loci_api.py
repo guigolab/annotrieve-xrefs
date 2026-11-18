@@ -178,3 +178,69 @@ def test_bad_hits_parameters_never_cause_a_server_error(loci_client, params) -> 
     client, _ = loci_client
     assert client.get("/hits", params=params).status_code < 500
     assert client.post("/hits", json={"names": params["names"].split(",")}).status_code < 500
+
+
+# ---- the legacy /annotations routes must agree with the new index ---------------------------
+
+@pytest.fixture()
+def shard_client(loci_client):
+    import settings as settings_mod
+    client, work = loci_client
+    old = settings_mod.settings.GENE_CORPUS_DIR
+    settings_mod.settings.GENE_CORPUS_DIR = str(work)
+    try:
+        yield client, work
+    finally:
+        settings_mod.settings.GENE_CORPUS_DIR = old
+
+
+def test_every_locus_ref_resolves_to_the_same_gene_in_the_annotation_routes(shard_client) -> None:
+    client, _ = shard_client
+    rows = client.get("/loci", params={"names": "tp53", "alias": "include"}).json()["rows"]
+    assert rows
+    for r in rows:
+        ann, local = r["locus_ref"].rsplit(":", 1)
+        gene = client.get(f"/annotations/{ann}/genes/{local}")
+        assert gene.status_code == 200, (r["locus_ref"], gene.text)
+        g = gene.json()
+        assert (g["local_id"], g["source_gene_id"], g["seqid"], g["start"], g["end"]) == (
+            int(local), r["gene_id"], r["seqid"], r["start"], r["end"]), r["locus_ref"]
+        assert g["strand"] == r["strand"] and g["locus_ref"] == r["locus_ref"]
+        assert client.get(f"/annotations/{ann}/genes/{local}/xrefs").status_code == 200
+
+
+def test_annotation_genes_filter_finds_the_genes_loci_lists(shard_client) -> None:
+    client, _ = shard_client
+    rows = client.get("/loci", params={"names": "tp53", "alias": "include"}).json()["rows"]
+    by_ann: dict[str, set[int]] = {}
+    for r in rows:
+        ann, local = r["locus_ref"].rsplit(":", 1)
+        by_ann.setdefault(ann, set()).add(int(local))
+    for ann, expected in by_ann.items():
+        body = client.get(f"/annotations/{ann}/genes", params={"names": "tp53"}).json()
+        assert {g["local_id"] for g in body["results"]} == expected, ann
+        assert all(g["locus_ref"] == f"{ann}:{g['local_id']}" for g in body["results"])
+
+
+@pytest.mark.parametrize("path,params", [
+    ("/annotations/%s/genes", {"limit": 0}), ("/annotations/%s/genes", {"limit": 10**9}),
+    ("/annotations/%s/genes", {"offset": -1}), ("/annotations/%s/genes", {"names": "a*"}),
+    ("/annotations/%s/genes", {"names": "a", "curies": "x:1"}),
+    ("/annotations/%s/genes", {"curies": "nocolon"}), ("/annotations/%s/genes", {"match": "zzz"}),
+    ("/annotations/%s/genes/-1", {}), ("/annotations/%s/genes/abc", {}),
+    ("/annotations/%s/genes/99999999999999999999", {}),
+    ("/annotations/%s/genes/1/xrefs", {"offset": 10**12}),
+    ("/annotations/%s/namespaces/nope/accessions", {}),
+    ("/annotations/%s/namespaces/a%%2Fb/accessions", {"q": "x"}),
+])
+def test_annotation_routes_never_cause_a_server_error(shard_client, path, params) -> None:
+    client, _ = shard_client
+    ann = client.get("/loci", params={"names": "tp53"}).json()["rows"][0]["annotation_id"]
+    assert client.get(path % ann, params=params).status_code < 500
+
+
+@pytest.mark.parametrize("ann", ["nope", "..", "a" * 500, "%00", "..%2F..%2Fetc"])
+def test_unknown_or_hostile_annotation_ids_are_404_not_500(shard_client, ann) -> None:
+    client, _ = shard_client
+    for path in ("namespaces", "genes", "genes/1", "genes/1/xrefs"):
+        assert client.get(f"/annotations/{ann}/{path}").status_code in (404, 422)

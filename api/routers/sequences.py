@@ -1,4 +1,4 @@
-"""FASTA export (``/sequences``), its estimate/plan, jobs and cached results.
+"""FASTA export (``/sequences``), sequence estimates and plans, jobs and cached results.
 
 See API-DESIGN.md section 4.4 for the contract. ``result_id`` identifies a request (normalised
 body + data version): equal requests reuse one result on disk.
@@ -76,6 +76,65 @@ class SequenceJob(BaseModel):
 
 
 logger = logging.getLogger(__name__)
+
+
+class SequenceEstimate(BaseModel):
+    """What a request would cost, from the index alone (nothing is extracted)."""
+
+    data_version: str
+    result_id: str = Field(description="Id the finished result would have")
+    n_genes: int | None = Field(None, description="null when over the limit (see n_genes_at_least)")
+    n_genes_at_least: int
+    complete: bool = Field(description="false when counting stopped at max_genes")
+    est_bp_upper_bound: int = Field(description="Sum of gene lengths: bound of the bases to fetch")
+    max_genes: int
+    over_limit: bool
+    mode: str = Field(description="sync (FASTA in the response) | job (202 + polling)")
+    sync_max_genes: int
+    cached: bool = Field(description="a finished result for this request exists")
+    terms: list[dict[str, Any]] = Field(description="query mode: each name and whether it was found")
+
+
+class PlanTranscript(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    transcript_id: str
+    selected: bool
+    coding: bool
+    cds_len: int
+    spliced_len: int
+    span: int
+    n_exons: int
+    utr_len: int
+    biotype: str | None = None
+    tags: list[str] = []
+
+
+class PlanGene(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    locus_ref: str
+    status: str = Field(description="ok | skipped")
+    reason: str = Field("", description="skip reason code when status is skipped")
+    message: str = ""
+    n_candidates: int = 0
+    transcripts: list[PlanTranscript] = []
+
+
+class PlanLocus(BaseModel):
+    locus_ref: str
+    transcript_id: str
+
+
+class SequencePlan(BaseModel):
+    """The transcripts a request would extract, with the metrics behind the choice."""
+
+    data_version: str
+    action: str
+    n_genes: int
+    n_skipped: int
+    genes: list[PlanGene]
+    loci: list[PlanLocus] = Field(description="the selection, ready to post to /sequences as `loci`")
 
 
 class SequencesBody(BaseModel):
@@ -244,8 +303,9 @@ def post_sequences(body: SequencesBody, request: Request):
         src.close()
 
 
-@router.post("/sequences/estimate", summary="Gene count and base-pair bound, no extraction")
-def post_sequences_estimate(body: SequencesBody, request: Request):
+@router.post("/sequence-estimates", response_model=SequenceEstimate,
+             summary="Estimate a sequence request", responses={413: _ERR, 422: _ERR, 503: _ERR})
+def create_sequence_estimate(body: SequencesBody, request: Request):
     """Cheap preview: gene count and an upper bound of the bases to fetch. Reads only the index."""
     req = _parse(body, default_action="cds")
     src = _open_source(req)
@@ -268,8 +328,10 @@ def post_sequences_estimate(body: SequencesBody, request: Request):
         src.close()
 
 
-@router.post("/sequences/plan", summary="Which transcripts would be extracted, with metrics")
-def post_sequences_plan(body: SequencesBody):
+@router.post("/sequence-plans", response_model=SequencePlan,
+             summary="Plan the transcripts of a sequence request",
+             responses={413: _ERR, 422: _ERR, 503: _ERR})
+def create_sequence_plan(body: SequencesBody):
     """Which transcripts the request would extract, with the metrics behind the choice.
 
     Reads the GFF slices (no network). A client can edit the result and post the selected

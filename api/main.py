@@ -65,7 +65,7 @@ def create_app() -> FastAPI:
             "- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv, bed "
             "or ndjson).\n"
             "- **sequences**: `/sequences` (CDS, transcript or protein FASTA for a query or a "
-            "list of `locus_ref`s), with `/sequences/estimate`, `/sequences/plan`, jobs and "
+            "list of `locus_ref`s), with `/sequence-estimates`, `/sequence-plans`, jobs and "
             "cached results.\n"
             "- **annotations**: per-annotation genes and cross-references (legacy shard-backed)."
         ),

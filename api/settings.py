@@ -52,8 +52,11 @@ class Settings:
     NCBI_EMAIL: str = os.getenv("NCBI_EMAIL", "annotrieve-xrefs@crg.eu")
     NCBI_TOOL: str = os.getenv("NCBI_TOOL", "annotrieve-xrefs")
     NCBI_WORKERS: int = _env_int("NCBI_WORKERS", 2)
-    # Number of API processes (gunicorn -w): each has its own token bucket, so the NCBI budget is
-    # divided by this to keep the whole container within it.
+    # All API processes on a host share ONE NCBI budget through a small lock file (default: next to
+    # the sequences results; set this to put it elsewhere, for example a volume shared by replicas).
+    NCBI_RATE_STATE_FILE: str = os.getenv("NCBI_RATE_STATE_FILE", "")
+    # Only used when that file cannot be opened: each process then limits itself to
+    # rate / NCBI_PROCESSES (set it to the number of gunicorn workers).
     NCBI_PROCESSES: int = _env_int("NCBI_PROCESSES", 1)
 
     # Sequences endpoint.

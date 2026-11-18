@@ -84,7 +84,7 @@ class Selection:
     skipped_reason: str = ""                    # no_transcript | no_cds | filtered_out
     rule: str = ""
     n_candidates: int = 0
-    ranked: list[Candidate] = field(default_factory=list)   # eligible, best first (for /plan)
+    ranked: list[Candidate] = field(default_factory=list)   # eligible, best first (for /sequence-plans)
 
 
 def normalise_tag(value: str) -> str:
