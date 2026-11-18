@@ -77,16 +77,11 @@ def test_alias_path_rejects_organism_style() -> None:
     assert ("alias", "p53") in ns_acc
 
 
-def test_symbol_gate_keeps_copy_suffixed_symbols() -> None:
-    for v in ("Polq_1", "Zan_0", "selenot_1", "selenot2_1", "ABC_12"):
-        assert symbol_ok(v), v
-    for v in ("LOC123", "BINO364_LOCUS16796", "gene-1", "gene:12", ""):
+def test_symbol_gate_is_strict_on_purpose() -> None:
+    # Known, accepted loss (see PLAN-build-tables.md risks): copy-suffixed symbols are dropped
+    # so that locus / transposon IDs do not flood the index.
+    for v in ("Polq_1", "selenot_1", "TE_00001670", "LMJFC_010005100", "LOC123", "gene-1"):
         assert not symbol_ok(v), v
-    assert not symbol_ok("SS1G_00001", locus_tag="SS1G_00001")      # echo of locus_tag
-    assert not symbol_ok("x1", feature_id="x1")                      # echo of ID
-
-
-def test_alias_gate_stays_strict() -> None:
-    assert not alias_ok("Polq_1")          # letters_digits shape still rejected for aliases
-    assert not alias_ok("Tco_12345")
-    assert alias_ok("p53") and alias_ok("TaGW2-A1")
+    assert symbol_ok("selenot2_1") and symbol_ok("TP53") and symbol_ok("E3P82_00001")
+    assert not symbol_ok("SS1G_00001", locus_tag="SS1G_00001")
+    assert not alias_ok("Polq_1") and not alias_ok("Tco_12345")

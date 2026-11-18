@@ -123,6 +123,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="harvest only these annotation_ids (repeatable; default: all)",
     )
     parser.add_argument(
+        "--annotation-ids-file",
+        type=Path,
+        default=None,
+        help=(
+            "file with annotation_ids (one per line, or a TSV whose first column is the id; "
+            "a header line 'annotation_id' and blank lines are ignored). "
+            "Added to --annotation-id."
+        ),
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=1,
@@ -158,7 +168,13 @@ def main(argv: list[str] | None = None) -> int:
         print("--workers must be 1 or 2", file=sys.stderr)
         return 2
 
-    annotation_ids = list(args.annotation_id) if args.annotation_id else None
+    annotation_ids = list(args.annotation_id) if args.annotation_id else []
+    if args.annotation_ids_file:
+        for line in args.annotation_ids_file.read_text(encoding="utf-8").splitlines():
+            first = line.split("\t", 1)[0].strip()
+            if first and first != "annotation_id" and not first.startswith("#"):
+                annotation_ids.append(first)
+    annotation_ids = list(dict.fromkeys(annotation_ids)) or None
 
     try:
         rows = load_report_rows(
