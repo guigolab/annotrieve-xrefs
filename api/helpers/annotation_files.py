@@ -99,6 +99,19 @@ def _rebase_gff_path(gff_path: str, root: Path) -> Path | None:
     return None
 
 
+def _tail_gff_path(root: Path, gff_path: str) -> Path | None:
+    """``root/<folder>/<assembly>/<file>`` from the last three parts of the stored path.
+
+    The folder on disk is not always the annotation's own taxid (Annotrieve groups some
+    annotations under a parent taxon), but the stored path always carries the real one.
+    """
+    parts = Path((gff_path or "").strip()).parts[-3:]
+    if len(parts) < 3 or any(p in ("", "/", "..", ".") for p in parts):
+        return None
+    candidate = root.joinpath(*parts)
+    return candidate if candidate.is_file() else None
+
+
 def _convention_gff_path(
     root: Path,
     *,
@@ -135,6 +148,8 @@ def resolve_annotation_files(
     """
     root = annotations_root()
     resolved = _rebase_gff_path(gff_path, root)
+    if resolved is None:
+        resolved = _tail_gff_path(root, gff_path)
     if resolved is None:
         resolved = _convention_gff_path(
             root,

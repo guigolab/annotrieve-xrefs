@@ -53,6 +53,8 @@ services:
       - SEQUENCES_IP_MAX_PER_HOUR=20
       - TRUSTED_PROXY_HOPS=1
       - ANNOTATIONS_DIR=/data/annotations
+      # Host root the index was harvested with (gff_path = this + bgzip_path); remapped onto /data/annotations.
+      - ANNOTATIONS_GFF_PATH_PREFIX=${ANNOTATIONS_DATA_PATH:-/data/annotrieve/files}
       - NCBI_WORKERS=4
       - NCBI_PROCESSES=2        # only used if the shared rate file cannot be opened
       - PYTHONPATH=/home/appuser

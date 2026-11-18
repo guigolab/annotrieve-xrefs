@@ -49,6 +49,35 @@ def test_resolve_by_convention(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     assert files.csi_path == Path(str(gff) + ".csi")
 
 
+def test_resolve_when_folder_is_not_the_annotation_taxid(tmp_path: Path):
+    """Annotrieve can store an annotation under a parent taxon folder (3440260 -> 2219007)."""
+    root = tmp_path / "annotations"
+    gff = _write_gff_pair(root / "2219007" / "GCA_949709995.1" / "Ensembl_abc.gff.gz")
+    import settings as settings_mod
+
+    settings_mod.settings.ANNOTATIONS_DIR = str(root)
+    settings_mod.settings.ANNOTATIONS_GFF_PATH_PREFIX = ""
+    for stored in ("/data/annotrieve/files/2219007/GCA_949709995.1/Ensembl_abc.gff.gz",
+                   "/2219007/GCA_949709995.1/Ensembl_abc.gff.gz"):
+        clear_annotation_file_caches()
+        files = resolve_annotation_files(taxid=3440260, assembly_accession="GCA_949709995.1",
+                                         gff_path=stored)
+        assert files.gff_path == gff
+
+
+def test_tail_path_cannot_escape_the_root(tmp_path: Path):
+    root = tmp_path / "annotations"
+    root.mkdir()
+    (tmp_path / "secret").mkdir()
+    _write_gff_pair(tmp_path / "secret" / "x.gff.gz")
+    import settings as settings_mod
+
+    settings_mod.settings.ANNOTATIONS_DIR = str(root)
+    settings_mod.settings.ANNOTATIONS_GFF_PATH_PREFIX = ""
+    with pytest.raises(AnnotationFilesError):
+        resolve_annotation_files(taxid=1, assembly_accession="A", gff_path="/../secret/x.gff.gz")
+
+
 def test_resolve_by_rebase_prefix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     root = tmp_path / "annotations"
     harvest = tmp_path / "harvest"
