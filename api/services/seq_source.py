@@ -4,6 +4,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from helpers.cursor import QueryError
 from helpers.presence import (
@@ -12,10 +13,12 @@ from helpers.presence import (
     presence_enabled,
     presence_reader,
 )
-from services.seq_export import Item
 from services.seq_genes import build_loci_query, query_genes, ref_genes
 from services.seq_request import SeqRequest
 from services.seq_resolve import SeqError
+
+if TYPE_CHECKING:        # the export module needs the NCBI client; keep it out of read-only tools
+    from services.seq_export import Item
 
 
 def _convert(exc: Exception) -> SeqError:
@@ -76,7 +79,7 @@ class Source:
         return [{"index": i, "input": t["input"], "name": t["name"],
                  "found": self.q.name_ids[i] is not None} for i, t in enumerate(self.q.terms)]
 
-    def items(self) -> Iterator[Item]:
+    def items(self) -> "Iterator[Item]":
         if self.q is not None:
             for gene in query_genes(self.pres, self.loci, self.reader, self.q):
                 yield gene.locus_ref, gene, ""
