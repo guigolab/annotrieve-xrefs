@@ -27,10 +27,17 @@ import settings  # noqa: E402
 PRESETS = ("longest", "longest_spliced", "longest_cds", "shortest_cds", "most_exons", "fewest_exons")
 
 
+def rss() -> str:
+    """Current (not peak) resident memory of this process, MiB."""
+    with open("/proc/self/statm") as fh:
+        pages = int(fh.read().split()[1])
+    return f"rss={pages * 4096 / 1048576:.0f}MiB"
+
+
 def timed(label, fn):
     t = time.perf_counter()
     out = fn()
-    print(f"[{(time.perf_counter() - t) * 1000:9.1f} ms] {label}")
+    print(f"[{(time.perf_counter() - t) * 1000:9.1f} ms] {label}  ({rss()})")
     return out
 
 
@@ -44,6 +51,8 @@ def main(argv=None) -> int:
     ap.add_argument("--refs", type=int, default=1000, help="random locus_refs to look up")
     ap.add_argument("--export", type=int, default=0,
                     help="also export this many genes through gffread and NCBI (needs network)")
+    ap.add_argument("--profile", action="store_true",
+                    help="profile the GFF resolving loop (top functions by cumulative time)")
     ap.add_argument("--action", default="cds", choices=["cds", "transcript", "protein"])
     a = ap.parse_args(argv)
 
@@ -91,6 +100,11 @@ def main(argv=None) -> int:
     n_cands: Counter = Counter()
     disagree: Counter = Counter()
     shown = 0
+    prof = None
+    if a.profile:
+        import cProfile
+        prof = cProfile.Profile()
+        prof.enable()
     t0 = time.perf_counter()
     for g in genes[:n]:
         res = resolver.resolve(g)
@@ -110,8 +124,19 @@ def main(argv=None) -> int:
         elif shown < 6 and res.reason:
             shown += 1
             print(f"  {g.locus_ref} {g.symbol}: skipped {res.reason}: {res.message}")
+    if prof is not None:
+        prof.disable()
     print(f"[{(time.perf_counter() - t0) * 1000:9.1f} ms] {n} genes resolved "
-          f"({(time.perf_counter() - t0) * 1000 / n:.1f} ms/gene)")
+          f"({(time.perf_counter() - t0) * 1000 / n:.1f} ms/gene)  ({rss()})")
+    if prof is not None:
+        import io
+        import pstats
+        buf = io.StringIO()
+        pstats.Stats(prof, stream=buf).sort_stats("cumulative").print_stats(14)
+        print("\n".join(ln for ln in buf.getvalue().splitlines() if ln.strip())[:3500])
+    from helpers import tabix_fetch
+    handles = sum(len(c) for c in tabix_fetch._TABIX_REGISTRY.values())
+    print(f"  open tabix handles: {handles}")
     print("  outcome:", dict(reasons))
     print("  candidate transcripts per gene (10 = 10 or more):", dict(sorted(n_cands.items())))
     print("  number of different transcripts chosen by the 6 presets:", dict(sorted(disagree.items())))
