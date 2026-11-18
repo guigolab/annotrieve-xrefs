@@ -101,6 +101,7 @@ def main() -> None:
     ap.add_argument("--root", type=Path, required=True)
     ap.add_argument("--sample", type=int, default=300, help="number of files (deterministic)")
     ap.add_argument("--top", type=int, default=25)
+    ap.add_argument("--only", default="", help="only file names starting with this, e.g. RefSeq_")
     ap.add_argument("--out", type=Path, default=None,
                     help="write one line per file: name, class, genes, transcripts, flagged genes")
     a = ap.parse_args()
@@ -113,9 +114,14 @@ def main() -> None:
                 break
             seen.append(str(p))
         sys.exit(f"no GFF files under {a.root} (exists={a.root.is_dir()}); first entries: {seen}")
-    step = max(1, len(files) // max(1, a.sample))
-    sample = files[::step][: a.sample]
-    print(f"{len(files)} GFF files found, scanning {len(sample)} (every {step}th)")
+    if a.only:
+        files = [f for f in files if f.name.casefold().startswith(a.only.casefold())]
+        if not files:
+            sys.exit(f"no GFF files starting with {a.only!r}")
+    n = min(len(files), max(1, a.sample))
+    # evenly spread over the WHOLE sorted list (file names start with the source)
+    sample = [files[i * len(files) // n] for i in range(n)]
+    print(f"{len(files)} GFF files found, scanning {len(sample)} spread over the whole list")
 
     cls_tags: dict[str, Counter] = defaultdict(Counter)
     cls_files: Counter = Counter()
