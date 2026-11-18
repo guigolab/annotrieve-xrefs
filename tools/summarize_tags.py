@@ -1,11 +1,11 @@
 """
 Summarise the per-file TSV written by measure_gff_tags.py --out, with organism names.
 
-    python3 tools/summarize_tags.py /tmp/tags_refseq.tsv \
-        --presence /data/annotrieve/gene_corpus/serve/current/presence.sqlite
+    python3 tools/summarize_tags.py /tmp/tags_all.tsv \
+        --manifest /data/annotrieve/gene_corpus/serve/manifest.sqlite
 
-File names look like `RefSeq_<hash>.gff.gz`; the hash is assumed to be the annotation_id
-(the script prints how many names matched, so a wrong assumption is visible).
+The scanned file name (`RefSeq_<hash>.gff.gz`) is joined to the manifest `catalogue` table by the
+basename of `bgzip_path`. The script prints how many files matched, so a wrong join is visible.
 Read-only; memory is one row per scanned file.
 """
 from __future__ import annotations
@@ -13,48 +13,62 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("tsv", type=Path)
-    ap.add_argument("--presence", type=Path, required=True)
-    ap.add_argument("--show", type=int, default=60, help="max organisms listed per group")
+    ap.add_argument("--manifest", type=Path, required=True)
+    ap.add_argument("--show", type=int, default=40, help="max species listed per group")
     a = ap.parse_args()
 
-    conn = sqlite3.connect(f"file:{a.presence}?mode=ro", uri=True)
-    org = dict(conn.execute("SELECT annotation_id, organism_name FROM annotation"))
+    conn = sqlite3.connect(f"file:{a.manifest}?mode=ro", uri=True)
+    info: dict[str, tuple[str, int]] = {}
+    for path, organism, taxid in conn.execute(
+            "SELECT bgzip_path, organism_name, taxid FROM catalogue WHERE bgzip_path <> ''"):
+        info[path.rsplit("/", 1)[-1]] = (organism or "?", int(taxid or 0))
 
     rows = []
     with open(a.tsv) as fh:
         next(fh)
         for line in fh:
             name, cls, genes, tx, flagged = line.rstrip("\n").split("\t")
-            h = name.split("_", 1)[1].removesuffix(".gz").removesuffix(".gff")
-            rows.append((h, cls, int(genes), int(tx), int(flagged)))
+            organism, taxid = info.get(name, ("(not in catalogue)", 0))
+            rows.append((name, cls, organism, taxid, int(genes), int(tx), int(flagged)))
     if not rows:
         sys.exit("empty TSV")
 
-    matched = sum(1 for r in rows if r[0] in org)
-    print(f"{len(rows)} files, {matched} matched to an organism by annotation_id")
-    flagged = [r for r in rows if r[4] > 0]
-    print(f"files with a canonical flag: {len(flagged)} / {len(rows)} "
-          f"({100 * len(flagged) / len(rows):.1f}%)")
-    tot_genes = sum(r[2] for r in rows)
-    print(f"genes in scanned files {tot_genes:,}; genes with a flagged transcript "
-          f"{sum(r[4] for r in rows):,}")
+    matched = sum(1 for r in rows if r[2] != "(not in catalogue)")
+    print(f"{len(rows)} files, {matched} matched to the catalogue by file name")
 
-    def fmt(r):
-        pct = 100 * r[4] / r[2] if r[2] else 0
-        return f"  {org.get(r[0], '(not in index)'):<45} genes={r[2]:>7,} flagged={r[4]:>7,} ({pct:.0f}%)"
+    by_class: dict[str, dict] = defaultdict(lambda: {"files": 0, "flagged_files": 0,
+                                                     "species": set(), "flagged_species": set()})
+    for _n, cls, organism, _t, _g, _tx, flagged in rows:
+        d = by_class[cls]
+        d["files"] += 1
+        d["species"].add(organism)
+        if flagged:
+            d["flagged_files"] += 1
+            d["flagged_species"].add(organism)
+    print(f"\n{'source':<12}{'files':>8}{'flagged':>9}{'species':>9}{'flagged species':>17}")
+    for cls, d in sorted(by_class.items()):
+        print(f"{cls:<12}{d['files']:>8}{d['flagged_files']:>9}{len(d['species']):>9}"
+              f"{len(d['flagged_species']):>17}")
 
-    print("\n-- FLAGGED --")
-    for r in sorted(flagged, key=lambda r: org.get(r[0], ""))[: a.show]:
-        print(fmt(r))
-    print("\n-- NOT FLAGGED (first few) --")
-    for r in sorted([r for r in rows if r[4] == 0], key=lambda r: org.get(r[0], ""))[: a.show]:
-        print(fmt(r))
+    for cls in sorted(by_class):
+        per_species: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
+        for _n, c, organism, _t, genes, _tx, flagged in rows:
+            if c == cls and flagged:
+                s = per_species[organism]
+                s[0] += 1
+                s[1] += genes
+                s[2] += flagged
+        if per_species:
+            print(f"\n-- flagged species in {cls} (files, genes, flagged genes) --")
+            for organism, (f, g, fl) in sorted(per_species.items())[: a.show]:
+                print(f"  {organism:<45}{f:>4} files {g:>9,} genes {fl:>9,} flagged ({100 * fl // max(g, 1)}%)")
 
 
 if __name__ == "__main__":
