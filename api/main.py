@@ -14,7 +14,7 @@ from helpers.logging_config import configure_logging
 from helpers.ncbi_eutils import close_ncbi_client
 from helpers.session import close_reader
 from routers import api_router
-from services.sequences import close_tabix_handles
+from helpers.tabix_fetch import close_tabix_handles
 
 # Before create_app / worker serve: INFO must reach stderr for ``docker logs``.
 configure_logging()

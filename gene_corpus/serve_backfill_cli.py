@@ -36,7 +36,7 @@ from gene_corpus.sql.manifest import (
     work_shard,
 )
 
-COMMANDS = ("catalogue", "sidecars", "status", "build", "missing", "loci")
+COMMANDS = ("catalogue", "sidecars", "status", "build", "missing", "loci", "loci-ref")
 
 
 def _log(msg: str) -> None:
@@ -91,6 +91,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="named genes held in memory per batch (default 300000)")
     lo.add_argument("--verify-annotations", type=int, default=30)
     lo.add_argument("--keep-runs", action="store_true")
+
+    lr = sub.add_parser("loci-ref", help="build loci_ref.sqlite (locus_ref lookup) for the current "
+                                         "loci.sqlite; no rebuild of loci.sqlite")
+    _common(lr)
+    lr.add_argument("--out-dir", type=Path, default=None, help="default: <work-dir>/serve")
+    lr.add_argument("--tmp-dir", type=Path, default=None, help="default: <out-dir>/tmp (NFS)")
 
     m = sub.add_parser("missing", help="list catalogue annotations that have no shard yet")
     _common(m)
@@ -274,6 +280,35 @@ def _cmd_loci(args) -> int:
     os.replace(building, version_dir / LOCI_FILE)
     (version_dir / "loci_report.json").write_text(json.dumps(stats, indent=2))
     print(f"published {version_dir / LOCI_FILE}")
+    return _cmd_loci_ref(args)
+
+
+def _cmd_loci_ref(args) -> int:
+    import json
+
+    from gene_corpus.sql.loci_from_sidecars import LOCI_FILE, REF_FILE, build_ref_index
+    from gene_corpus.sql.serve_presence import BuildError
+
+    out_dir = args.out_dir or (args.work_dir / "serve")
+    current = out_dir / "current"
+    if not current.exists():
+        print(f"no published index at {current}", file=sys.stderr)
+        return 2
+    version_dir = current.resolve()
+    loci = version_dir / LOCI_FILE
+    if not loci.exists():
+        print(f"no {loci} (run `loci` first)", file=sys.stderr)
+        return 2
+    building = out_dir / ".loci_ref.building.sqlite"
+    try:
+        stats = build_ref_index(loci, building, tmp_dir=args.tmp_dir or (out_dir / "tmp"), log=_log)
+    except BuildError as exc:
+        print(f"LOCI-REF BUILD FAILED: {exc}", file=sys.stderr)
+        building.unlink(missing_ok=True)
+        return 1
+    os.replace(building, version_dir / REF_FILE)
+    (version_dir / "loci_ref_report.json").write_text(json.dumps(stats, indent=2))
+    print(f"published {version_dir / REF_FILE}")
     return 0
 
 
@@ -379,5 +414,5 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     return {"catalogue": _cmd_catalogue, "sidecars": _cmd_sidecars, "status": _cmd_status,
             "build": _cmd_build, "missing": _cmd_missing,
-            "loci": _cmd_loci}[
+            "loci": _cmd_loci, "loci-ref": _cmd_loci_ref}[
         args.command](args)

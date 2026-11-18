@@ -80,3 +80,28 @@ def test_corrupt_sidecar_fails_without_publishing(tmp_path):
     side.write_bytes(side.read_bytes()[:-20])
     assert serve_build_main(["loci", "--work-dir", str(work)]) == 1
     assert not (work / "serve" / "current" / "loci.sqlite").exists()
+
+
+def test_ref_index_resolves_every_gene_after_loci_build(tmp_path):
+    work = published(tmp_path)
+    assert serve_build_main(["loci", "--work-dir", str(work)]) == 0   # also builds loci_ref.sqlite
+    cur = work / "serve" / "current"
+    ref = sqlite3.connect(cur / "loci_ref.sqlite")
+    loci = sqlite3.connect(cur / "loci.sqlite")
+    genes = loci.execute("SELECT COUNT(*) FROM (SELECT DISTINCT ord, local_id FROM locus)").fetchone()[0]
+    assert ref.execute("SELECT COUNT(*) FROM ref").fetchone()[0] == genes
+    assert dict(ref.execute("SELECT key, value FROM meta"))["data_version"] == \
+        dict(loci.execute("SELECT key, value FROM meta"))["data_version"]
+    for ord_, local_id, name_id in ref.execute("SELECT ord, local_id, name_id FROM ref").fetchall():
+        assert loci.execute("SELECT 1 FROM locus WHERE name_id=? AND ord=? AND local_id=?",
+                            (name_id, ord_, local_id)).fetchone()
+
+
+def test_loci_ref_command_alone_replaces_the_file(tmp_path):
+    work = published(tmp_path)
+    assert serve_build_main(["loci", "--work-dir", str(work)]) == 0
+    ref_file = work / "serve" / "current" / "loci_ref.sqlite"
+    ref_file.unlink()
+    assert serve_build_main(["loci-ref", "--work-dir", str(work)]) == 0
+    assert ref_file.exists()
+    assert sqlite3.connect(ref_file).execute("SELECT COUNT(*) FROM ref").fetchone()[0] > 0

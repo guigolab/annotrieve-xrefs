@@ -198,6 +198,8 @@ Smoke test through the API service code (`tools/smoke_presence.py`, cold NFS): o
 
 `serve_build loci --work-dir DIR` writes `loci.sqlite` next to the published `presence.sqlite` (same `v<data_version>/`), from the sidecars' `#names` joined to `#genes` per annotation (batches by named-gene budget, 300,000 genes in memory, larger annotations use a scratch SQLite file under `serve/tmp`; two-level merge as in the presence build). `locus(name_id, ord, local_id, seqid_id, start, end, strand, feature_type_id, biotype_id, via, gene_id, primary_name)` clustered by `name_id`, plus `seqid`, dictionaries and `name_loci(name_id, n_loci)`. Decision: rows carry the source gene id; `locus_ref = annotation_id:local_id`. The build walks `presence.name_dict` in lockstep and fails on any difference in the annotation set, the name list or the symbol/alias counts per name, so the two files cannot disagree. Expected: a few GB and 1-2 hours (estimates), peak memory about 100-300 MiB.
 
+`serve_build loci-ref --work-dir DIR` (also run at the end of `loci`) writes `loci_ref.sqlite` next to `loci.sqlite`: one row `(ord, local_id) -> name_id` per gene, so a `locus_ref` resolves to its `locus` row with the primary key. It is a separate file so the published `loci.sqlite` is never modified; it is built by one sorted `GROUP BY` over `loci.sqlite` (sort spills to `serve/tmp` through `SQLITE_TMPDIR`, page cache 64 MiB). Run it alone on an already published version to add the file without rebuilding `loci.sqlite`. Expected size: under 1 GB for about 50-80M genes (estimate, to measure).
+
 ## 9. Open decisions
 
 | # | Question | Needed by |

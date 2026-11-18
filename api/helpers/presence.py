@@ -24,6 +24,7 @@ class _Reader:
     all_mask: int
     data_version: str
     ann_info: dict | None = None
+    ann_paths: dict | None = None
 
 
 def presence_enabled() -> bool:
@@ -153,3 +154,38 @@ def annotation_info(reader: "_Reader") -> dict[int, tuple]:
                 "SELECT ord, annotation_id, organism_name, assembly_accession, source FROM annotation")
         }
     return reader.ann_info
+
+
+REF_FILE = "loci_ref.sqlite"
+
+
+def annotation_paths(reader: "_Reader") -> dict[int, tuple[int, str]]:
+    """ord -> (taxid, gff_path); loaded once per reader (used to find GFF files)."""
+    if reader.ann_paths is None:
+        reader.ann_paths = {
+            int(r["ord"]): (int(r["taxid"]), r["gff_path"] or "")
+            for r in reader.conn.execute("SELECT ord, taxid, gff_path FROM annotation")
+        }
+    return reader.ann_paths
+
+
+def open_ref_connection() -> sqlite3.Connection:
+    """Read-only connection to ``loci_ref.sqlite`` (``locus_ref`` -> locus lookup) for one request.
+
+    Raises 503 when the file is missing (build it with ``serve_build loci-ref``) or was built for
+    another presence version. The caller closes it.
+    """
+    reader = presence_reader()
+    path = reader.path.parent / REF_FILE
+    if not path.is_file():
+        raise http_error(503, "locus_ref_index_unavailable",
+                         "locus_ref lookup index is not published (run `serve_build loci-ref`)")
+    conn = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
+    row = conn.execute("SELECT value FROM meta WHERE key='data_version'").fetchone()
+    if row is None or row[0] != reader.data_version:
+        conn.close()
+        raise http_error(503, "loci_version_mismatch",
+                         "loci_ref.sqlite was built for a different presence version")
+    return conn

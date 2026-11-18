@@ -1,6 +1,6 @@
 # Annotrieve xrefs: API design (v1, symbol and alias only)
 
-Status: **proposal; the presence build (script and tests) and the presence-backed `/names` and `/hits` with `alias=off|suggest|include` exist** (**`/loci` exists too**: exact names, `alias`, taxon scope, `annotation_ids`, `flank_bp`, `case_sensitive`, `format=json|tsv|bed|ndjson` with a completeness trailer, `dry_run`, JSON cursor, 413 export cap; it needs `loci.sqlite`, built by `serve_build loci`) (compact `fields`/`rows` kept as the only shape for now, with `alias_only`, `organism_name`, `assembly_accession` appended; enabled by `PRESENCE_DIR`; prefix terms in `/hits`, `shape`, `format=tsv`, `min_matched` and `facets` not done yet). This is the reference the UI and the build pipeline follow. Companion documents:
+Status: **proposal; the presence build (script and tests) and the presence-backed `/names` and `/hits` with `alias=off|suggest|include` exist** (**`/sequences` is rewritten on the new index, see 4.4**; **`/loci` exists too**: exact names, `alias`, taxon scope, `annotation_ids`, `flank_bp`, `case_sensitive`, `format=json|tsv|bed|ndjson` with a completeness trailer, `dry_run`, JSON cursor, 413 export cap; it needs `loci.sqlite`, built by `serve_build loci`) (compact `fields`/`rows` kept as the only shape for now, with `alias_only`, `organism_name`, `assembly_accession` appended; enabled by `PRESENCE_DIR`; prefix terms in `/hits`, `shape`, `format=tsv`, `min_matched` and `facets` not done yet). This is the reference the UI and the build pipeline follow. Companion documents:
 - `PLAN-build-tables.md`: the script and logic that build the new tables (sidecars with coordinates, a manifest, `presence.sqlite`). **Current focus.**
 - `PLAN-serve-index-and-cleanup.md`: the served files, memory budget, and what to drop.
 - `REVISED_PLAN.md`: earlier design (organisms, genome grain). Parts are superseded here.
@@ -138,29 +138,63 @@ Pipelines want the whole result set, so exports are streamed, not paginated:
 
 One locus per gene: a gene matching several terms appears once with the matched terms listed.
 
-### 4.4 `POST /sequences` (FASTA) - **later** (needs `/loci`); the current endpoint keeps working meanwhile
+### 4.4 `POST /sequences` (FASTA) - **implemented** (new index only, no old shard or corpus table; needs `loci_ref.sqlite` for `loci` lists, built by `serve_build loci-ref`)
+
+Flat JSON body. Exactly one source of genes:
 
 ```json
-{
-  "query": { "...": "same query object as above" },
-  "items": null,
-  "action": "cds",
-  "transcript": "longest",
-  "buffer_bp": 0,
-  "include_exon_coords": false,
-  "on_error": "skip"
-}
+{ "query": { "names": ["tp53"], "include_taxids": [40674], "alias": "suggest" },
+  "action": "cds", "transcript": "longest", "on_error": "skip" }
+```
+```json
+{ "loci": ["2fcd45eb...:1043", {"locus_ref": "a1b2...:77", "transcript_id": "ENST00000269305"}],
+  "action": "protein" }
 ```
 
-- Exactly one of `query` (all matching loci) or `items` (explicit `locus_ref` list, small selections).
-- `transcript`: `longest` (default, resolved on the server when the job reads the GFF lines), `all`, or a transcript id (with `items`).
-- `action`: `cds | transcript | protein`; `buffer_bp` only with `transcript`.
-- `on_error`: `fail` (today's behaviour) or `skip`. Skipped items go to a manifest.
-- `POST /sequences/estimate` returns `{n_genes, est_bp_upper_bound, est_seconds, over_limit}`, computed from the loci table (gene length is an upper bound for the bp to fetch).
-- Small requests (default up to 50 genes) return the FASTA directly with `X-Sequence-Count` and `X-Skipped-Count`. Larger requests return `202 {job_id}`, then `GET /sequence-jobs/{id}` (phase and `done/total`) and `GET /sequence-jobs/{id}/result` (FASTA) and `/manifest.tsv`.
+| field | meaning |
+|---|---|
+| `query` | same fields as `/loci`; reproducible from the UI state |
+| `loci` | list of `locus_ref` strings, or objects with a pinned `transcript_id` (skips the rule). Replaces the legacy `items` (kept one release) |
+| `action` | `cds` \| `transcript` \| `protein` (required) |
+| `transcript` | preset name or rule object (below). Default `longest` |
+| `buffer_bp`, `include_exon_coords` | as today; `buffer_bp` only with `action=transcript` |
+| `on_error` | `skip` (default for `query`) or `fail`; skipped genes go to the manifest |
+| `max_genes` | cap for a `query`; over the cap -> refused with the estimate, never silently cut |
+
+**Transcript choice** (`helpers/transcript_select.py`, implemented and tested). There is deliberately **no canonical** option: the flag exists in one data source only (measured 2026-11-18: Ensembl 96/96 files; RefSeq only in human and mouse; GenBank and community none).
+
+Presets: `longest` (default), `longest_spliced`, `longest_cds`, `shortest_cds`, `most_exons`, `fewest_exons`, `all`.
+`longest` depends on the action: `cds`/`protein` -> longest CDS; `transcript` -> coding first, then longest spliced length. `longest_spliced` is the literal longest, coding or not.
+
+Rule object: `{"rank_by": ["coding:desc", "cds_len:desc"], "require": ["coding", "tag:basic", "biotype:protein_coding"], "keep": 1}`.
+- Rank keys: `coding`, `cds_len`, `spliced_len`, `span`, `n_exons`, `utr_len`; each `:asc` or `:desc` (bare = desc).
+- `require`: `coding`, `tag:<value>`, `biotype:<value>`. `keep`: 1..50 or `"all"`.
+- Eligibility comes first: for `cds`/`protein` only transcripts with CDS are considered; for `transcript` any with structure.
+- Ties always go to the lowest transcript id (not configurable), so a request is reproducible.
+- Invalid input: `unknown_transcript_preset`, `unknown_rank_key`, `unknown_require`, `invalid_transcript_rule` (each lists the allowed values).
+
+**Implementation notes** (deviations and choices, 2026-11-18)
+- Batches of `SEQUENCES_BATCH_GENES` (25) genes bound memory to one batch of NCBI windows; progress is reported per batch. Results live in `SEQUENCES_RESULTS_DIR/<result_id>/` (`result.fa`, `manifest.tsv`, `status.json`), so any worker serves them and a job is polled the same way from any worker; they expire after `SEQUENCES_RESULT_TTL_S`.
+- `job_id` equals `result_id`. Up to `SEQUENCES_SYNC_MAX_GENES` (50) genes run in the request; more become a job (`202`, `Location`). `max_genes` (default and ceiling `SEQUENCES_MAX_GENES`, 2000) is checked by counting the genes first: over it is `413 too_many_genes`.
+- `on_error` defaults to `skip` for `query` and `fail` for `loci`/`items`. Skip reasons also include `annotation_not_found`, `locus_not_found`, `gene_id_missing`, `transcript_strand_unknown`, `gffread_failed`, `ncbi_sequence_truncated`.
+- A transcript that reaches beyond its gene bounds makes the resolver fetch the wider GFF region again, so exons are never silently missing (the old pipeline failed such genes with `transcript_outside_gene`).
+- `locus_ref` lookup needs `loci_ref.sqlite` (`ord, local_id -> name_id`, one row per gene, built with `serve_build loci-ref` or automatically by `serve_build loci`); without it, `loci` lists return `503 locus_ref_index_unavailable` and `query` mode still works.
+- FASTA header: `>{symbol}|{organism}|{assembly}|{annotation_id}|{transcript_id} {seqid}:{start}-{end}({strand})`, with spaces and `|` inside a field replaced by `_`.
+- Not done yet: the global NCBI limiter across workers (each process has its own bucket), a per-IP quota, `transcript` ids typed as a plain string (`transcript=ENST...`, use a pinned `loci` entry instead).
+
+**Companion endpoints**
+- `POST /sequences/estimate`: index only, no GFF reads: `{n_genes, n_annotations, est_bp_upper_bound, over_limit}`. Transcript counts are unknown at this stage.
+- `POST /sequences/plan`: same body, reads the GFF slices. One row per eligible transcript with its metrics, `selected`, and the rule that applied. A client edits the table and posts it back as `loci`.
+
+**Response.** Every result has a `result_id` = hash of the normalised request + `data_version`.
+- Small requests (default up to 50 genes): `200 text/x-fasta` with headers `X-Sequence-Count`, `X-Skipped-Count`, `X-Result-Id`, `X-Data-Version`.
+- Larger requests: `202 {job_id, result_id}`, then `GET /sequence-jobs/{id}` (phase, `done/total`).
+- `GET /sequences/results/{result_id}` (FASTA) and `/manifest.tsv` while the result is cached. FASTA has no safe place for comments, so skip details live only in the manifest.
+- Manifest columns: `locus_ref, symbol, status, transcript_id, rule, n_candidates, reason, seq_length`.
+- Skip reasons: `no_transcript`, `no_cds`, `filtered_out`, `transcript_not_found`, `gff_unavailable`, `seqid_not_resolved`, `window_too_large`, `ncbi_error`.
 - FASTA header: `>{symbol}|{organism}|{assembly_accession}|{annotation_id}|{transcript_id}`.
-- Transcripts are **not precomputed** in a global table (the corpus is large and keeps growing). Transcript models come from the GFF slice when a request needs them (as the Compare view does today), with a read-through cache keyed by `annotation_id` and gene. "Longest" is resolved from those models; the exact length rule (genomic span, summed exons or CDS length) is still to decide.
-- Limits: a global NCBI rate limiter shared across all workers, a per-IP quota, and results cached by a hash of the normalized request plus `data_version`.
+- Transcript models come from the GFF slice when a request needs them (no global transcript table), with a read-through cache keyed by `annotation_id` and gene. GFF path comes from the presence index (`annotation.taxid`, `annotation.gff_path`).
+- Limits: a global NCBI rate limiter shared by all workers, a per-IP quota, results cached by `result_id`.
 
 ### 4.5 Kept as they are
 `GET /annotations/{id}/genes`, `/genes/{local_id}`, `/xrefs`, `/namespaces`: single-annotation drill-in. They read the shards, so they stay for gene cards and are not used for bulk work.
@@ -206,5 +240,5 @@ The page already has three views (`components/genes/`): **Distribution** (heatma
 3. **Loci file size.** A guess of 2.5-3.5 GB. Measure by building it, and time a cold range read for a common name first.
 4. **Deleted, replaced and new annotations.** Search must exclude removed ones at once and include new ones after the weekly import. The mechanism (a reconcile job against the live Annotrieve catalogue, a liveness mask, a `GET /status`) is **postponed** until the first table works; see `PLAN-build-tables.md` D6.
 5. **Sync size cut-offs** for `/sequences` (50 genes) and jobs (2,000 genes). Placeholders until measured.
-6. **"Longest transcript" rule** (genomic span, summed exons, or CDS length) and where transcript models are cached.
+6. **"Longest transcript" rule**: decided 2026-11-18, see 4.4 (action-aware, ranking keys, no canonical option). Open: where transcript models are cached.
 7. **Namespaces and the annotation filter** (Pfam, GO, ...) are deferred; see `PLAN-build-tables.md` D7. Only Ensembl, GenBank and RefSeq annotations are indexed; `Community` is skipped.

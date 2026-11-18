@@ -25,9 +25,12 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from urllib.parse import unquote
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path[:0] = [str(ROOT / "api")]
-from helpers.transcript_select import CANONICAL_TAGS, normalise_tag  # noqa: E402
+CANONICAL_TAGS = frozenset({"ensembl_canonical", "mane_select", "refseq_select"})
+
+
+def normalise_tag(value: str) -> str:
+    return value.strip().casefold().replace(" ", "_").replace("-", "_")
+
 
 STRUCTURAL = {"exon", "cds", "utr", "five_prime_utr", "three_prime_utr", "5utr", "3utr", "intron"}
 GENE_TYPES = {"gene", "pseudogene"}

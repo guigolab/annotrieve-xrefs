@@ -53,6 +53,7 @@ from gene_corpus.sql.sidecar import (
 )
 
 LOCI_FILE = "loci.sqlite"
+REF_FILE = "loci_ref.sqlite"
 INSERT_BATCH = 20_000
 DICT_GENES_LIMIT = 150_000       # above this an annotation's genes go to a scratch SQLite table
 _PAGE_SIZE = 16384
@@ -406,3 +407,66 @@ def _verify(out: sqlite3.Connection, pres: sqlite3.Connection, named: list[tuple
                 raise BuildError(f"verification: {aid} gene {local_id} ({name}): {got} != {want}")
     log(f"verified {len(picks)} annotations")
     return len(picks)
+
+
+_REF_SCHEMA = """
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE ref (ord INTEGER NOT NULL, local_id INTEGER NOT NULL, name_id INTEGER NOT NULL,
+                  PRIMARY KEY (ord, local_id)) WITHOUT ROWID;
+"""
+
+
+def build_ref_index(loci_file: Path, out_file: Path, *, tmp_dir: Path, verify_sample: int = 30,
+                    log: Callable[[str], None] = lambda m: None) -> dict:
+    """Build ``loci_ref.sqlite``: (ord, local_id) -> one name_id, so a ``locus_ref`` resolves.
+
+    ``locus`` is keyed by (name_id, ord, local_id), so a gene cannot be found by its
+    ``locus_ref`` without a scan. This file holds one row per gene (the smallest name_id that
+    reaches it); the full row is then read with the ``locus`` primary key. It is a separate file
+    so the published ``loci.sqlite`` is never modified.
+
+    The rows come from a sorted ``GROUP BY``, so inserts are sequential. SQLite's sort spills to
+    ``tmp_dir`` (set through SQLITE_TMPDIR; NFS work area, never local disk) and the page cache is
+    capped at 64 MiB.
+    """
+    from urllib.parse import quote
+
+    t0 = time.time()
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["SQLITE_TMPDIR"] = str(tmp_dir)
+    out_file.unlink(missing_ok=True)
+    out = sqlite3.connect(f"file:{quote(str(out_file))}?mode=rwc", uri=True)
+    try:
+        out.executescript("PRAGMA page_size=16384; PRAGMA journal_mode=OFF; "
+                          "PRAGMA synchronous=OFF; PRAGMA temp_store=FILE; PRAGMA cache_size=-65536;")
+        out.executescript(_REF_SCHEMA)
+        out.execute("ATTACH DATABASE ? AS src", (f"file:{quote(str(loci_file))}?mode=ro",))
+        meta = dict(out.execute("SELECT key, value FROM src.meta"))
+        log("loci-ref: sorting genes by (ord, local_id) ...")
+        out.execute("INSERT INTO ref SELECT ord, local_id, MIN(name_id) FROM src.locus "
+                    "GROUP BY ord, local_id ORDER BY ord, local_id")
+        n_genes = out.execute("SELECT COUNT(*) FROM ref").fetchone()[0]
+        out.executemany("INSERT INTO meta VALUES (?,?)", [
+            ("data_version", meta["data_version"]), ("n_genes", str(n_genes)),
+            ("built_at", time.strftime("%Y-%m-%dT%H:%M:%S"))])
+        out.commit()
+
+        # Every sampled gene must resolve to a real locus row.
+        checked = 0
+        for (o,) in out.execute("SELECT DISTINCT ord FROM ref ORDER BY (ord * 7919) % 1009 LIMIT ?",
+                                (verify_sample,)).fetchall():
+            for ord_, local_id, name_id in out.execute(
+                    "SELECT ord, local_id, name_id FROM ref WHERE ord=? LIMIT 5", (o,)).fetchall():
+                row = out.execute("SELECT 1 FROM src.locus WHERE name_id=? AND ord=? AND local_id=?",
+                                  (name_id, ord_, local_id)).fetchone()
+                if row is None:
+                    raise BuildError(f"ref index: ({ord_}, {local_id}) -> name_id {name_id} "
+                                     "has no locus row")
+                checked += 1
+    finally:
+        out.close()
+    stats = {"data_version": meta["data_version"], "n_genes": n_genes, "verified_refs": checked,
+             "output_bytes": out_file.stat().st_size, "peak_rss_mib": round(_peak_rss_mib(), 1),
+             "seconds": round(time.time() - t0, 1)}
+    log("loci-ref build done: " + json.dumps(stats))
+    return stats
