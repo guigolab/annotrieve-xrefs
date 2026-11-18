@@ -34,7 +34,7 @@ class AnnotationFiles:
     assembly_dir: Path
     source_database: str
     # Other folders that may hold chromosomes.json / chr_aliases.tsv: Annotrieve leaves them in the
-    # annotation's own taxid folder when the GFF sits under a parent taxon folder.
+    # annotation's current taxid folder while the GFF is still under a retired taxid folder.
     extra_dirs: tuple[Path, ...] = ()
 
 
@@ -105,8 +105,8 @@ def _rebase_gff_path(gff_path: str, root: Path) -> Path | None:
 def _tail_gff_path(root: Path, gff_path: str) -> Path | None:
     """``root/<folder>/<assembly>/<file>`` from the last three parts of the stored path.
 
-    The folder on disk is not always the annotation's own taxid (Annotrieve groups some
-    annotations under a parent taxon), but the stored path always carries the real one.
+    The folder on disk is not always the annotation's current taxid (NCBI re-assigns taxids and
+    Annotrieve used to leave the files in the old folder), but the stored path carries the real one.
     """
     parts = Path((gff_path or "").strip()).parts[-3:]
     if len(parts) < 3 or any(p in ("", "/", "..", ".") for p in parts):

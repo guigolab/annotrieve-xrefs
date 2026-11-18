@@ -50,7 +50,7 @@ def test_resolve_by_convention(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_resolve_when_folder_is_not_the_annotation_taxid(tmp_path: Path):
-    """Annotrieve can store an annotation under a parent taxon folder (3440260 -> 2219007)."""
+    """The assembly's taxid changed (2219007 -> 3440260) but its GFF was never moved."""
     root = tmp_path / "annotations"
     gff = _write_gff_pair(root / "2219007" / "GCA_949709995.1" / "Ensembl_abc.gff.gz")
     import settings as settings_mod
@@ -263,7 +263,7 @@ def test_seqid_empty_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_chromosomes_json_left_in_the_annotation_taxid_folder(tmp_path: Path):
-    """GFF under the parent taxon folder, chromosomes.json still under the annotation's taxid."""
+    """GFF still under the retired taxid folder (2219007); chromosomes.json under the current taxid."""
     root = tmp_path / "annotations"
     gff = _write_gff_pair(root / "2219007" / "GCA_949709995.1" / "Ensembl_abc.gff.gz")
     old = root / "3440260" / "GCA_949709995.1"
