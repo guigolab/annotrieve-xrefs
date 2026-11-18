@@ -349,3 +349,13 @@ def test_gene_xrefs_offset(client: TestClient) -> None:
 def test_gene_xrefs_missing(client: TestClient) -> None:
     r = client.get("/annotations/ann-human/genes/999/xrefs")
     assert r.status_code == 404
+
+
+def test_committed_openapi_schema_matches_the_app() -> None:
+    """Run ``python3 tools/export_openapi.py`` after changing a route."""
+    import json
+    from pathlib import Path
+
+    from main import app
+    committed = json.loads((Path(__file__).resolve().parents[1] / "openapi.json").read_text())
+    assert committed == json.loads(json.dumps(app.openapi())), "stale api/openapi.json"

@@ -9,9 +9,9 @@ from fastapi import APIRouter
 from routers import annotations, health, hits, loci, names, sequences
 
 api_router = APIRouter()
-api_router.include_router(health.router)
-api_router.include_router(hits.router)
-api_router.include_router(names.router)
-api_router.include_router(loci.router)
-api_router.include_router(annotations.router)
-api_router.include_router(sequences.router)
+api_router.include_router(health.router, tags=["system"])
+api_router.include_router(hits.router, tags=["search"])
+api_router.include_router(names.router, tags=["search"])
+api_router.include_router(loci.router, tags=["loci"])
+api_router.include_router(annotations.router, tags=["annotations"])
+api_router.include_router(sequences.router, tags=["sequences"])

@@ -28,6 +28,7 @@ QUERY_FIELDS = ("names", "include_taxids", "exclude_taxids", "alias", "annotatio
                 "case_sensitive")
 MAX_LOCI_ENTRIES = 5000
 ON_ERROR = ("skip", "fail")
+ALIAS_MODES = ("off", "suggest", "include")
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,19 @@ def _entries(raw: Any, field: str) -> tuple[LociEntry, ...]:
     return tuple(out)
 
 
+def _int_list(raw: Any, field: str) -> list[int]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise _bad(f"query.{field} must be a list of integers", "validation_error", field=field)
+    out = []
+    for v in raw:
+        if isinstance(v, bool) or not (isinstance(v, int) or (isinstance(v, str) and v.strip().isdigit())):
+            raise _bad(f"query.{field} must contain integers", "invalid_taxid", field=field, value=v)
+        out.append(int(v))
+    return sorted(set(out))
+
+
 def _query(raw: Any) -> dict:
     if not isinstance(raw, dict):
         raise _bad("query must be an object", "validation_error", field="query")
@@ -148,14 +162,30 @@ def _query(raw: Any) -> dict:
         names = [n for n in names.split(",") if n.strip()]
     if not isinstance(names, list) or not names:
         raise _bad("query.names must be a non-empty list", "names_required")
-    case = bool(raw.get("case_sensitive", False))
-    norm = [str(n).strip() if case else str(n).strip().casefold() for n in names if str(n).strip()]
+    if not all(isinstance(n, str) for n in names):
+        raise _bad("query.names must contain strings", "validation_error", field="names")
+    case = raw.get("case_sensitive", False)
+    if not isinstance(case, bool):
+        raise _bad("query.case_sensitive must be true or false", "validation_error",
+                   field="case_sensitive")
+    norm = [n.strip() if case else n.strip().casefold() for n in names if n.strip()]
+    if not norm:
+        raise _bad("query.names must be a non-empty list", "names_required")
+    alias = raw.get("alias") if raw.get("alias") is not None else "suggest"
+    if not isinstance(alias, str) or alias.lower() not in ALIAS_MODES:
+        raise _bad(f"query.alias must be one of {', '.join(ALIAS_MODES)}", "invalid_alias_mode",
+                   field="alias", value=alias)
+    annotation_ids = raw.get("annotation_ids")
+    if annotation_ids is not None and (
+            not isinstance(annotation_ids, list) or not all(isinstance(a, str) for a in annotation_ids)):
+        raise _bad("query.annotation_ids must be a list of strings", "validation_error",
+                   field="annotation_ids")
     return {
-        "names": sorted(set(norm)) if not case else sorted(set(norm)),
-        "include_taxids": sorted({int(t) for t in raw.get("include_taxids") or []}),
-        "exclude_taxids": sorted({int(t) for t in raw.get("exclude_taxids") or []}),
-        "alias": str(raw.get("alias") or "suggest").lower(),
-        "annotation_ids": sorted({str(a) for a in raw.get("annotation_ids") or []}),
+        "names": sorted(set(norm)),
+        "include_taxids": _int_list(raw.get("include_taxids"), "include_taxids"),
+        "exclude_taxids": _int_list(raw.get("exclude_taxids"), "exclude_taxids"),
+        "alias": alias.lower(),
+        "annotation_ids": sorted(set(annotation_ids or [])),
         "case_sensitive": case,
     }
 
@@ -198,7 +228,7 @@ def parse_request(body: dict) -> SeqRequest:
 
     hard = int(settings.SEQUENCES_MAX_GENES)
     try:
-        max_genes = int(body.get("max_genes") or hard)
+        max_genes = hard if body.get("max_genes") is None else int(body["max_genes"])
     except (TypeError, ValueError):
         raise _bad("max_genes must be an integer", "validation_error", field="max_genes") from None
     if max_genes < 1:

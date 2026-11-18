@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from helpers.concurrency import BusyError, sequences_slot
 from helpers.cursor import QueryError
@@ -32,11 +32,56 @@ from services.seq_source import Source
 from settings import settings
 
 router = APIRouter()
+
+_ERR = {"description": "Error: `detail` is `{code, message, ...}`."}
+_FASTA_HEADERS = {
+    "X-Sequence-Count": {"description": "Sequences in the FASTA", "schema": {"type": "integer"}},
+    "X-Skipped-Count": {"description": "Genes skipped (see the manifest)", "schema": {"type": "integer"}},
+    "X-Gene-Count": {"description": "Genes processed", "schema": {"type": "integer"}},
+    "X-Result-Id": {"description": "Identifier of this result", "schema": {"type": "string"}},
+    "X-Data-Version": {"description": "Index version used", "schema": {"type": "string"}},
+    "X-Manifest-Url": {"description": "Per-gene outcome table (tsv)", "schema": {"type": "string"}},
+}
+SEQUENCES_RESPONSES = {
+    200: {"description": "FASTA (`text/x-fasta`). Headers: result id, counts, manifest link.",
+          "headers": _FASTA_HEADERS,
+          "content": {"text/x-fasta": {"schema": {"type": "string"}}}},
+    202: {"description": "More genes than `SEQUENCES_SYNC_MAX_GENES`: a job started. Poll "
+                         "`status_url`, then fetch `result_url` and `manifest_url`.",
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SequenceJob"}}}},
+    404: {**_ERR, "description": "`no_genes_matched`, or a pinned/unknown locus (loci mode, on_error=fail)"},
+    413: {**_ERR, "description": "`too_many_genes` (over `max_genes`)"},
+    422: {**_ERR, "description": "Invalid request (`validation_error`, `exactly_one_source`, "
+                                 "`unknown_rank_key`, `invalid_locus_ref`, ...)"},
+    503: {**_ERR, "description": "`sequences_busy`, `annotations_unavailable`, "
+                                 "`locus_ref_index_unavailable`, `gffread_unavailable`"},
+    504: {**_ERR, "description": "`sequences_timeout`"},
+}
+
+
+class SequenceJob(BaseModel):
+    job_id: str
+    result_id: str
+    status_url: str
+    result_url: str
+    manifest_url: str
+    state: str = Field(description="queued | running | done | failed")
+    done: int | None = None
+    total: int | None = None
+    n_ok: int | None = None
+    n_skipped: int | None = None
+    n_sequences: int | None = None
+    reasons: dict[str, int] | None = None
+    error: dict[str, Any] | None = None
+
+
 logger = logging.getLogger(__name__)
 
 
 class SequencesBody(BaseModel):
     """Exactly one of ``query``, ``loci`` or ``items`` selects the genes."""
+
+    model_config = ConfigDict(extra="forbid")     # a typo'd field is an error, not silently ignored
 
     action: str | None = Field(None, description="cds | transcript | protein")
     query: dict[str, Any] | None = Field(
@@ -126,7 +171,7 @@ def _summary(result, data_version: str) -> dict:
             "data_version": data_version, "error": None}
 
 
-@router.post("/sequences")
+@router.post("/sequences", responses=SEQUENCES_RESPONSES, summary="FASTA for a query or a list of loci")
 def post_sequences(body: SequencesBody, request: Request):
     """Extract CDS, transcript or protein FASTA for the genes of a query or an explicit list."""
     req = _parse(body)
@@ -165,6 +210,11 @@ def post_sequences(body: SequencesBody, request: Request):
                     except QueryError as exc:
                         shutil.rmtree(result_dir(rid), ignore_errors=True)
                         raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
+                    except BaseException:
+                        # Never leave a "running" status behind: equal requests would be told
+                        # to wait for a job that does not exist.
+                        shutil.rmtree(result_dir(rid), ignore_errors=True)
+                        raise
                     status = write_status(rid, state="done", **_summary(result, data_version))
                     logger.info("POST /sequences sync genes=%d seqs=%d skipped=%d wall_s=%.2f",
                                 result.n_genes, result.n_sequences, result.n_skipped,
@@ -194,7 +244,7 @@ def post_sequences(body: SequencesBody, request: Request):
         src.close()
 
 
-@router.post("/sequences/estimate")
+@router.post("/sequences/estimate", summary="Gene count and base-pair bound, no extraction")
 def post_sequences_estimate(body: SequencesBody, request: Request):
     """Cheap preview: gene count and an upper bound of the bases to fetch. Reads only the index."""
     req = _parse(body, default_action="cds")
@@ -218,7 +268,7 @@ def post_sequences_estimate(body: SequencesBody, request: Request):
         src.close()
 
 
-@router.post("/sequences/plan")
+@router.post("/sequences/plan", summary="Which transcripts would be extracted, with metrics")
 def post_sequences_plan(body: SequencesBody):
     """Which transcripts the request would extract, with the metrics behind the choice.
 
@@ -278,7 +328,7 @@ def _count_cap(src: Source, cap: int):
         raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
 
 
-@router.get("/sequence-jobs/{result_id}")
+@router.get("/sequence-jobs/{result_id}", response_model=SequenceJob, summary="Job status", responses={404: _ERR})
 def get_sequence_job(result_id: str, request: Request):
     status = read_status(result_id) if valid_id(result_id) else None
     if status is None:
@@ -301,16 +351,22 @@ def _ready(result_id: str) -> tuple[dict, Any]:
         raise HTTPException(status_code=409, detail=error_detail(
             "result_not_ready", "the job has not finished", state=status["state"],
             done=status.get("done"), total=status.get("total")))
-    return status, result_dir(result_id)
+    d = result_dir(result_id)
+    if not (d / "result.fa").is_file():
+        raise HTTPException(status_code=404, detail=error_detail(
+            "job_not_found", "this result has expired; repeat the request"))
+    return status, d
 
 
-@router.get("/sequences/results/{result_id}")
+@router.get("/sequences/results/{result_id}", summary="Download a finished FASTA",
+            responses={200: SEQUENCES_RESPONSES[200], 404: _ERR, 409: {**_ERR, "description": "`result_not_ready`"}})
 def get_sequence_result(result_id: str, request: Request):
     status, _ = _ready(result_id)
     return _fasta_response(request, result_id, status)
 
 
-@router.get("/sequences/results/{result_id}/manifest.tsv")
+@router.get("/sequences/results/{result_id}/manifest.tsv", summary="Per-gene outcome table",
+            responses={200: {"description": "tsv", "content": {"text/tab-separated-values": {"schema": {"type": "string"}}}}, 404: _ERR, 409: _ERR})
 def get_sequence_manifest(result_id: str):
     _status, d = _ready(result_id)
     return FileResponse(d / "manifest.tsv", media_type="text/tab-separated-values",

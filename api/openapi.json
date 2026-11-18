@@ -1,0 +1,1682 @@
+{
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HitsSearchBody": {
+        "description": "JSON body for ``POST /hits``.\n\nCap is enforced in ``parse_name_list`` (casefold-deduped) so GET and POST\nshare ``too_many_names`` \u2014 do not use list ``max_length`` here.",
+        "properties": {
+          "alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alias"
+          },
+          "exclude_taxids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclude Taxids"
+          },
+          "include_taxids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Taxids"
+          },
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Names",
+            "type": "array"
+          }
+        },
+        "required": [
+          "names"
+        ],
+        "title": "HitsSearchBody",
+        "type": "object"
+      },
+      "LociBody": {
+        "properties": {
+          "alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "suggest",
+            "title": "Alias"
+          },
+          "annotation_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annotation Ids"
+          },
+          "case_sensitive": {
+            "default": false,
+            "title": "Case Sensitive",
+            "type": "boolean"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "exclude_taxids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclude Taxids"
+          },
+          "flank_bp": {
+            "default": 0,
+            "title": "Flank Bp",
+            "type": "integer"
+          },
+          "format": {
+            "default": "json",
+            "title": "Format",
+            "type": "string"
+          },
+          "include_taxids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Taxids"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Names",
+            "type": "array"
+          }
+        },
+        "required": [
+          "names"
+        ],
+        "title": "LociBody",
+        "type": "object"
+      },
+      "SequenceJob": {
+        "properties": {
+          "done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Done"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "manifest_url": {
+            "title": "Manifest Url",
+            "type": "string"
+          },
+          "n_ok": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Ok"
+          },
+          "n_sequences": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Sequences"
+          },
+          "n_skipped": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Skipped"
+          },
+          "reasons": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasons"
+          },
+          "result_id": {
+            "title": "Result Id",
+            "type": "string"
+          },
+          "result_url": {
+            "title": "Result Url",
+            "type": "string"
+          },
+          "state": {
+            "description": "queued | running | done | failed",
+            "title": "State",
+            "type": "string"
+          },
+          "status_url": {
+            "title": "Status Url",
+            "type": "string"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "job_id",
+          "result_id",
+          "status_url",
+          "result_url",
+          "manifest_url",
+          "state"
+        ],
+        "title": "SequenceJob",
+        "type": "object"
+      },
+      "SequencesBody": {
+        "additionalProperties": false,
+        "description": "Exactly one of ``query``, ``loci`` or ``items`` selects the genes.",
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "cds | transcript | protein",
+            "title": "Action"
+          },
+          "buffer_bp": {
+            "default": 0,
+            "title": "Buffer Bp",
+            "type": "integer"
+          },
+          "include_exon_coords": {
+            "default": false,
+            "title": "Include Exon Coords",
+            "type": "boolean"
+          },
+          "items": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "legacy: {annotation_id, local_id, transcript_id} objects",
+            "title": "Items"
+          },
+          "loci": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "'annotation_id:local_id' strings or {locus_ref, transcript_id} objects",
+            "title": "Loci"
+          },
+          "max_genes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Genes"
+          },
+          "on_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "skip (default for query) | fail (default for loci)",
+            "title": "On Error"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "names, include_taxids, exclude_taxids, alias, annotation_ids, case_sensitive (same meaning as /loci)",
+            "title": "Query"
+          },
+          "transcript": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "preset (longest, longest_spliced, longest_cds, shortest_cds, most_exons, fewest_exons, all) or {rank_by, require, keep}",
+            "title": "Transcript"
+          }
+        },
+        "title": "SequencesBody",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "From gene names to annotations, gene coordinates and sequences.\n\n- **search**: `/names` (prefix discovery), `/hits` (which annotations contain these exact gene names).\n- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv, bed or ndjson).\n- **sequences**: `/sequences` (CDS, transcript or protein FASTA for a query or a list of `locus_ref`s), with `/sequences/estimate`, `/sequences/plan`, jobs and cached results.\n- **annotations**: per-annotation genes and cross-references (legacy shard-backed).",
+    "title": "Annotrieve xrefs",
+    "version": "1.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/annotations/{annotation_id}/genes": {
+      "get": {
+        "description": "Paginated gene cards for one annotation (optional names/curies filter).",
+        "operationId": "get_annotation_genes_annotations__annotation_id__genes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "annotation_id",
+            "required": true,
+            "schema": {
+              "title": "Annotation Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated exact gene names (symbol\u222aalias). Wildcards are not supported. Mutually exclusive with curies.",
+            "in": "query",
+            "name": "names",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated exact gene names (symbol\u222aalias). Wildcards are not supported. Mutually exclusive with curies.",
+              "title": "Names"
+            }
+          },
+          {
+            "description": "Comma-separated CURIEs (ns:accession) for exact xref resolve. Mutually exclusive with names.",
+            "in": "query",
+            "name": "curies",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated CURIEs (ns:accession) for exact xref resolve. Mutually exclusive with names.",
+              "title": "Curies"
+            }
+          },
+          {
+            "description": "any (union over terms, default) or all (intersection over terms)",
+            "in": "query",
+            "name": "match",
+            "required": false,
+            "schema": {
+              "default": "any",
+              "description": "any (union over terms, default) or all (intersection over terms)",
+              "title": "Match",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Annotation Genes",
+        "tags": [
+          "annotations"
+        ]
+      }
+    },
+    "/annotations/{annotation_id}/genes/{local_id}": {
+      "get": {
+        "description": "One gene locus card from this annotation's gene corpus shard.",
+        "operationId": "get_annotation_gene_annotations__annotation_id__genes__local_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "annotation_id",
+            "required": true,
+            "schema": {
+              "title": "Annotation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "local_id",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Local Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Annotation Gene",
+        "tags": [
+          "annotations"
+        ]
+      }
+    },
+    "/annotations/{annotation_id}/genes/{local_id}/xrefs": {
+      "get": {
+        "description": "Paginated xref chips for one gene in this annotation's shard.",
+        "operationId": "get_annotation_gene_xrefs_annotations__annotation_id__genes__local_id__xrefs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "annotation_id",
+            "required": true,
+            "schema": {
+              "title": "Annotation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "local_id",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Local Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Annotation Gene Xrefs",
+        "tags": [
+          "annotations"
+        ]
+      }
+    },
+    "/annotations/{annotation_id}/namespaces": {
+      "get": {
+        "description": "Namespaces present in this annotation's shard (all gene_xref ns).",
+        "operationId": "get_annotation_namespaces_annotations__annotation_id__namespaces_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "annotation_id",
+            "required": true,
+            "schema": {
+              "title": "Annotation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Annotation Namespaces",
+        "tags": [
+          "annotations"
+        ]
+      }
+    },
+    "/annotations/{annotation_id}/namespaces/{namespace}/accessions": {
+      "get": {
+        "description": "Paginated accessions under one namespace on this annotation's shard.",
+        "operationId": "get_annotation_namespace_accessions_annotations__annotation_id__namespaces__namespace__accessions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "annotation_id",
+            "required": true,
+            "schema": {
+              "title": "Annotation Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stored namespace or public short prefix (swiss-prot). Slash forms: literal path or percent-encoded (%2F).",
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "description": "Stored namespace or public short prefix (swiss-prot). Slash forms: literal path or percent-encoded (%2F).",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional accession prefix (min 3 characters when set); omit to browse all",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional accession prefix (min 3 characters when set); omit to browse all",
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Annotation Namespace Accessions",
+        "tags": [
+          "annotations"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/hits": {
+      "get": {
+        "description": "Presence search by exact gene symbol/synonym names.\n\nCompact envelope: ``terms``, ``fields``/``rows`` with ``matched``\n(term indices), ``release_date``, and ``assembly_name``.",
+        "operationId": "get_hits_hits_get",
+        "parameters": [
+          {
+            "description": "Comma-separated exact gene names (symbol\u222aalias). Wildcards are not supported; use GET /names?prefix=.",
+            "in": "query",
+            "name": "names",
+            "required": true,
+            "schema": {
+              "description": "Comma-separated exact gene names (symbol\u222aalias). Wildcards are not supported; use GET /names?prefix=.",
+              "title": "Names",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated NCBI taxids to include (lineage OR)",
+            "in": "query",
+            "name": "include_taxids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated NCBI taxids to include (lineage OR)",
+              "title": "Include Taxids"
+            }
+          },
+          {
+            "description": "Comma-separated NCBI taxids to exclude (lineage)",
+            "in": "query",
+            "name": "exclude_taxids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated NCBI taxids to exclude (lineage)",
+              "title": "Exclude Taxids"
+            }
+          },
+          {
+            "description": "off | suggest | include. suggest (default) counts symbol hits as matches and lists alias-only annotations as `alias_only`; include restores the union. Only applies when the presence index is enabled (PRESENCE_DIR).",
+            "in": "query",
+            "name": "alias",
+            "required": false,
+            "schema": {
+              "default": "suggest",
+              "description": "off | suggest | include. suggest (default) counts symbol hits as matches and lists alias-only annotations as `alias_only`; include restores the union. Only applies when the presence index is enabled (PRESENCE_DIR).",
+              "title": "Alias",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Hits",
+        "tags": [
+          "search"
+        ]
+      },
+      "post": {
+        "description": "Presence search for a larger name list (JSON body). Prefer GET when \u2264200.",
+        "operationId": "post_hits_hits_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HitsSearchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Hits",
+        "tags": [
+          "search"
+        ]
+      }
+    },
+    "/loci": {
+      "get": {
+        "description": "Gene coordinates for the matching genes, one row per gene, deterministic order.",
+        "operationId": "get_loci_loci_get",
+        "parameters": [
+          {
+            "description": "Comma-separated exact gene names (no wildcard)",
+            "in": "query",
+            "name": "names",
+            "required": true,
+            "schema": {
+              "description": "Comma-separated exact gene names (no wildcard)",
+              "title": "Names",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated NCBI taxids (lineage OR)",
+            "in": "query",
+            "name": "include_taxids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated NCBI taxids (lineage OR)",
+              "title": "Include Taxids"
+            }
+          },
+          {
+            "description": "Comma-separated NCBI taxids to exclude",
+            "in": "query",
+            "name": "exclude_taxids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated NCBI taxids to exclude",
+              "title": "Exclude Taxids"
+            }
+          },
+          {
+            "description": "off | suggest | include; off drops alias-only genes",
+            "in": "query",
+            "name": "alias",
+            "required": false,
+            "schema": {
+              "default": "suggest",
+              "description": "off | suggest | include; off drops alias-only genes",
+              "title": "Alias",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Restrict to these annotation ids",
+            "in": "query",
+            "name": "annotation_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict to these annotation ids",
+              "title": "Annotation Ids"
+            }
+          },
+          {
+            "description": "Exact match on the gene's own spelling",
+            "in": "query",
+            "name": "case_sensitive",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Exact match on the gene's own spelling",
+              "title": "Case Sensitive",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Extra bases on each side of the gff_url slice",
+            "in": "query",
+            "name": "flank_bp",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Extra bases on each side of the gff_url slice",
+              "title": "Flank Bp",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "json | tsv | bed | ndjson",
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "json",
+              "description": "json | tsv | bed | ndjson",
+              "title": "Format",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Return counts only",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Return counts only",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "JSON: page size. Other formats: stop after this many rows (omit to use the export cap, which refuses oversized unscoped queries with 413)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "JSON: page size. Other formats: stop after this many rows (omit to use the export cap, which refuses oversized unscoped queries with 413)",
+              "title": "Limit"
+            }
+          },
+          {
+            "description": "JSON pagination cursor",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "JSON pagination cursor",
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Loci",
+        "tags": [
+          "loci"
+        ]
+      },
+      "post": {
+        "description": "Same as GET /loci for longer name lists.",
+        "operationId": "post_loci_loci_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LociBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Loci",
+        "tags": [
+          "loci"
+        ]
+      }
+    },
+    "/names": {
+      "get": {
+        "description": "Prefix discovery for building an exact gene-name set.\n\nReturns categorized accessions with taxon-scoped annotation counts.\nUse ``GET|POST /hits`` with the selected exact names to find annotations.",
+        "operationId": "get_names_names_get",
+        "parameters": [
+          {
+            "description": "Gene-name prefix stem (symbol\u222aalias); no wildcard character; at least 3 characters",
+            "in": "query",
+            "name": "prefix",
+            "required": true,
+            "schema": {
+              "description": "Gene-name prefix stem (symbol\u222aalias); no wildcard character; at least 3 characters",
+              "title": "Prefix",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated NCBI taxids to include (lineage OR)",
+            "in": "query",
+            "name": "include_taxids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated NCBI taxids to include (lineage OR)",
+              "title": "Include Taxids"
+            }
+          },
+          {
+            "description": "Comma-separated NCBI taxids to exclude (lineage)",
+            "in": "query",
+            "name": "exclude_taxids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated NCBI taxids to exclude (lineage)",
+              "title": "Exclude Taxids"
+            }
+          },
+          {
+            "description": "off | suggest | include. n_annotations counts symbol annotations; n_alias_extra counts annotations reachable only through an alias. Only applies when the presence index is enabled (PRESENCE_DIR).",
+            "in": "query",
+            "name": "alias",
+            "required": false,
+            "schema": {
+              "default": "suggest",
+              "description": "off | suggest | include. n_annotations counts symbol annotations; n_alias_extra counts annotations reachable only through an alias. Only applies when the presence index is enabled (PRESENCE_DIR).",
+              "title": "Alias",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Names",
+        "tags": [
+          "search"
+        ]
+      }
+    },
+    "/sequence-jobs/{result_id}": {
+      "get": {
+        "operationId": "get_sequence_job_sequence_jobs__result_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "result_id",
+            "required": true,
+            "schema": {
+              "title": "Result Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SequenceJob"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Job status",
+        "tags": [
+          "sequences"
+        ]
+      }
+    },
+    "/sequences": {
+      "post": {
+        "description": "Extract CDS, transcript or protein FASTA for the genes of a query or an explicit list.",
+        "operationId": "post_sequences_sequences_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SequencesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/x-fasta": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "FASTA (`text/x-fasta`). Headers: result id, counts, manifest link.",
+            "headers": {
+              "X-Data-Version": {
+                "description": "Index version used",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Gene-Count": {
+                "description": "Genes processed",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Manifest-Url": {
+                "description": "Per-gene outcome table (tsv)",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Result-Id": {
+                "description": "Identifier of this result",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Sequence-Count": {
+                "description": "Sequences in the FASTA",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Skipped-Count": {
+                "description": "Genes skipped (see the manifest)",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SequenceJob"
+                }
+              }
+            },
+            "description": "More genes than `SEQUENCES_SYNC_MAX_GENES`: a job started. Poll `status_url`, then fetch `result_url` and `manifest_url`."
+          },
+          "404": {
+            "description": "`no_genes_matched`, or a pinned/unknown locus (loci mode, on_error=fail)"
+          },
+          "413": {
+            "description": "`too_many_genes` (over `max_genes`)"
+          },
+          "422": {
+            "description": "Invalid request (`validation_error`, `exactly_one_source`, `unknown_rank_key`, `invalid_locus_ref`, ...)"
+          },
+          "503": {
+            "description": "`sequences_busy`, `annotations_unavailable`, `locus_ref_index_unavailable`, `gffread_unavailable`"
+          },
+          "504": {
+            "description": "`sequences_timeout`"
+          }
+        },
+        "summary": "FASTA for a query or a list of loci",
+        "tags": [
+          "sequences"
+        ]
+      }
+    },
+    "/sequences/estimate": {
+      "post": {
+        "description": "Cheap preview: gene count and an upper bound of the bases to fetch. Reads only the index.",
+        "operationId": "post_sequences_estimate_sequences_estimate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SequencesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Gene count and base-pair bound, no extraction",
+        "tags": [
+          "sequences"
+        ]
+      }
+    },
+    "/sequences/plan": {
+      "post": {
+        "description": "Which transcripts the request would extract, with the metrics behind the choice.\n\nReads the GFF slices (no network). A client can edit the result and post the selected\n``loci`` back to ``/sequences``.",
+        "operationId": "post_sequences_plan_sequences_plan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SequencesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Which transcripts would be extracted, with metrics",
+        "tags": [
+          "sequences"
+        ]
+      }
+    },
+    "/sequences/results/{result_id}": {
+      "get": {
+        "operationId": "get_sequence_result_sequences_results__result_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "result_id",
+            "required": true,
+            "schema": {
+              "title": "Result Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/x-fasta": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "FASTA (`text/x-fasta`). Headers: result id, counts, manifest link.",
+            "headers": {
+              "X-Data-Version": {
+                "description": "Index version used",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Gene-Count": {
+                "description": "Genes processed",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Manifest-Url": {
+                "description": "Per-gene outcome table (tsv)",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Result-Id": {
+                "description": "Identifier of this result",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Sequence-Count": {
+                "description": "Sequences in the FASTA",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Skipped-Count": {
+                "description": "Genes skipped (see the manifest)",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "409": {
+            "description": "`result_not_ready`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download a finished FASTA",
+        "tags": [
+          "sequences"
+        ]
+      }
+    },
+    "/sequences/results/{result_id}/manifest.tsv": {
+      "get": {
+        "operationId": "get_sequence_manifest_sequences_results__result_id__manifest_tsv_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "result_id",
+            "required": true,
+            "schema": {
+              "title": "Result Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/tab-separated-values": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "tsv"
+          },
+          "404": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "409": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Per-gene outcome table",
+        "tags": [
+          "sequences"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "Liveness.",
+      "name": "system"
+    },
+    {
+      "description": "Gene-name discovery and annotation presence.",
+      "name": "search"
+    },
+    {
+      "description": "Gene coordinates.",
+      "name": "loci"
+    },
+    {
+      "description": "FASTA export, previews, jobs and results.",
+      "name": "sequences"
+    },
+    {
+      "description": "Per-annotation genes and xrefs (legacy).",
+      "name": "annotations"
+    }
+  ]
+}

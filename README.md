@@ -299,3 +299,6 @@ pip install -r requirements-dev.txt
 PYTHONPATH=api:. pytest gene_corpus/tests api/tests -q
 ```
 
+## API schema
+
+The OpenAPI schema is committed as `api/openapi.json` (interactive docs at `/docs` when the service runs). After changing a route or a model, regenerate it with `python3 tools/export_openapi.py`; a test fails when the file is stale. Unknown top-level fields in a `/sequences` body are rejected with `validation_error` instead of being ignored.

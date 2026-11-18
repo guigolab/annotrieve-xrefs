@@ -59,10 +59,24 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Annotrieve xrefs",
         description=(
-            "Search Annotrieve annotation files by gene symbol, gene id, "
-            "or other accession, and see the matching genes."
+            "From gene names to annotations, gene coordinates and sequences.\n\n"
+            "- **search**: `/names` (prefix discovery), `/hits` (which annotations contain "
+            "these exact gene names).\n"
+            "- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv, bed "
+            "or ndjson).\n"
+            "- **sequences**: `/sequences` (CDS, transcript or protein FASTA for a query or a "
+            "list of `locus_ref`s), with `/sequences/estimate`, `/sequences/plan`, jobs and "
+            "cached results.\n"
+            "- **annotations**: per-annotation genes and cross-references (legacy shard-backed)."
         ),
-        version="1.0.0",
+        openapi_tags=[
+            {"name": "system", "description": "Liveness."},
+            {"name": "search", "description": "Gene-name discovery and annotation presence."},
+            {"name": "loci", "description": "Gene coordinates."},
+            {"name": "sequences", "description": "FASTA export, previews, jobs and results."},
+            {"name": "annotations", "description": "Per-annotation genes and xrefs (legacy)."},
+        ],
+        version="1.1.0",
         lifespan=lifespan,
     )
 
@@ -88,6 +102,13 @@ def create_app() -> FastAPI:
             "Cache-Control",
             "Content-Disposition",
             "X-Sequence-Count",
+            "X-Skipped-Count",
+            "X-Gene-Count",
+            "X-Result-Id",
+            "X-Data-Version",
+            "X-Manifest-Url",
+            "Location",
+            "Retry-After",
         ],
         max_age=86400,
     )

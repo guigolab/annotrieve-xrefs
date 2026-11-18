@@ -135,3 +135,46 @@ def test_missing_loci_file_is_503(loci_client) -> None:
     client, work = loci_client
     (work / "serve" / "current" / "loci.sqlite").unlink()
     assert client.get("/loci", params={"names": "tp53"}).status_code == 503
+
+
+BAD_LOCI_PARAMS = [
+    {"names": "tp53", "include_taxids": "abc"},
+    {"names": "tp53", "exclude_taxids": "1,,x"},
+    {"names": "tp53", "alias": "bogus"},
+    {"names": "tp53", "flank_bp": -5},
+    {"names": "tp53", "flank_bp": 10**12},
+    {"names": "tp53", "format": "xml"},
+    {"names": "tp53", "limit": -1},
+    {"names": "tp53", "limit": 0},
+    {"names": "tp53", "cursor": "not-a-cursor"},
+    {"names": "tp53", "cursor": "%%%"},
+    {"names": "tp5*"},
+    {"names": ""},
+    {"names": ",,,"},
+    {"names": "tp53", "annotation_ids": ""},
+    {"names": "x" * 5000},
+]
+
+
+@pytest.mark.parametrize("params", BAD_LOCI_PARAMS)
+def test_bad_loci_parameters_never_cause_a_server_error(loci_client, params) -> None:
+    client, _ = loci_client
+    r = client.get("/loci", params=params)
+    assert r.status_code < 500, (params, r.status_code, r.text[:300])
+
+
+@pytest.mark.parametrize("params", [
+    {"prefix": "tp"}, {"prefix": "tp5*"}, {"prefix": "tp5", "include_taxids": "x"},
+    {"prefix": "tp5", "alias": "zzz"}, {"prefix": "%"}, {"prefix": "_" * 3}])
+def test_bad_names_parameters_never_cause_a_server_error(loci_client, params) -> None:
+    client, _ = loci_client
+    assert client.get("/names", params=params).status_code < 500
+
+
+@pytest.mark.parametrize("params", [
+    {"names": "tp53", "include_taxids": "x"}, {"names": "tp53", "alias": "zzz"},
+    {"names": ",,"}, {"names": "tp5*"}, {"names": "a," * 5000}])
+def test_bad_hits_parameters_never_cause_a_server_error(loci_client, params) -> None:
+    client, _ = loci_client
+    assert client.get("/hits", params=params).status_code < 500
+    assert client.post("/hits", json={"names": params["names"].split(",")}).status_code < 500

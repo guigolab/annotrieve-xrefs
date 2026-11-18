@@ -333,3 +333,89 @@ def test_request_order_is_kept_when_genes_are_resolved_by_annotation(seq_client)
     r = client.post("/sequences", json={"action": "cds", "loci": refs})
     got = [h.split("|")[3] for h in headers(r.text)]
     assert got == [ref.split(":")[0] for ref in refs]
+
+
+FUZZ_BODIES = [
+    {"action": "cds", "query": {"names": ["tp53"], "include_taxids": ["abc"]}},
+    {"action": "cds", "query": {"names": ["tp53"], "include_taxids": 9606}},
+    {"action": "cds", "query": {"names": ["tp53"], "exclude_taxids": [None]}},
+    {"action": "cds", "query": {"names": ["tp53"], "annotation_ids": 5}},
+    {"action": "cds", "query": {"names": [1, None, {}]}},
+    {"action": "cds", "query": {"names": ["tp53"], "alias": "bogus"}},
+    {"action": "cds", "query": {"names": ["tp53"], "alias": 7}},
+    {"action": "cds", "query": {"names": ["tp53"], "case_sensitive": "false"}},
+    {"action": "cds", "query": {"names": "tp53,"}},
+    {"action": "cds", "query": {"names": []}},
+    {"action": "cds", "query": "tp53"},
+    {"action": "cds", "query": {"names": ["tp53"]}, "max_genes": 0},
+    {"action": "cds", "query": {"names": ["tp53"]}, "max_genes": -3},
+    {"action": "cds", "query": {"names": ["tp53"]}, "buffer_bp": -1},
+    {"action": "transcript", "query": {"names": ["tp53"]}, "buffer_bp": 10**9},
+    {"action": "cds", "query": {"names": ["tp53"]}, "transcript": 5},
+    {"action": "cds", "query": {"names": ["tp53"]}, "transcript": {"keep": 0}},
+    {"action": "cds", "query": {"names": ["tp53"]}, "transcript": {"keep": "x"}},
+    {"action": "cds", "query": {"names": ["tp53"]}, "transcript": {"rank_by": "cds_len:desc"}},
+    {"action": "cds", "query": {"names": ["tp53"]}, "transcript": {"rank_by": [3]}},
+    {"action": "cds", "query": {"names": ["tp53"]}, "transcript": {"require": "coding"}},
+    {"action": "cds", "query": {"names": ["tp53"]}, "transcript": {"nonsense": 1}},
+    {"action": "cds", "loci": [5]},
+    {"action": "cds", "loci": [[]]},
+    {"action": "cds", "loci": [{"locus_ref": 7}]},
+    {"action": "cds", "loci": [{"locus_ref": "a:1", "transcript_id": {"x": 1}}]},
+    {"action": "cds", "loci": "ann0:1"},
+    {"action": "cds", "items": [{"annotation_id": "a", "local_id": "x"}]},
+    {"action": "cds", "items": [{"annotation_id": "a"}]},
+    {"action": "cds", "loci": ["a:1"], "typo_field": True},
+    {"action": ["cds"], "loci": ["a:1"]},
+    {"action": "cds", "loci": ["a:99999999999999999999"]},
+    [],
+    "text",
+]
+
+
+@pytest.mark.parametrize("body", FUZZ_BODIES)
+@pytest.mark.parametrize("path", ["/sequences", "/sequences/estimate", "/sequences/plan"])
+def test_malformed_bodies_never_cause_a_server_error(seq_client, path, body):
+    client, _ = seq_client
+    r = client.post(path, json=body)
+    assert r.status_code < 500, (path, body, r.status_code, r.text[:300])
+    if r.status_code >= 400:
+        assert "code" in r.json()["detail"], r.text[:300]
+
+
+def test_cors_exposes_the_headers_a_browser_client_needs(seq_client):
+    client, _ = seq_client
+    r = client.options("/sequences", headers={"Origin": "https://x.org",
+                                              "Access-Control-Request-Method": "POST"})
+    assert r.status_code == 200
+    r = client.post("/sequences", json=TP53, headers={"Origin": "https://x.org"})
+    exposed = {h.strip().lower() for h in r.headers["access-control-expose-headers"].split(",")}
+    assert {"x-result-id", "x-skipped-count", "x-gene-count", "x-manifest-url", "x-data-version",
+            "x-sequence-count", "location", "retry-after"} <= exposed
+
+
+def test_a_crashing_sync_export_does_not_leave_a_phantom_running_job(seq_client, monkeypatch):
+    from routers import sequences as router_mod
+    client, _ = seq_client
+
+    def boom(*a, **k):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(router_mod, "run_export", boom)
+    with pytest.raises(RuntimeError):
+        client.post("/sequences", json=TP53)
+    monkeypatch.undo()
+    r = client.post("/sequences", json=TP53)
+    assert r.status_code == 200 and r.headers["X-Sequence-Count"] == "5"
+
+
+def test_a_result_purged_while_listed_is_404_not_500(seq_client):
+    import shutil
+    client, _ = seq_client
+    r = client.post("/sequences", json=TP53)
+    rid = r.headers["X-Result-Id"]
+    from services.seq_results import result_dir
+    (result_dir(rid) / "result.fa").unlink()
+    assert client.get(f"/sequences/results/{rid}").status_code == 404
+    assert client.get(f"/sequences/results/{rid}/manifest.tsv").status_code in (200, 404)
+    shutil.rmtree(result_dir(rid), ignore_errors=True)
