@@ -262,6 +262,39 @@ def test_seqid_empty_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     assert exc.value.code == "seqid_not_resolved"
 
 
+def test_chromosomes_json_left_in_the_annotation_taxid_folder(tmp_path: Path):
+    """GFF under the parent taxon folder, chromosomes.json still under the annotation's taxid."""
+    root = tmp_path / "annotations"
+    gff = _write_gff_pair(root / "2219007" / "GCA_949709995.1" / "Ensembl_abc.gff.gz")
+    old = root / "3440260" / "GCA_949709995.1"
+    old.mkdir(parents=True)
+    (old / "chromosomes.json").write_text(json.dumps([
+        {"chr_name": "1", "sequence_name": "1", "ucsc_style_name": "chr1",
+         "genbank_accession": "OX440001.1", "refseq_accession": "",
+         "canonical_id": "OX440001.1"}]), encoding="utf-8")
+    import settings as settings_mod
+
+    settings_mod.settings.ANNOTATIONS_DIR = str(root)
+    settings_mod.settings.ANNOTATIONS_GFF_PATH_PREFIX = ""
+    files = resolve_annotation_files(taxid=3440260, assembly_accession="GCA_949709995.1",
+                                     gff_path=str(gff), source_database="Ensembl")
+    assert files.extra_dirs == (old,)
+    assert resolve_seqid_accession(files, "1") == "OX440001.1"
+
+
+def test_unmapped_bare_number_seqid_is_not_passed_to_ncbi(tmp_path: Path):
+    root = tmp_path / "annotations"
+    gff = _write_gff_pair(root / "9606" / "GCA_3" / "x.gff.gz")
+    import settings as settings_mod
+
+    settings_mod.settings.ANNOTATIONS_DIR = str(root)
+    files = resolve_annotation_files(taxid=9606, assembly_accession="GCA_3", gff_path=str(gff),
+                                     source_database="Ensembl")
+    with pytest.raises(AnnotationFilesError) as exc:
+        resolve_seqid_accession(files, "17")
+    assert exc.value.code == "seqid_not_resolved"
+
+
 def test_seqid_via_alias_refname_passthrough(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

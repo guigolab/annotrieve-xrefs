@@ -33,6 +33,9 @@ class AnnotationFiles:
     assembly_accession: str
     assembly_dir: Path
     source_database: str
+    # Other folders that may hold chromosomes.json / chr_aliases.tsv: Annotrieve leaves them in the
+    # annotation's own taxid folder when the GFF sits under a parent taxon folder.
+    extra_dirs: tuple[Path, ...] = ()
 
 
 class AnnotationFilesError(Exception):
@@ -179,6 +182,8 @@ def resolve_annotation_files(
                 assembly_accession=assembly_accession,
                 gff_path=str(resolved),
             )
+    own = root / str(int(taxid)) / str(assembly_accession)
+    extra = (own,) if own != resolved.parent and own.is_dir() else ()
     return AnnotationFiles(
         gff_path=resolved,
         csi_path=csi,
@@ -186,6 +191,7 @@ def resolve_annotation_files(
         assembly_accession=str(assembly_accession),
         assembly_dir=resolved.parent,
         source_database=source_database or "",
+        extra_dirs=extra,
     )
 
 
@@ -209,22 +215,21 @@ def _sibling_assembly_dirs(taxid_dir: Path, assembly_accession: str) -> list[Pat
     return sorted(out)
 
 
-def _chromosomes_candidates(files: AnnotationFiles) -> list[Path]:
-    primary = files.assembly_dir / CHROMOSOMES_FILENAME
-    cands = [primary]
-    taxid_dir = files.assembly_dir.parent
-    for sibling in _sibling_assembly_dirs(taxid_dir, files.assembly_accession):
-        cands.append(sibling / CHROMOSOMES_FILENAME)
+def _candidates(files: AnnotationFiles, filename: str) -> list[Path]:
+    cands: list[Path] = []
+    for ass_dir in (files.assembly_dir, *files.extra_dirs):
+        cands.append(ass_dir / filename)
+        for sibling in _sibling_assembly_dirs(ass_dir.parent, files.assembly_accession):
+            cands.append(sibling / filename)
     return cands
+
+
+def _chromosomes_candidates(files: AnnotationFiles) -> list[Path]:
+    return _candidates(files, CHROMOSOMES_FILENAME)
 
 
 def _aliases_candidates(files: AnnotationFiles) -> list[Path]:
-    primary = files.assembly_dir / CHR_ALIASES_FILENAME
-    cands = [primary]
-    taxid_dir = files.assembly_dir.parent
-    for sibling in _sibling_assembly_dirs(taxid_dir, files.assembly_accession):
-        cands.append(sibling / CHR_ALIASES_FILENAME)
-    return cands
+    return _candidates(files, CHR_ALIASES_FILENAME)
 
 
 @lru_cache(maxsize=256)
@@ -301,6 +306,7 @@ def _resolve_seqid_accession_cached(
     assembly_dir: str,
     source_database: str,
     seqid: str,
+    extra_dirs: tuple[str, ...] = (),
 ) -> str:
     """
     Cached resolver core.
@@ -317,6 +323,7 @@ def _resolve_seqid_accession_cached(
         assembly_accession=ass_dir.name,
         assembly_dir=ass_dir,
         source_database=source_database,
+        extra_dirs=tuple(Path(d) for d in extra_dirs),
     )
     prefer_refseq = _prefer_refseq(source_database)
 
@@ -388,11 +395,24 @@ def resolve_seqid_accession(
         )
 
     try:
-        return _resolve_seqid_accession_cached(
+        accession = _resolve_seqid_accession_cached(
             str(files.assembly_dir.resolve()),
             files.source_database or "",
             raw,
+            tuple(str(d.resolve()) for d in files.extra_dirs),
         )
+        if accession == raw and raw.isdigit():
+            # Unmapped bare number (Ensembl "1", "17"): NCBI would read it as a GI record id and
+            # could return an unrelated sequence, so it must not be passed through.
+            raise AnnotationFilesError(
+                "seqid_not_resolved",
+                f"seqid {raw!r} is a bare number with no chromosome mapping for this assembly "
+                "(NCBI would treat it as a GI id)",
+                seqid=raw,
+                assembly_accession=files.assembly_accession,
+                taxid=files.taxid,
+            )
+        return accession
     except _MappedWithoutAccession:
         raise AnnotationFilesError(
             "seqid_not_resolved",
