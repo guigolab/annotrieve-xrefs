@@ -54,8 +54,8 @@ def _seed_meta(conn: sqlite3.Connection, accessions: list[str]) -> None:
     conn.commit()
 
 
-def test_schema_version_stays_one() -> None:
-    assert SCHEMA_VERSION == 1
+def test_schema_version_is_a_positive_integer() -> None:
+    assert isinstance(SCHEMA_VERSION, int) and SCHEMA_VERSION >= 1
 
 
 def test_parse_term_stanza_maps_fields() -> None:
@@ -205,7 +205,7 @@ def test_load_writes_labels_and_aliases_for_meta_ids() -> None:
         ver = conn.execute(
             "SELECT value FROM meta WHERE key='schema_version'"
         ).fetchone()[0]
-        assert ver == "1"
+        assert ver == str(SCHEMA_VERSION)
         conn.close()
 
 

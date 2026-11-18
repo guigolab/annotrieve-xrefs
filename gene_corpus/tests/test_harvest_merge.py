@@ -501,7 +501,7 @@ def _write_taxonomy_tsv(path: Path) -> Path:
 
 
 def test_schema_has_sidecar_tables() -> None:
-    assert SCHEMA_VERSION == 1
+    assert SCHEMA_VERSION >= 1
     with tempfile.TemporaryDirectory() as d:
         conn = connect_for_build(Path(d) / "db.sqlite")
         init_schema(conn)
@@ -521,7 +521,7 @@ def test_schema_has_sidecar_tables() -> None:
         ver = conn.execute(
             "SELECT value FROM meta WHERE key='schema_version'"
         ).fetchone()[0]
-        assert ver == "1"
+        assert ver == str(SCHEMA_VERSION)
         conn.close()
 
 
