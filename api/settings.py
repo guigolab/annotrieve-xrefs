@@ -33,6 +33,9 @@ class Settings:
     # export row cap, per-request page cache and concurrent streams per worker.
     ANNOTRIEVE_API_BASE: str = os.getenv(
         "ANNOTRIEVE_API_BASE", "https://genome.crg.es/annotrieve/api/v0")
+    # Public base of Annotrieve's file server (whole bgzipped GFFs): {base}/{taxid}/{assembly}/{file}.
+    ANNOTRIEVE_FILES_BASE: str = os.getenv(
+        "ANNOTRIEVE_FILES_BASE", "https://genome.crg.es/annotrieve/files")
     LOCI_MAX_ROWS: int = _env_int("LOCI_MAX_ROWS", 2_000_000)
     LOCI_CACHE_KIB: int = _env_int("LOCI_CACHE_KIB", 16384)
     LOCI_MAX_INFLIGHT: int = _env_int("LOCI_MAX_INFLIGHT", 4)

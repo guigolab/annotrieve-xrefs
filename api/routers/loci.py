@@ -1,14 +1,15 @@
 """Gene coordinates (``/loci``): where the matching genes are."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from helpers.concurrency import BusyError, acquire_loci_slot, release_loci_slot
 from helpers.cursor import QueryError
 from helpers.errors import error_detail, http_error
 from helpers.pagination import MAX_NAMES_GET, MAX_NAMES_POST, clamp_limit
+from helpers.strict import reject_unknown_params
 from helpers.presence import (
     annotation_info,
     open_request_connections,
@@ -29,10 +30,14 @@ router = APIRouter()
 
 FORMATS = ("json", "tsv", "bed", "ndjson")
 HARD_ROW_CEILING = 20_000_000
+_GET_PARAMS = ("names", "include_taxids", "exclude_taxids", "alias", "annotation_ids",
+               "case_sensitive", "flank_bp", "format", "dry_run", "limit", "cursor")
 _MEDIA = {"tsv": "text/tab-separated-values", "bed": "text/plain", "ndjson": "application/x-ndjson"}
 
 
 class LociBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     names: list[str]
     include_taxids: list[int] | None = None
     exclude_taxids: list[int] | None = None
@@ -136,6 +141,7 @@ def _wrap(**kwargs):
 
 @router.get("/loci")
 def get_loci(
+    request: Request,
     names: str = Query(..., description="Comma-separated exact gene names (no wildcard)"),
     include_taxids: str | None = Query(None, description="Comma-separated NCBI taxids (lineage OR)"),
     exclude_taxids: str | None = Query(None, description="Comma-separated NCBI taxids to exclude"),
@@ -149,6 +155,7 @@ def get_loci(
     cursor: str | None = Query(None, description="JSON pagination cursor"),
 ):
     """Gene coordinates for the matching genes, one row per gene, deterministic order."""
+    reject_unknown_params(request, _GET_PARAMS)
     return _wrap(names=names, include_taxids=include_taxids, exclude_taxids=exclude_taxids,
                  alias=alias, annotation_ids=annotation_ids, case_sensitive=case_sensitive,
                  flank_bp=flank_bp, fmt=format, dry_run=dry_run, limit=limit, cursor=cursor,

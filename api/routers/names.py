@@ -1,9 +1,10 @@
 """Gene-name prefix discovery (``/names``)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from helpers.cursor import QueryError
+from helpers.strict import reject_unknown_params
 from helpers.deps import corpus_conn
 from helpers.presence import presence_enabled, presence_reader
 from services.names import list_names_by_prefix
@@ -28,8 +29,12 @@ def _http_for_query_error(exc: QueryError) -> HTTPException:
     return HTTPException(status_code=status, detail=exc.as_detail())
 
 
+_GET_PARAMS = ("prefix", "include_taxids", "exclude_taxids", "alias")
+
+
 @router.get("/names")
 def get_names(
+    request: Request,
     prefix: str = Query(
         ...,
         description=(
@@ -60,6 +65,7 @@ def get_names(
     Returns categorized accessions with taxon-scoped annotation counts.
     Use ``GET|POST /hits`` with the selected exact names to find annotations.
     """
+    reject_unknown_params(request, _GET_PARAMS)
     try:
         if presence_enabled():
             return list_names_by_prefix_presence(

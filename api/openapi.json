@@ -15,6 +15,7 @@
         "type": "object"
       },
       "HitsSearchBody": {
+        "additionalProperties": false,
         "description": "JSON body for ``POST /hits``.\n\nCap is enforced in ``parse_name_list`` (casefold-deduped) so GET and POST\nshare ``too_many_names`` \u2014 do not use list ``max_length`` here.",
         "properties": {
           "alias": {
@@ -42,6 +43,18 @@
             ],
             "title": "Exclude Taxids"
           },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "json (default) | tsv (implies records)",
+            "title": "Format"
+          },
           "include_taxids": {
             "anyOf": [
               {
@@ -56,12 +69,54 @@
             ],
             "title": "Include Taxids"
           },
+          "min_matched": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "keep annotations that match at least this many terms (symbol hits)",
+            "title": "Min Matched"
+          },
           "names": {
             "items": {
               "type": "string"
             },
             "title": "Names",
             "type": "array"
+          },
+          "shape": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "compact (default) | records",
+            "title": "Shape"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ensembl, GenBank and/or RefSeq; omit for all",
+            "title": "Sources"
           }
         },
         "required": [
@@ -71,6 +126,7 @@
         "type": "object"
       },
       "LociBody": {
+        "additionalProperties": false,
         "properties": {
           "alias": {
             "anyOf": [
@@ -1107,7 +1163,7 @@
     },
     "/hits": {
       "get": {
-        "description": "Presence search by exact gene symbol/synonym names.\n\nCompact envelope: ``terms``, ``fields``/``rows`` with ``matched``\n(term indices), ``release_date``, and ``assembly_name``.",
+        "description": "Presence search by exact gene symbol/synonym names.\n\n``shape=compact``: ``terms``, ``fields``/``rows`` with ``matched`` (term indices).\n``shape=records``: one object per annotation with ``n_matched``, ``n_terms``, ``missing`` and\n``download_url``. Both carry ``facets`` (annotation counts per source, before the ``sources``\nfilter is applied).",
         "operationId": "get_hits_hits_get",
         "parameters": [
           {
@@ -1166,6 +1222,67 @@
               "default": "suggest",
               "description": "off | suggest | include. suggest (default) counts symbol hits as matches and lists alias-only annotations as `alias_only`; include restores the union. Only applies when the presence index is enabled (PRESENCE_DIR).",
               "title": "Alias",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated Ensembl, GenBank, RefSeq; omit for all",
+            "in": "query",
+            "name": "sources",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated Ensembl, GenBank, RefSeq; omit for all",
+              "title": "Sources"
+            }
+          },
+          {
+            "description": "Keep annotations that match at least this many terms",
+            "in": "query",
+            "name": "min_matched",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Keep annotations that match at least this many terms",
+              "title": "Min Matched"
+            }
+          },
+          {
+            "description": "compact (positional fields/rows) | records (one object per annotation)",
+            "in": "query",
+            "name": "shape",
+            "required": false,
+            "schema": {
+              "default": "compact",
+              "description": "compact (positional fields/rows) | records (one object per annotation)",
+              "title": "Shape",
+              "type": "string"
+            }
+          },
+          {
+            "description": "json | tsv (a table with # provenance lines; implies records)",
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "json",
+              "description": "json | tsv (a table with # provenance lines; implies records)",
+              "title": "Format",
               "type": "string"
             }
           }

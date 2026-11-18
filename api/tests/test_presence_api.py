@@ -29,9 +29,12 @@ def build_presence(path: Path) -> None:
     conn.executemany(
         "INSERT INTO annotation (ord, annotation_id, taxid, organism_name, assembly_accession, "
         "assembly_name, source, release_date, gff_path) VALUES (?,?,?,?,?,?,?,?,?)",
-        [(1, "ann-human", 9606, "Homo sapiens", "GCF_1", "GRCh38", 3, "2024-01-02", None),
-         (2, "ann-mouse", 10090, "Mus musculus", "GCF_2", "GRCm39", 3, "2024-02-02", None),
-         (3, "ann-fish", 7955, "Danio rerio", "GCF_3", "GRCz11", 1, "2023-03-03", None)])
+        [(1, "ann-human", 9606, "Homo sapiens", "GCF_1", "GRCh38", 3, "2024-01-02",
+          "/data/annotrieve/files/9606/GCF_1/RefSeq_a.gff.gz"),
+         (2, "ann-mouse", 10090, "Mus musculus", "GCF_2", "GRCm39", 3, "2024-02-02",
+          "/data/annotrieve/files/10090/GCF_2/RefSeq_b.gff.gz"),
+         (3, "ann-fish", 7955, "Danio rerio", "GCF_3", "GRCz11", 1, "2023-03-03",
+          "/data/annotrieve/files/7955/GCF_3/Ensembl_c.gff.gz")])
     conn.executemany("INSERT INTO lineage VALUES (?,?)",
                      [(9606, 1), (40674, 1), (10090, 2), (40674, 2), (7955, 3)])
     for i, (name, (sym, alias)) in enumerate(sorted(NAMES.items()), 1):
@@ -153,3 +156,75 @@ def test_presence_missing_is_503(presence_client) -> None:
 def test_api_decoder_matches_the_builders_codec(ords, max_ord) -> None:
     blob = encode_postings(ords, max_ord)
     assert list(iter_bits(to_bitset(blob))) == decode_postings(blob) == ords
+
+
+def test_sources_filter_and_facets(presence_client) -> None:
+    client, _ = presence_client
+    plain = client.get("/hits", params={"names": "tp53"}).json()
+    assert plain["facets"] == {"source": {"Ensembl": 1, "GenBank": 0, "RefSeq": 2}}
+    refseq = client.get("/hits", params={"names": "tp53", "sources": "refseq"}).json()
+    assert {r[0] for r in refseq["rows"]} == {"ann-human", "ann-mouse"}
+    assert refseq["source_filter"] == ["RefSeq"]
+    assert refseq["facets"] == plain["facets"]              # counts are taken before the filter
+    ensembl = client.get("/hits", params={"names": "tp53", "sources": "Ensembl,RefSeq"}).json()
+    assert len(ensembl["rows"]) == 3
+    bad = client.get("/hits", params={"names": "tp53", "sources": "ncbi"})
+    assert bad.status_code == 422 and bad.json()["detail"]["code"] == "invalid_source"
+
+
+def test_min_matched(presence_client) -> None:
+    client, _ = presence_client
+    body = client.get("/hits", params={"names": "TP53,brca1", "min_matched": 2}).json()
+    assert [r[0] for r in body["rows"]] == ["ann-human"] and body["min_matched"] == 2
+    one = client.get("/hits", params={"names": "TP53,brca1", "min_matched": 1}).json()
+    assert {r[0] for r in one["rows"]} == {"ann-human", "ann-mouse"}      # alias-only fish is dropped
+    too_big = client.get("/hits", params={"names": "TP53,brca1", "min_matched": 3})
+    assert too_big.status_code == 422 and too_big.json()["detail"]["code"] == "invalid_min_matched"
+    assert client.get("/hits", params={"names": "tp53", "min_matched": 0}).status_code == 422
+    post = client.post("/hits", json={"names": ["tp53", "brca1"], "min_matched": 2}).json()
+    assert [r[0] for r in post["rows"]] == ["ann-human"]
+
+
+def test_records_shape(presence_client) -> None:
+    client, _ = presence_client
+    body = client.get("/hits", params={"names": "TP53,brca1", "shape": "records"}).json()
+    assert "rows" not in body and body["total"] == 3
+    human, mouse, fish = body["results"]
+    assert human["annotation_id"] == "ann-human" and human["source"] == "RefSeq"
+    assert (human["n_matched"], human["n_terms"], human["missing"]) == (2, 2, [])
+    assert (mouse["n_matched"], mouse["matched"], mouse["missing"]) == (1, [0], [1])
+    assert fish["n_matched"] == 0 and fish["alias_only"] == [0] and fish["missing"] == [0, 1]
+    assert human["download_url"].endswith("/files/9606/GCF_1/RefSeq_a.gff.gz")
+    assert client.get("/hits", params={"names": "tp53", "shape": "wide"}).status_code == 422
+
+
+def test_tsv_format(presence_client) -> None:
+    client, _ = presence_client
+    r = client.get("/hits", params={"names": "TP53,brca1", "format": "tsv", "min_matched": 1})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/tab-separated-values")
+    assert r.headers["x-data-version"] == "abc123"
+    lines = r.text.splitlines()
+    assert lines[0].startswith("#format=tsv data_version=abc123")
+    assert "min_matched=1" in lines[1] and "names=TP53,brca1" in lines[1]
+    header = lines[2].split("\t")
+    assert header[:3] == ["annotation_id", "organism_name", "taxid"] and header[-1] == "download_url"
+    human = dict(zip(header, lines[3].split("\t")))
+    assert human["annotation_id"] == "ann-human" and human["matched_terms"] == "TP53,brca1"
+    mouse = dict(zip(header, lines[4].split("\t")))
+    assert mouse["missing_terms"] == "brca1" and mouse["n_matched"] == "1"
+    assert lines[-1] == "#end rows=2 complete=true"
+    assert client.get("/hits", params={"names": "tp53", "format": "xml"}).status_code == 422
+    post = client.post("/hits", json={"names": ["tp53"], "format": "tsv"})
+    assert post.status_code == 200 and post.text.splitlines()[-1].startswith("#end rows=3")
+
+
+def test_unknown_parameters_are_rejected_not_ignored(presence_client) -> None:
+    client, _ = presence_client
+    r = client.get("/hits", params={"names": "tp53", "frmat": "tsv"})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["code"] == "unknown_parameter" and detail["unknown"] == ["frmat"]
+    assert "min_matched" in detail["allowed"]
+    assert client.get("/names", params={"prefix": "seleno", "format": "tsv"}).status_code == 422
+    assert client.get("/loci", params={"names": "tp53", "limti": 1}).status_code == 422
+    assert client.post("/hits", json={"names": ["tp53"], "min_matchd": 2}).status_code == 422
