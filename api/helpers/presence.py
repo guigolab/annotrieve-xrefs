@@ -23,6 +23,7 @@ class _Reader:
     conn: sqlite3.Connection
     all_mask: int
     data_version: str
+    ann_info: dict | None = None
 
 
 def presence_enabled() -> bool:
@@ -140,3 +141,15 @@ def open_request_connections() -> tuple[sqlite3.Connection, sqlite3.Connection, 
         loci.close()
         raise
     return pres, loci, reader.data_version
+
+
+def annotation_info(reader: "_Reader") -> dict[int, tuple]:
+    """ord -> (annotation_id, organism_name, assembly_accession, source); loaded once per reader."""
+    if reader.ann_info is None:
+        reader.ann_info = {
+            int(r["ord"]): (r["annotation_id"], r["organism_name"], r["assembly_accession"],
+                            int(r["source"]))
+            for r in reader.conn.execute(
+                "SELECT ord, annotation_id, organism_name, assembly_accession, source FROM annotation")
+        }
+    return reader.ann_info

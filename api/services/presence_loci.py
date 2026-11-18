@@ -11,6 +11,8 @@ import hashlib
 import heapq
 import json
 import sqlite3
+import threading
+from collections import OrderedDict
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from itertools import groupby
@@ -181,9 +183,35 @@ def _term_rows(loci: sqlite3.Connection, term_i: int, name_id: int, min_ord: int
         yield (r["ord"], r["local_id"], term_i, r)
 
 
+_SEQID_CACHE: "OrderedDict[tuple[str, int], dict[int, str]]" = OrderedDict()
+_SEQID_LOCK = threading.Lock()
+SEQID_CACHE_ENTRIES = 4096
+
+
+def _seqids(loci: sqlite3.Connection, data_version: str, ord_: int) -> dict[int, str]:
+    """seqid_id -> seqid for one annotation, through a small process-wide LRU cache."""
+    key = (data_version, ord_)
+    with _SEQID_LOCK:
+        hit = _SEQID_CACHE.get(key)
+        if hit is not None:
+            _SEQID_CACHE.move_to_end(key)
+            return hit
+    value = dict(loci.execute("SELECT seqid_id, seqid FROM seqid WHERE ord=?", (ord_,)))
+    with _SEQID_LOCK:
+        _SEQID_CACHE[key] = value
+        while len(_SEQID_CACHE) > SEQID_CACHE_ENTRIES:
+            _SEQID_CACHE.popitem(last=False)
+    return value
+
+
 def iter_loci(pres: sqlite3.Connection, loci: sqlite3.Connection, q: LociQuery,
-              after: tuple[int, int] | None = None) -> Iterator[dict]:
-    """Yield locus dicts in deterministic order; ``after`` = (ord, rows already sent in it)."""
+              after: tuple[int, int] | None = None,
+              ann_info: dict[int, tuple] | None = None) -> Iterator[dict]:
+    """Yield locus dicts in deterministic order; ``after`` = (ord, rows already sent in it).
+
+    ``ann_info`` (ord -> annotation_id, organism_name, assembly_accession, source) avoids one
+    query per annotation; without it the presence connection is queried.
+    """
     min_ord, skip = (after or (0, 0))
     ft = dict(loci.execute("SELECT id, name FROM dict_feature_type"))
     bt = dict(loci.execute("SELECT id, name FROM dict_biotype"))
@@ -199,10 +227,15 @@ def iter_loci(pres: sqlite3.Connection, loci: sqlite3.Connection, q: LociQuery,
             g["terms"].append(term_i)
             if r["via"] == 0:
                 g["via"] = 0
-        info = pres.execute(
-            "SELECT annotation_id, organism_name, assembly_accession, assembly_name, source "
-            "FROM annotation WHERE ord=?", (ord_,)).fetchone()
-        seqids = dict(loci.execute("SELECT seqid_id, seqid FROM seqid WHERE ord=?", (ord_,)))
+        if ann_info is not None:
+            info = ann_info[ord_]
+        else:
+            r0 = pres.execute("SELECT annotation_id, organism_name, assembly_accession, source "
+                              "FROM annotation WHERE ord=?", (ord_,)).fetchone()
+            info = (r0["annotation_id"], r0["organism_name"], r0["assembly_accession"],
+                    int(r0["source"]))
+        ann_id, organism, accession, source = info
+        seqids = _seqids(loci, q.data_version, ord_)
         out = []
         for local_id, g in genes.items():
             r = g["row"]
@@ -212,11 +245,11 @@ def iter_loci(pres: sqlite3.Connection, loci: sqlite3.Connection, q: LociQuery,
             symbol = pname if pname and pname.casefold() == first else first
             seqid = seqids.get(r["seqid_id"], "")
             out.append({
-                "annotation_id": info["annotation_id"], "ord": ord_,
-                "organism_name": info["organism_name"],
-                "assembly_accession": info["assembly_accession"],
-                "source": SOURCES_LEGEND.get(str(info["source"]), ""),
-                "locus_ref": f"{info['annotation_id']}:{local_id}", "local_id": local_id,
+                "annotation_id": ann_id, "ord": ord_,
+                "organism_name": organism,
+                "assembly_accession": accession,
+                "source": SOURCES_LEGEND.get(str(source), ""),
+                "locus_ref": f"{ann_id}:{local_id}", "local_id": local_id,
                 "gene_id": r["gene_id"], "symbol": symbol, "primary_name": pname,
                 "terms": terms, "matched_names": [q.terms[t]["name"] for t in terms],
                 "matched_via": "symbol" if g["via"] == 0 else "alias",
@@ -224,7 +257,7 @@ def iter_loci(pres: sqlite3.Connection, loci: sqlite3.Connection, q: LociQuery,
                 "strand": STRAND.get(r["strand"], "."),
                 "feature_type": ft.get(r["feature_type_id"]),
                 "biotype": bt.get(r["biotype_id"]),
-                "gff_url": gff_url(info["annotation_id"], seqid, r["start"], r["end"], q.flank_bp),
+                "gff_url": gff_url(ann_id, seqid, r["start"], r["end"], q.flank_bp),
             })
         out.sort(key=lambda d: (d["seqid"], d["start"], d["end"], d["local_id"]))
         start_at = skip if ord_ == min_ord else 0

@@ -9,7 +9,12 @@ from helpers.concurrency import BusyError, acquire_loci_slot, release_loci_slot
 from helpers.cursor import QueryError
 from helpers.errors import error_detail, http_error
 from helpers.pagination import MAX_NAMES_GET, MAX_NAMES_POST, clamp_limit
-from helpers.presence import open_request_connections, presence_enabled, presence_reader
+from helpers.presence import (
+    annotation_info,
+    open_request_connections,
+    presence_enabled,
+    presence_reader,
+)
 from services.loci_formats import stream_bed, stream_ndjson, stream_tsv
 from services.presence_loci import (
     build_query,
@@ -71,6 +76,7 @@ def _run(names, *, include_taxids, exclude_taxids, alias, annotation_ids, case_s
                         annotation_ids=annotation_ids, case_sensitive=case_sensitive,
                         flank_bp=flank_bp, max_names=max_names)
         est = estimate(pres, loci, q)
+        info = annotation_info(reader)
         terms = [{"index": i, "input": t["input"], "name": t["name"],
                   "found": q.name_ids[i] is not None} for i, t in enumerate(q.terms)]
         base = {"terms": terms, "alias": q.mode, "include_taxids": q.include,
@@ -82,7 +88,7 @@ def _run(names, *, include_taxids, exclude_taxids, alias, annotation_ids, case_s
             after = decode_cursor(q, cursor)
             rows = []
             cur_ord, cur_count = (after if after else (None, 0))
-            for row in iter_loci(pres, loci, q, after):
+            for row in iter_loci(pres, loci, q, after, info):
                 if row["ord"] != cur_ord:
                     cur_ord, cur_count = row["ord"], 0
                 if len(rows) >= page:
@@ -100,7 +106,7 @@ def _run(names, *, include_taxids, exclude_taxids, alias, annotation_ids, case_s
                              "or raise limit=", n_loci_upper_bound=est["n_loci_upper_bound"],
                              max=cap)
         writer = {"tsv": stream_tsv, "bed": stream_bed, "ndjson": stream_ndjson}[fmt]
-        rows_iter = iter_loci(pres, loci, q)
+        rows_iter = iter_loci(pres, loci, q, None, info)
 
         def body():
             try:
