@@ -113,8 +113,10 @@ def main(argv=None) -> int:
         before = int(rss().split("=")[1][:-3])
         res = resolver.resolve(g)
         if a.trace_mem:
+            f = resolver._files.get(g.ord)
+            csi_mb = round(f.csi_path.stat().st_size / 1048576, 1) if hasattr(f, "csi_path") else None
             jumps.append((int(rss().split("=")[1][:-3]) - before, g.locus_ref, g.seqid,
-                          g.end - g.start + 1, res.n_candidates))
+                          g.end - g.start + 1, res.n_candidates, f"csi={csi_mb}MiB"))
         reasons[res.reason or "ok"] += 1
         n_cands[min(res.n_candidates, 10)] += 1
         if res.candidates:
@@ -151,7 +153,7 @@ def main(argv=None) -> int:
             print(f"  after malloc_trim(0): {rss()}")
         except OSError:
             print("  malloc_trim not available")
-        print("  biggest growth per gene (MiB, locus_ref, seqid, gene length, candidates):")
+        print("  biggest growth per gene (MiB, locus_ref, seqid, gene length, candidates, csi size):")
         for row in sorted(jumps, reverse=True)[:8]:
             print("   ", row)
         import functools

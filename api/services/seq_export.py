@@ -201,13 +201,18 @@ def run_export(req: SeqRequest, items: Iterable[Item], *, out_dir: Path,
                 if time.monotonic() > deadline:
                     raise SeqError("sequences_timeout", "sequences request exceeded its deadline",
                                    status=504)
-                resolved: list[tuple[str, Gene | None, Resolved | None, str, str]] = []
-                for ref, gene, reason in batch:
+                # Resolve annotation by annotation (one open GFF index at a time), then put the
+                # results back in request order.
+                slots: list = [None] * len(batch)
+                for i in sorted(range(len(batch)),
+                                key=lambda k: (-1 if batch[k][1] is None else batch[k][1].ord, k)):
+                    ref, gene, reason = batch[i]
                     if gene is None:
-                        resolved.append((ref, None, None, reason, reason.replace("_", " ")))
+                        slots[i] = (ref, None, None, reason, reason.replace("_", " "))
                         continue
                     res = resolver.resolve(gene)
-                    resolved.append((ref, gene, res, res.reason, res.message))
+                    slots[i] = (ref, gene, res, res.reason, res.message)
+                resolved: list[tuple[str, Gene | None, Resolved | None, str, str]] = slots
 
                 ok = [r for _, _, r, reason, _ in resolved if r is not None and not reason]
                 parent, fetched = ({}, {})

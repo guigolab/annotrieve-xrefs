@@ -310,3 +310,26 @@ def test_tabix_cache_keeps_at_most_two_files_open_and_releases_them(tmp_path):
     assert exc.value.code == "seqid_not_resolved"
     cache.close()
     assert len(cache) == 0
+
+
+def test_oversized_gff_index_is_skipped_with_a_reason(seq_client):
+    import settings as settings_mod
+    client, _ = seq_client
+    settings_mod.settings.SEQUENCES_MAX_INDEX_MB = 1e-9
+    try:
+        r = client.post("/sequences", json=TP53)
+        assert r.status_code == 200 and r.headers["X-Sequence-Count"] == "0"
+        assert r.headers["X-Skipped-Count"] == "5"
+        man = client.get(f"/sequences/results/{r.headers['X-Result-Id']}/manifest.tsv").text
+        assert {ln.split("\t")[7] for ln in man.strip().splitlines()[1:]} == {"index_too_large"}
+    finally:
+        settings_mod.settings.SEQUENCES_MAX_INDEX_MB = 0.0
+
+
+def test_request_order_is_kept_when_genes_are_resolved_by_annotation(seq_client):
+    client, _ = seq_client
+    plan = client.post("/sequences/plan", json=TP53).json()
+    refs = [g["locus_ref"] for g in plan["genes"]][::-1]           # reverse: annotation order differs
+    r = client.post("/sequences", json={"action": "cds", "loci": refs})
+    got = [h.split("|")[3] for h in headers(r.text)]
+    assert got == [ref.split(":")[0] for ref in refs]

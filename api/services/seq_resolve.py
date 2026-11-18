@@ -70,7 +70,7 @@ class GeneResolver:
         self.action = action
         self.rule = rule
         self.buffer_bp = buffer_bp
-        self.tabix = TabixCache(max_handles=2)
+        self.tabix = TabixCache(max_handles=1)
         self._files: dict[int, AnnotationFiles | AnnotationFilesError] = {}
         self._accessions: dict[tuple[int, str], str | AnnotationFilesError] = {}
 
@@ -114,6 +114,16 @@ class GeneResolver:
             if exc.code == "annotations_unavailable":
                 raise SeqError("annotations_unavailable", str(exc), status=503) from exc
             return res.fail("gff_unavailable", str(exc))
+
+        limit_mb = float(settings.SEQUENCES_MAX_INDEX_MB)
+        if limit_mb > 0:
+            try:
+                size_mb = files.csi_path.stat().st_size / 1048576
+            except OSError:
+                size_mb = 0.0
+            if size_mb > limit_mb:
+                return res.fail("index_too_large", f"the GFF index of this annotation is "
+                                f"{size_mb:.0f} MiB (limit {limit_mb:.0f} MiB)")
 
         try:
             region = (gene.start, gene.end)
