@@ -53,7 +53,7 @@ def find_files(root: Path) -> list[Path]:
     out: list[Path] = []
     for p in root.rglob("*"):
         n = p.name.casefold()
-        if ".gff" in n and not n.endswith((".csi", ".tbi", ".gzi", ".tsv", ".json", ".md5")):
+        if n.endswith((".gff", ".gff3", ".gff.gz", ".gff3.gz", ".gff.bgz", ".gff3.bgz")):
             out.append(p)
     return sorted(out)
 
