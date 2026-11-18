@@ -84,16 +84,15 @@ def test_pagination_cursor_walks_every_row_once(loci_client) -> None:
     assert client.get("/loci", params={"names": "brca1", "cursor": c1}).status_code == 422
 
 
-def test_tsv_bed_ndjson_streams_with_trailer(loci_client) -> None:
+def test_tsv_ndjson_streams_with_trailer(loci_client) -> None:
     client, _ = loci_client
     tsv = client.get("/loci", params={"names": "tp53", "format": "tsv", "alias": "off"})
     lines = tsv.text.splitlines()
     assert lines[0].startswith("#format=tsv data_version=") and lines[1].startswith("#query names=tp53")
     assert lines[2].split("\t")[0] == "annotation_id" and lines[-1] == "#end rows=5 complete=true"
     assert len([ln for ln in lines if not ln.startswith("#") and not ln.startswith("annotation_id")]) == 5
-    bed = client.get("/loci", params={"names": "tp53", "format": "bed", "alias": "off"}).text.splitlines()
-    first = next(ln for ln in bed if not ln.startswith("#")).split("\t")
-    assert first[:3] == ["chr1", "99", "150"] and first[3].startswith("tp53|") and first[5] == "+"
+    bad = client.get("/loci", params={"names": "tp53", "format": "bed"})
+    assert bad.status_code == 422
     nd = client.get("/loci", params={"names": "tp53", "format": "ndjson"}).text.splitlines()
     assert len(nd) == 8 and '"end"' in nd[-1] and '"complete": true' in nd[-1]
     cut = client.get("/loci", params={"names": "tp53", "format": "tsv", "limit": 2}).text.splitlines()

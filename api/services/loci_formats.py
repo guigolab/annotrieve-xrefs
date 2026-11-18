@@ -1,4 +1,4 @@
-"""Streaming writers for /loci: tsv, bed, ndjson (each ends with a completeness trailer)."""
+"""Streaming writers for /loci: tsv, ndjson (each ends with a completeness trailer)."""
 from __future__ import annotations
 
 import json
@@ -62,10 +62,6 @@ def stream_tsv(q: LociQuery, rows: Iterable[dict], limit: int) -> Iterator[str]:
     return _guard(_stream_tsv(q, rows, limit))
 
 
-def stream_bed(q: LociQuery, rows: Iterable[dict], limit: int) -> Iterator[str]:
-    return _guard(_stream_bed(q, rows, limit))
-
-
 def _stream_tsv(q: LociQuery, rows: Iterable[dict], limit: int) -> Iterator[str]:
     state = {"rows": 0, "truncated": False}
     yield "".join(line + "\n" for line in _provenance(q, "tsv"))
@@ -73,22 +69,6 @@ def _stream_tsv(q: LociQuery, rows: Iterable[dict], limit: int) -> Iterator[str]
     buf: list[str] = []
     for r in _limited(rows, limit, state):
         buf.append(_tsv_row(r))
-        if len(buf) >= _BATCH:
-            yield "".join(buf)
-            buf.clear()
-    if buf:
-        yield "".join(buf)
-    yield _trailer(state)
-
-
-def _stream_bed(q: LociQuery, rows: Iterable[dict], limit: int) -> Iterator[str]:
-    state = {"rows": 0, "truncated": False}
-    yield "".join(line + "\n" for line in _provenance(q, "bed"))
-    buf: list[str] = []
-    for r in _limited(rows, limit, state):
-        name = f"{r['symbol']}|{r['annotation_id']}"
-        buf.append("\t".join([_cell(r["seqid"]), str(max(0, r["start"] - 1)), str(r["end"]),
-                              _cell(name), "0", r["strand"]]) + "\n")
         if len(buf) >= _BATCH:
             yield "".join(buf)
             buf.clear()

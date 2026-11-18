@@ -62,7 +62,7 @@ def create_app() -> FastAPI:
             "From gene names to annotations, gene coordinates and sequences.\n\n"
             "- **search**: `/names` (prefix discovery), `/hits` (which annotations contain "
             "these exact gene names).\n"
-            "- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv, bed "
+            "- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv "
             "or ndjson).\n"
             "- **sequences**: `/sequences` (CDS, transcript or protein FASTA for a query or a "
             "list of `locus_ref`s), with `/sequence-estimates`, `/sequence-plans`, jobs and "

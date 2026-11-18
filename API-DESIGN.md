@@ -1,6 +1,6 @@
 # Annotrieve xrefs: API design (v1, symbol and alias only)
 
-Status: **implemented and live-tested** (2026-11): `/names`, `/hits`, `/loci` and `/sequences` (with `/sequence-estimates`, `/sequence-plans`, `/sequence-jobs`) all read the presence and loci indexes (`PRESENCE_DIR`; `loci.sqlite` built by `serve_build loci`, `loci_ref.sqlite` by `loci-ref`). Shared across them: `alias=off|suggest|include`, taxon scope, prefix terms (`seleno*`, with `exclude`, `categories`, `split`), strict parameters (unknown parameter -> `422 unknown_parameter`). `/hits` has `sources`, `min_matched`, `shape=compact|records`, `format=json|tsv` and `facets`; `/names` has `sources` and `n_loci`; `/loci` has json, tsv, bed and ndjson with a completeness trailer. Still open: ETag/cache headers, the sync mechanism (D6), namespaces (D7), UI changes. This is the reference the UI and the build pipeline follow. Companion documents:
+Status: **implemented and live-tested** (2026-11): `/names`, `/hits`, `/loci` and `/sequences` (with `/sequence-estimates`, `/sequence-plans`, `/sequence-jobs`) all read the presence and loci indexes (`PRESENCE_DIR`; `loci.sqlite` built by `serve_build loci`, `loci_ref.sqlite` by `loci-ref`). Shared across them: `alias=off|suggest|include`, taxon scope, prefix terms (`seleno*`, with `exclude`, `categories`, `split`), strict parameters (unknown parameter -> `422 unknown_parameter`). `/hits` has `sources`, `min_matched`, `shape=compact|records`, `format=json|tsv` and `facets`; `/names` has `sources` and `n_loci`; `/loci` has json, tsv and ndjson with a completeness trailer. Still open: ETag/cache headers, the sync mechanism (D6), namespaces (D7), UI changes. This is the reference the UI and the build pipeline follow. Companion documents:
 - `PLAN-build-tables.md`: the script and logic that build the new tables (sidecars with coordinates, a manifest, `presence.sqlite`, `loci.sqlite`). Built and run on the real corpus.
 - `PLAN-serve-index-and-cleanup.md`: the served files, memory budget, and what to drop.
 - `REVISED_PLAN.md`: earlier design (organisms, genome grain). Parts are superseded here.
@@ -21,8 +21,8 @@ Out of scope for v1: non-symbol namespaces (GO, Pfam, InterPro, ...), orthologs,
 
 1. **One query object drives everything.** The same terms, scope and filters are used by `/names`, `/hits`, `/loci` and `/sequences`. The UI keeps one state, and every export is reproducible from it.
 2. **Exports are driven by the query, not by id lists.** The server expands the query. Explicit id lists exist only for small selections.
-3. **Formats are a parameter:** `format=json` (default), `tsv`, and `bed` where it makes sense. TSV and BED start with `#` provenance lines (query, expanded terms, `data_version`, timestamp).
-4. **Coordinates:** JSON and TSV use 1-based inclusive (GFF convention). BED uses 0-based half-open. Every locus also carries a ready `gff_url`, so users never convert by hand. Annotrieve's slice endpoint (`GET /annotations/{md5}/gff?region=&start=&end=`) documents `start` as 0-based and `end` as inclusive, so `gff_url` must be built and tested against it. The service does not re-implement slicing.
+3. **Formats are a parameter:** `format=json` (default), `tsv` where it makes sense. TSV starts with `#` provenance lines (query, expanded terms, `data_version`, timestamp).
+4. **Coordinates:** JSON and TSV use 1-based inclusive (GFF convention). Every locus also carries a ready `gff_url`, so users never convert by hand. Annotrieve's slice endpoint (`GET /annotations/{md5}/gff?region=&start=&end=`) documents `start` as 0-based and `end` as inclusive, so `gff_url` must be built and tested against it. The service does not re-implement slicing.
 5. **Every response carries `data_version`,** used as the ETag.
 6. **Refuse before doing the work.** Every list reports `total`. An oversized export returns `413` with an estimate, computed from counts and never from a scan.
 7. **GET is canonical and cacheable** (lowercase, sorted, deduplicated names). POST mirrors GET for long lists.
@@ -108,9 +108,9 @@ TSV columns: `annotation_id, organism_name, taxid, assembly_accession, assembly_
 
 Response also carries: `terms` (expansion echo), `total`, `facets` (counts by source), `data_version`.
 
-### 4.3 `GET|POST /loci` (where the genes are) - **implemented** (deviations: records list `terms`, `matched_names` and `matched_via` for the whole gene instead of a single `term`/`matched_name`; a `gene_id` column holds the source gene id; `limit` on tsv/bed/ndjson stops the stream after N rows, and without it unscoped queries above `LOCI_MAX_ROWS` get 413; `locus_ref` = `annotation_id:local_id`; `gff_url` uses pysam's 0-based half-open slice, so GFF S..E becomes `start=S-1&end=E`)
+### 4.3 `GET|POST /loci` (where the genes are) - **implemented** (deviations: records list `terms`, `matched_names` and `matched_via` for the whole gene instead of a single `term`/`matched_name`; a `gene_id` column holds the source gene id; `limit` on tsv/ndjson stops the stream after N rows, and without it unscoped queries above `LOCI_MAX_ROWS` get 413; `locus_ref` = `annotation_id:local_id`; `gff_url` uses pysam's 0-based half-open slice, so GFF S..E becomes `start=S-1&end=E`)
 
-Parameters: the query object, plus `annotation_ids` (optional restriction), `flank_bp` (applied to `gff_url`), `format=json|tsv|bed`, `dry_run=true`, `alias=off|suggest|include` (default `suggest`), `case_sensitive` (default false), `limit` and `cursor` for JSON.
+Parameters: the query object, plus `annotation_ids` (optional restriction), `flank_bp` (applied to `gff_url`), `format=json|tsv|ndjson`, `dry_run=true`, `alias=off|suggest|include` (default `suggest`), `case_sensitive` (default false), `limit` and `cursor` for JSON.
 
 Record (JSON):
 
@@ -126,12 +126,11 @@ Record (JSON):
 ```
 
 TSV columns: `annotation_id, organism_name, assembly_accession, source, symbol, term, matched_name, matched_via, seqid, start, end, strand, feature_type, biotype, locus_ref, gff_url`.
-BED columns: `seqid, start-1, end, name = symbol|annotation_id, score = 0, strand`. Note: `seqid` is the annotation's own name (accession or chromosome label). The Annotrieve slice endpoint accepts aliases.
 
 `dry_run=true` returns `{n_annotations, n_loci_upper_bound}` and no rows.
 
 Pipelines want the whole result set, so exports are streamed, not paginated:
-- `format=tsv|bed|ndjson` stream everything in deterministic order (annotation ordinal, then seqid, then start). Rows are produced in bounded batches, so memory does not grow with the result.
+- `format=tsv|ndjson` stream everything in deterministic order (annotation ordinal, then seqid, then start). Rows are produced in bounded batches, so memory does not grow with the result.
 - A final trailer line (`#end rows=N complete=true`, or an `error` object in NDJSON) lets a client detect a truncated stream.
 - A hard cap (default 2M rows, a placeholder until measured) returns `413` with the estimate before streaming starts; the client narrows the query or raises the limit with `limit=`.
 - JSON (UI use) is paginated with `limit` and `cursor`.

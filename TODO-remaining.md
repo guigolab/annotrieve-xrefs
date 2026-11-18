@@ -24,5 +24,5 @@ All code is on main; none of it is deployed until the API image is rebuilt.
 - `/hits` default shape stays `compact`; `records`, `format=tsv`, `facets`, `min_matched`, `sources` are available.
 - `*` in names is a prefix term; the response `terms` echoes the expansion (`kind`, `names`, `n_names`).
 - `/names` returns `n_loci` and takes `sources`.
-- `/loci?format=tsv|bed|ndjson` and `/sequence-estimates` / `-plans` / `-jobs` are ready for the export and FASTA flows.
+- `/loci?format=tsv|ndjson` and `/sequence-estimates` / `-plans` / `-jobs` are ready for the export and FASTA flows.
 - See `API-DESIGN.md` section 7 for the intended UI changes.

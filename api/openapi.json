@@ -812,7 +812,7 @@
     }
   },
   "info": {
-    "description": "From gene names to annotations, gene coordinates and sequences.\n\n- **search**: `/names` (prefix discovery), `/hits` (which annotations contain these exact gene names).\n- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv, bed or ndjson).\n- **sequences**: `/sequences` (CDS, transcript or protein FASTA for a query or a list of `locus_ref`s), with `/sequence-estimates`, `/sequence-plans`, jobs and cached results.\n- **annotations**: per-annotation genes and cross-references (legacy shard-backed).",
+    "description": "From gene names to annotations, gene coordinates and sequences.\n\n- **search**: `/names` (prefix discovery), `/hits` (which annotations contain these exact gene names).\n- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv or ndjson).\n- **sequences**: `/sequences` (CDS, transcript or protein FASTA for a query or a list of `locus_ref`s), with `/sequence-estimates`, `/sequence-plans`, jobs and cached results.\n- **annotations**: per-annotation genes and cross-references (legacy shard-backed).",
     "title": "Annotrieve xrefs",
     "version": "1.1.0"
   },
@@ -1510,13 +1510,13 @@
             }
           },
           {
-            "description": "json | tsv | bed | ndjson",
+            "description": "json | tsv | ndjson",
             "in": "query",
             "name": "format",
             "required": false,
             "schema": {
               "default": "json",
-              "description": "json | tsv | bed | ndjson",
+              "description": "json | tsv | ndjson",
               "title": "Format",
               "type": "string"
             }

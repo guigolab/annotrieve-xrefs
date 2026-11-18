@@ -16,7 +16,7 @@ from helpers.presence import (
     presence_enabled,
     presence_reader,
 )
-from services.loci_formats import stream_bed, stream_ndjson, stream_tsv
+from services.loci_formats import stream_ndjson, stream_tsv
 from services.presence_loci import (
     build_query,
     decode_cursor,
@@ -29,11 +29,11 @@ from settings import settings
 
 router = APIRouter()
 
-FORMATS = ("json", "tsv", "bed", "ndjson")
+FORMATS = ("json", "tsv", "ndjson")
 HARD_ROW_CEILING = 20_000_000
 _GET_PARAMS = ("names", "include_taxids", "exclude_taxids", "alias", "annotation_ids",
                "case_sensitive", "flank_bp", "format", "dry_run", "limit", "cursor")
-_MEDIA = {"tsv": "text/tab-separated-values", "bed": "text/plain", "ndjson": "application/x-ndjson"}
+_MEDIA = {"tsv": "text/tab-separated-values", "ndjson": "application/x-ndjson"}
 
 
 class LociBody(BaseModel):
@@ -110,7 +110,7 @@ def _run(names, *, terms=None, include_taxids, exclude_taxids, alias, annotation
                              "this query may return more rows than the export limit; narrow it "
                              "or raise limit=", n_loci_upper_bound=est["n_loci_upper_bound"],
                              max=cap)
-        writer = {"tsv": stream_tsv, "bed": stream_bed, "ndjson": stream_ndjson}[fmt]
+        writer = {"tsv": stream_tsv, "ndjson": stream_ndjson}[fmt]
         rows_iter = iter_loci(pres, loci, q, None, info)
 
         def body():
@@ -149,7 +149,7 @@ def get_loci(
     annotation_ids: str | None = Query(None, description="Restrict to these annotation ids"),
     case_sensitive: bool = Query(False, description="Exact match on the gene's own spelling"),
     flank_bp: int = Query(0, description="Extra bases on each side of the gff_url slice"),
-    format: str = Query("json", description="json | tsv | bed | ndjson"),
+    format: str = Query("json", description="json | tsv | ndjson"),
     dry_run: bool = Query(False, description="Return counts only"),
     limit: int | None = Query(None, description="JSON: page size. Other formats: stop after this many rows (omit to use the export cap, which refuses oversized unscoped queries with 413)"),
     cursor: str | None = Query(None, description="JSON pagination cursor"),
