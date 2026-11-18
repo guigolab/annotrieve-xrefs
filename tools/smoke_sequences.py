@@ -53,6 +53,8 @@ def main(argv=None) -> int:
                     help="also export this many genes through gffread and NCBI (needs network)")
     ap.add_argument("--profile", action="store_true",
                     help="profile the GFF resolving loop (top functions by cumulative time)")
+    ap.add_argument("--trace-mem", action="store_true",
+                    help="print the genes whose resolving grew the process the most")
     ap.add_argument("--action", default="cds", choices=["cds", "transcript", "protein"])
     a = ap.parse_args(argv)
 
@@ -106,8 +108,13 @@ def main(argv=None) -> int:
         prof = cProfile.Profile()
         prof.enable()
     t0 = time.perf_counter()
+    jumps = []
     for g in genes[:n]:
+        before = int(rss().split("=")[1][:-3])
         res = resolver.resolve(g)
+        if a.trace_mem:
+            jumps.append((int(rss().split("=")[1][:-3]) - before, g.locus_ref, g.seqid,
+                          g.end - g.start + 1, res.n_candidates))
         reasons[res.reason or "ok"] += 1
         n_cands[min(res.n_candidates, 10)] += 1
         if res.candidates:
@@ -134,8 +141,25 @@ def main(argv=None) -> int:
         buf = io.StringIO()
         pstats.Stats(prof, stream=buf).sort_stats("cumulative").print_stats(14)
         print("\n".join(ln for ln in buf.getvalue().splitlines() if ln.strip())[:3500])
-    print(f"  open tabix handles before close: {len(resolver.tabix)}")
+    print(f"  open tabix handles before close: {len(resolver.tabix)}  ({rss()})")
     resolver.close()
+    print(f"  after closing the handles: {rss()}")
+    if a.trace_mem:
+        import ctypes
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+            print(f"  after malloc_trim(0): {rss()}")
+        except OSError:
+            print("  malloc_trim not available")
+        print("  biggest growth per gene (MiB, locus_ref, seqid, gene length, candidates):")
+        for row in sorted(jumps, reverse=True)[:8]:
+            print("   ", row)
+        import functools
+        from helpers import annotation_files as af
+        for name in dir(af):
+            fn = getattr(af, name)
+            if isinstance(fn, functools._lru_cache_wrapper):
+                print(f"  lru_cache {name}: {fn.cache_info()}")
     print("  outcome:", dict(reasons))
     print("  candidate transcripts per gene (10 = 10 or more):", dict(sorted(n_cands.items())))
     print("  number of different transcripts chosen by the 6 presets:", dict(sorted(disagree.items())))
