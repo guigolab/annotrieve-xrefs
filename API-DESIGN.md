@@ -1,11 +1,11 @@
 # Annotrieve xrefs: API design (v1, symbol and alias only)
 
-Status: **proposal; the presence build (script and tests) and the presence-backed `/names` and `/hits` with `alias=off|suggest|include` exist** (**`/sequences` is rewritten on the new index, see 4.4**; **`/loci` exists too**: exact names, `alias`, taxon scope, `annotation_ids`, `flank_bp`, `case_sensitive`, `format=json|tsv|bed|ndjson` with a completeness trailer, `dry_run`, JSON cursor, 413 export cap; it needs `loci.sqlite`, built by `serve_build loci`) (compact `fields`/`rows` kept as the only shape for now, with `alias_only`, `organism_name`, `assembly_accession` appended; enabled by `PRESENCE_DIR`; prefix terms (`seleno*`, with `exclude`, `categories`, `split`) now work in `/hits`, `/loci` and `/sequences`; `shape`, `format=tsv`, `min_matched` and `facets` exist on `/hits`). This is the reference the UI and the build pipeline follow. Companion documents:
-- `PLAN-build-tables.md`: the script and logic that build the new tables (sidecars with coordinates, a manifest, `presence.sqlite`). **Current focus.**
+Status: **implemented and live-tested** (2026-11): `/names`, `/hits`, `/loci` and `/sequences` (with `/sequence-estimates`, `/sequence-plans`, `/sequence-jobs`) all read the presence and loci indexes (`PRESENCE_DIR`; `loci.sqlite` built by `serve_build loci`, `loci_ref.sqlite` by `loci-ref`). Shared across them: `alias=off|suggest|include`, taxon scope, prefix terms (`seleno*`, with `exclude`, `categories`, `split`), strict parameters (unknown parameter -> `422 unknown_parameter`). `/hits` has `sources`, `min_matched`, `shape=compact|records`, `format=json|tsv` and `facets`; `/names` has `sources` and `n_loci`; `/loci` has json, tsv, bed and ndjson with a completeness trailer. Still open: ETag/cache headers, the sync mechanism (D6), namespaces (D7), UI changes. This is the reference the UI and the build pipeline follow. Companion documents:
+- `PLAN-build-tables.md`: the script and logic that build the new tables (sidecars with coordinates, a manifest, `presence.sqlite`, `loci.sqlite`). Built and run on the real corpus.
 - `PLAN-serve-index-and-cleanup.md`: the served files, memory budget, and what to drop.
 - `REVISED_PLAN.md`: earlier design (organisms, genome grain). Parts are superseded here.
 
-Sequencing: the first table (`presence.sqlite`, behind `/names` and `/hits`) comes first. `/loci` (its input, coordinates, is already in the sidecar) and the sync mechanism for new, replaced and removed annotations are decided afterwards. Sections below that depend on them are marked **later**.
+Sequencing (historical): presence first, then `/loci` and `/sequences`; both are done. The sync mechanism for new, replaced and removed annotations (D6) is still to be decided.
 
 ## 1. What the service is for
 
@@ -83,11 +83,11 @@ Responses and export headers echo the expansion:
 ## 4. Endpoints
 
 ### 4.1 `GET /names?prefix=&include_taxids=&exclude_taxids=&sources=` (discovery)
-Distinct names under a prefix that are a **symbol** somewhere in scope (alias-only names, mostly locus-style IDs, are listed only with `alias=include`), with `category` and `n_annotations` in scope. Added: `n_loci` per name (so the UI can warn before a large loci export), and the refusal path described above.
+Distinct names under a prefix that are a **symbol** somewhere in scope (alias-only names, mostly locus-style IDs, are listed only with `alias=include`), with `category` and `n_annotations` in scope. **Implemented.** `n_loci` per name (gene rows in the same scope; symbol rows only unless `alias=include`; absent when `loci.sqlite` is not published), `sources=Ensembl,GenBank,RefSeq` to count only those annotations (echoed as `source_filter`), and `422 prefix_too_broad` above 500 names.
 
-### 4.2 `GET|POST /hits` (which annotations)
+### 4.2 `GET|POST /hits` (which annotations) - **implemented**
 
-Parameters: the query object, plus `alias=off|suggest|include` (default `suggest`), `shape=records|compact` (default `records`), `format=json|tsv`, `limit`/`offset` (JSON records only; TSV streams everything).
+Parameters: the query object (`names` and, on POST, `terms`), `include_taxids`, `exclude_taxids`, `sources`, `min_matched`, `alias=off|suggest|include` (default `suggest`), `shape=compact|records` (default `compact`, the UI's positional `fields`/`rows`), `format=json|tsv` (`tsv` implies records and streams everything). No `limit`/`offset`: the whole list is returned (sorted by terms matched, then id).
 
 Record (JSON):
 
@@ -180,7 +180,7 @@ Rule object: `{"rank_by": ["coding:desc", "cds_len:desc"], "require": ["coding",
 - A transcript that reaches beyond its gene bounds makes the resolver fetch the wider GFF region again, so exons are never silently missing (the old pipeline failed such genes with `transcript_outside_gene`).
 - `locus_ref` lookup needs `loci_ref.sqlite` (`ord, local_id -> name_id`, one row per gene, built with `serve_build loci-ref` or automatically by `serve_build loci`); without it, `loci` lists return `503 locus_ref_index_unavailable` and `query` mode still works.
 - FASTA header: `>{symbol}|{organism}|{assembly}|{annotation_id}|{transcript_id} {seqid}:{start}-{end}({strand})`, with spaces and `|` inside a field replaced by `_`.
-- Not done yet: the global NCBI limiter across workers (each process has its own bucket), a per-IP quota, `transcript` ids typed as a plain string (`transcript=ENST...`, use a pinned `loci` entry instead).
+- Done since: the NCBI limiter shared by all workers and a per-IP quota (below). Not done: `transcript` ids typed as a plain string (`transcript=ENST...`; use a pinned `loci` entry instead).
 
 **Companion resources** (stateless, computed from the same body as `POST /sequences`; nothing is stored; renamed from `/sequences/estimate` and `/sequences/plan`; typed in `api/openapi.json`)
 - `POST /sequence-estimates`: index only, no GFF reads: `{n_genes, n_annotations, est_bp_upper_bound, over_limit}`. Transcript counts are unknown at this stage.
@@ -198,7 +198,7 @@ Rule object: `{"rank_by": ["coding:desc", "cds_len:desc"], "require": ["coding",
 - Skip reasons: `no_transcript`, `no_cds`, `filtered_out`, `transcript_not_found`, `gff_unavailable`, `seqid_not_resolved`, `window_too_large`, `ncbi_sequence_not_found` (the contig is not an NCBI sequence), `ncbi_timeout`, `ncbi_error`.
 - FASTA header: `>{symbol}|{organism}|{assembly_accession}|{annotation_id}|{transcript_id}`.
 - Transcript models come from the GFF slice when a request needs them (no global transcript table), with a read-through cache keyed by `annotation_id` and gene. GFF path comes from the presence index (`annotation.taxid`, `annotation.gff_path`).
-- Limits: a global NCBI rate limiter shared by all workers, a per-IP quota, results cached by `result_id`.
+- Limits: see "Storage and abuse limits" and "NCBI budget" above (shared NCBI limiter, per-IP quota, results cached by `result_id`).
 
 ### 4.5 Kept as they are
 `GET /annotations/{id}/genes`, `/genes/{local_id}`, `/xrefs`, `/namespaces`: single-annotation drill-in. They read the shards, so they stay for gene cards and are not used for bulk work.
@@ -206,7 +206,7 @@ Rule object: `{"rank_by": ["coding:desc", "cds_len:desc"], "require": ["coding",
 ## 5. Errors, caching, limits
 
 - Error body `{"detail": {"code", "message", ...}}` as today. New codes: `prefix_too_broad` (now with counts), `export_too_large` (413 with estimate), `job_not_found`.
-- nginx cache key is the canonical query string. `data_version` appears in `ETag`.
+- Today `data_version` is in the body and in an `X-Data-Version` header on streamed responses. **Not done:** `ETag` from `data_version` and a canonical nginx cache key.
 - Concurrency gates and `503 Retry-After` stay.
 - Rate limit at the edge as now.
 
@@ -226,7 +226,7 @@ Table definitions and sizes are in `PLAN-serve-index-and-cleanup.md`.
 The page already has three views (`components/genes/`): **Distribution** (heatmap of genes across taxa), **Annotations** (list and table) and **Compare** (a genome-browser-style view that draws the transcript structures of pinned genes side by side, with a toolbar that already downloads CDS, transcript or protein FASTA through `postSequences`). Only minor changes are needed; the views stay.
 
 - One query bar produces the query object and the same object feeds all three views.
-- **Annotations:** the export becomes a TSV with the locus and a way to fetch the chunk (annotation id plus `gff_url`), once `/loci` exists. Until then it stays the annotation-link TSV from `/hits`.
+- **Annotations:** `/hits?format=tsv` is the annotation-link TSV; `/loci?format=tsv` is the one with the locus and `gff_url`. The UI has not been switched to them yet.
 - **Compare / FASTA:** keep the pin tray and transcript picker; add the estimate before a large request and a job/progress state, and a "longest vs all transcripts" choice.
 - **Aliases and prefixes** are visible and reversible in the UI (alias suggestions as a separate strip; prefix expansion preview with unticking), never silent.
 - Freshness (indexed N of M, pending) appears once the sync mechanism is decided.
@@ -234,14 +234,14 @@ The page already has three views (`components/genes/`): **Distribution** (heatma
 ## 8. Migration from the current API
 
 - `GET /hits` keeps working. `shape=compact` is today's response plus the new columns; `names=` without `*` behaves as now.
-- A `*` in `names` stops being an error and becomes a prefix term.
-- `/sequences` keeps accepting `items` with `annotation_id, local_id, transcript_id` for one release, then moves to `locus_ref`.
+- A `*` in `names` is a prefix term (done; it was `wildcard_not_supported`). Without the presence index (legacy mode) `*` is still rejected.
+- `/sequences` still accepts `items` with `annotation_id, local_id, transcript_id` for one release, then moves to `locus_ref`.
 
 ## 9. Open decisions
 
-1. **Gene identifier in loci.** The fast source for coordinates, `gene_hit`, has `local_id` but not the source gene id (`gene.source_gene_id` lives in the shards). Options: (a) `locus_ref` = annotation id + `local_id` with the caveat that a rebuilt shard can change it; (b) read `source_gene_id` from the shards during the build (slow: the shards total 418 GiB); (c) fill `gene_id` lazily from the shard when a user opens one gene or runs a FASTA job. Recommended for v1: (a) plus (c), and (b) only for new annotations as they arrive.
-2. **Annotation download URL.** Confirm the file-link pattern Annotrieve uses for a whole annotation, and the exact offset in the slice endpoint's `start`.
-3. **Loci file size.** A guess of 2.5-3.5 GB. Measure by building it, and time a cold range read for a common name first.
+1. **Gene identifier in loci (decided: `locus_ref = annotation_id:local_id`, rows also carry `gene_id`).** The fast source for coordinates, `gene_hit`, has `local_id` but not the source gene id (`gene.source_gene_id` lives in the shards). Options: (a) `locus_ref` = annotation id + `local_id` with the caveat that a rebuilt shard can change it; (b) read `source_gene_id` from the shards during the build (slow: the shards total 418 GiB); (c) fill `gene_id` lazily from the shard when a user opens one gene or runs a FASTA job. Recommended for v1: (a) plus (c), and (b) only for new annotations as they arrive.
+2. **Annotation download URL.** Decided: `download_url` is `{ANNOTRIEVE_FILES_BASE}/{taxid}/{assembly}/{file}` (the last three parts of the stored path). It goes stale when an assembly's taxid folder changes until the next index sync (D6). `gff_url` offsets are tested against the slice endpoint.
+3. **Loci file size.** Measured on the real index: 80,995,350 genes (see `PLAN-build-tables.md`, loci build).
 4. **Deleted, replaced and new annotations.** Search must exclude removed ones at once and include new ones after the weekly import. The mechanism (a reconcile job against the live Annotrieve catalogue, a liveness mask, a `GET /status`) is **postponed** until the first table works; see `PLAN-build-tables.md` D6.
 5. **Sync size cut-offs** for `/sequences` (50 genes) and jobs (2,000 genes). Placeholders until measured.
 6. **"Longest transcript" rule**: decided 2026-11-18, see 4.4 (action-aware, ranking keys, no canonical option). Open: where transcript models are cached.

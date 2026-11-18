@@ -1,8 +1,8 @@
 # Serve files, build pipeline and cleanup
 
-Status: **plan; only the presence build from `xref_file` is written.** It supports the endpoints in `API-DESIGN.md` (read that first). **How the new tables are built is in `PLAN-build-tables.md`** (per-annotation sidecars with coordinates, a manifest, presence from sidecars); this document keeps the served-file definitions, serving and memory, and the cleanup lists. Earlier versions assumed DFS-ordered ordinals, a delta file and a local-disk copy. All three are dropped; see "What changed" below.
+Status: **served files built and live** (`presence.sqlite`, `loci.sqlite`, `loci_ref.sqlite`; endpoints in `API-DESIGN.md`). Still open: sync (D6), the cleanup in section 6, namespaces (D7). **How the tables are built is in `PLAN-build-tables.md`**; this document keeps the served-file definitions, serving and memory, and the cleanup lists. Earlier versions assumed DFS-ordered ordinals, a delta file and a local-disk copy. All three are dropped; see "What changed" below.
 
-Current focus: the first table only (`presence.sqlite`). `loci.sqlite`, the sync mechanism for new, replaced and removed annotations, and the cleanup in section 6 follow later.
+Remaining: the sync mechanism for new, replaced and removed annotations, and the cleanup in section 6.
 
 ## 1. What was measured (Phase 0, real corpus)
 
@@ -234,11 +234,11 @@ Do **not** remove `merge` / `index` / `attach` in v1: they are what keeps `xref_
 
 | Stage | Work | New file? | Exit |
 |---|---|---|---|
-| 1 API shape on today's tables | `/hits`: records, TSV, `min_matched`, `sources`, prefix terms (expansion by the existing `xref_file` range scan). `/loci` reads `gene_hit` by name (json, tsv, bed, `dry_run`, `gff_url`, `locus_ref = annotation_id:local_id`, display rule from section 3.2). `/sequences`: `query` mode, `estimate`, global NCBI limiter, `transcript=longest`, `on_error=skip`. Config: thread cap, 16-32 MiB per-connection cache, canonical nginx cache key, cheap `prefix_too_broad` from `xref_meta` counts | no | UI can be built against the final shapes; real latencies collected from logs |
-| 2 Presence file (**current focus**) | Sidecars, manifest, then `presence.sqlite` from sidecars (`PLAN-build-tables.md` M1-M6), query replay against the sidecars, switch `/names` and `/hits` behind `HITS_BACKEND` | presence | Cold `/hits` and broad prefixes in milliseconds after warm-up; replay clean |
-| 2b Sync (after 2) | Decide how new, replaced and removed annotations update sidecars and served files | no | Decision recorded (D6) |
-| 3 Loci file | Build `loci.sqlite` from sidecars, switch `/loci` | loci | Cold common-name read well under a second; build time acceptable |
-| 4 FASTA jobs | Async jobs, manifest, result cache | no | Large exports complete without a long-held request |
+| 1 API shape (done, on the new indexes instead of today's tables) | `/hits`: records, TSV, `min_matched`, `sources`, prefix terms (expansion by the existing `xref_file` range scan). `/loci` reads `gene_hit` by name (json, tsv, bed, `dry_run`, `gff_url`, `locus_ref = annotation_id:local_id`, display rule from section 3.2). `/sequences`: `query` mode, `estimate`, global NCBI limiter, `transcript=longest`, `on_error=skip`. Config: thread cap, 16-32 MiB per-connection cache, canonical nginx cache key, cheap `prefix_too_broad` from `xref_meta` counts | no | UI can be built against the final shapes; real latencies collected from logs |
+| 2 Presence file (done) | Sidecars, manifest, then `presence.sqlite` from sidecars (`PLAN-build-tables.md` M1-M6), query replay against the sidecars, switch `/names` and `/hits` behind `HITS_BACKEND` | presence | Cold `/hits` and broad prefixes in milliseconds after warm-up; replay clean |
+| 2b Sync (**next**) | Decide how new, replaced and removed annotations update sidecars and served files | no | Decision recorded (D6) |
+| 3 Loci file (done) | Build `loci.sqlite` from sidecars, switch `/loci` | loci | Cold common-name read well under a second; build time acceptable |
+| 4 FASTA jobs (done) | Async jobs, manifest, result cache | no | Large exports complete without a long-held request |
 | 5 UI | Minor changes to the existing Distribution, Annotations and Compare views: one query object, loci TSV export, estimate and jobs in the FASTA download (see `API-DESIGN.md` section 7) | no | |
 | 6 Cleanup | Section 6 | no | Smaller repo and published artifacts |
 

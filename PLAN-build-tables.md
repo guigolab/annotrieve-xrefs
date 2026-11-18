@@ -1,6 +1,6 @@
 # Build plan: per-annotation sidecars, manifest and the presence table
 
-Status: **plan only, no code written for this plan yet.** Read `API-DESIGN.md` (endpoints) and `PLAN-serve-index-and-cleanup.md` (served files, memory, cleanup) first. This document is only about **the script and logic that build the new tables**.
+Status: **built and run on the real corpus** (sidecars, manifest, `presence.sqlite`, `loci.sqlite`, `loci_ref.sqlite`; results in section 8). Sync with new/removed annotations (D6) and namespaces (D7) are still open. Read `API-DESIGN.md` (endpoints) and `PLAN-serve-index-and-cleanup.md` (served files, memory, cleanup) first. This document is only about **the script and logic that build the new tables**.
 
 ## 1. Scope
 
@@ -139,7 +139,7 @@ status    --work-dir DIR
 - `sidecars` runs shards in parallel but only the main process writes the manifest. Results are consumed in sorted shard order, so ordinals are deterministic. It skips fresh sidecars, rewrites stale ones, records `skipped_community` and `failed` shards without stopping, commits every 200 shards, saves progress on Ctrl-C, prints rate and ETA, and re-applies a stored catalogue at the end.
 - `status` prints counts per status, catalogue coverage and the number of indexed annotations with no names.
 - `build` (M4): `serve_build build --work-dir DIR [--name-prefix tp5] [--limit-annotations N] [--batch 256]` merges the sidecars into `presence.sqlite` (two-level merge, runs in `<work-dir>/serve/tmp`). Includes only `indexed` and `in_catalogue=1` annotations. Partial builds go to `partial-<version>/` and never switch `current`.
-- Not yet implemented: `verify` (M5). The existing `build` from `xref_file` (no sub-command) is legacy.
+- Also: `loci` (`loci.sqlite`) and `loci-ref` (`loci_ref.sqlite`), see section 8. Not implemented: a separate `verify` command; `build` and `loci` verify as they go. The old `build` from `xref_file` (no sub-command) is legacy.
 
 ## 7. Validation (no old global tables)
 
@@ -157,9 +157,9 @@ status    --work-dir DIR
 | M1 | Sidecar writer and reader for one shard, format spec, manifest schema, unit tests (round trip, determinism, atomic write, fingerprint and stale detection, D4 casefold flag) | tests pass |
 | M2 | **Measure on about 200 random shards** (cold NFS): time per shard, sidecar bytes (names plus genes), projected full backfill time and total size. Also report source_database/provider values found, and the D4 answer | report; **stop and re-decide if the projection is bad** |
 | M3 | `catalogue` command: stream the report TSV (D8) into the manifest (`assembly_name`, `release_date`, `lineage`). Parallel backfill `sidecars` (`--workers`, resumable, sidecars next to the shards at `per_gff/<id>/sidecar.tsv.gz`). Report shards without a catalogue row and catalogue rows without a shard (listed only, no removal: D6) | every allowed shard has a sidecar; manifest metadata filled; mismatch lists reviewed |
-| M4 (code done, trial on the VM pending) | Merge builder writing `presence.sqlite`; trial on a name prefix (for example `tp5`) | validation steps 3-4 pass on the trial |
+| M4 (done) | Merge builder writing `presence.sqlite`; trial on a name prefix (for example `tp5`) | validation steps 3-4 pass on the trial |
 | M5 (done 2026-11-18) | Full build, report and timings | validation clean or every difference explained |
-| M6 (reader done: `PRESENCE_DIR` flag, alias as suggestion; replay pending) | Publish, API reader switch behind a flag, query replay | zero unexplained diffs |
+| M6 (done: `PRESENCE_DIR`, alias as suggestion, live; a formal query replay was not run) | Publish, API reader switch behind a flag, query replay | zero unexplained diffs |
 
 ### M2 results (205 shards: 5 largest + 200 random, 2 workers, cold-ish NFS)
 
@@ -194,9 +194,9 @@ Other facts: names are already casefolded in all 205 shards (D4); `source_databa
 
 Smoke test through the API service code (`tools/smoke_presence.py`, cold NFS): open reader 116 ms; `/hits tp53` 81 ms (2,492 symbol annotations, 2 alias-only extra); `/hits` for 3 names 74 ms; Mammalia scope 9 ms; `/names` prefix 0.1-7.5 ms; process peak 30 MiB. Known issue: most alias-only names are locus-style IDs (`a1f95_gene3136`, `afu2g05510`) and some contain a comma (`agap_ensangg...,ensangg...`), which cannot be sent in a comma-separated `names=` list.
 
-### Loci build (code done, real run pending)
+### Loci build (done; measured 2026-11-18)
 
-`serve_build loci --work-dir DIR` writes `loci.sqlite` next to the published `presence.sqlite` (same `v<data_version>/`), from the sidecars' `#names` joined to `#genes` per annotation (batches by named-gene budget, 300,000 genes in memory, larger annotations use a scratch SQLite file under `serve/tmp`; two-level merge as in the presence build). `locus(name_id, ord, local_id, seqid_id, start, end, strand, feature_type_id, biotype_id, via, gene_id, primary_name)` clustered by `name_id`, plus `seqid`, dictionaries and `name_loci(name_id, n_loci)`. Decision: rows carry the source gene id; `locus_ref = annotation_id:local_id`. The build walks `presence.name_dict` in lockstep and fails on any difference in the annotation set, the name list or the symbol/alias counts per name, so the two files cannot disagree. Expected: a few GB and 1-2 hours (estimates), peak memory about 100-300 MiB.
+`serve_build loci --work-dir DIR` writes `loci.sqlite` next to the published `presence.sqlite` (same `v<data_version>/`), from the sidecars' `#names` joined to `#genes` per annotation (batches by named-gene budget, 300,000 genes in memory, larger annotations use a scratch SQLite file under `serve/tmp`; two-level merge as in the presence build). `locus(name_id, ord, local_id, seqid_id, start, end, strand, feature_type_id, biotype_id, via, gene_id, primary_name)` clustered by `name_id`, plus `seqid`, dictionaries and `name_loci(name_id, n_loci)`. Decision: rows carry the source gene id; `locus_ref = annotation_id:local_id`. The build walks `presence.name_dict` in lockstep and fails on any difference in the annotation set, the name list or the symbol/alias counts per name, so the two files cannot disagree. The real run produced the file now served by `/loci` (80,995,350 genes in `loci_ref`).
 
 `serve_build loci-ref --work-dir DIR` (also run at the end of `loci`) writes `loci_ref.sqlite` next to `loci.sqlite`: one row `(ord, local_id) -> name_id` per gene, so a `locus_ref` resolves to its `locus` row with the primary key. It is a separate file so the published `loci.sqlite` is never modified; it is built by one sorted `GROUP BY` over `loci.sqlite` (sort spills to `serve/tmp` through `SQLITE_TMPDIR`, page cache 64 MiB). Run it alone on an already published version to add the file without rebuilding `loci.sqlite`. Measured on the real index (2026-11-18): 80,995,350 genes, 1.31 GB, 134 s, peak RSS 157 MiB.
 
