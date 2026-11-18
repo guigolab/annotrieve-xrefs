@@ -44,7 +44,7 @@ def classify(path: Path) -> str:
 
 
 def open_text(path: Path):
-    if path.suffix == ".gz":
+    if path.suffix in (".gz", ".bgz"):
         return gzip.open(path, "rt", encoding="utf-8", errors="replace")
     return open(path, "rt", encoding="utf-8", errors="replace")
 
@@ -52,8 +52,8 @@ def open_text(path: Path):
 def find_files(root: Path) -> list[Path]:
     out: list[Path] = []
     for p in root.rglob("*"):
-        n = p.name
-        if n.endswith((".gff", ".gff3", ".gff.gz", ".gff3.gz")):
+        n = p.name.casefold()
+        if ".gff" in n and not n.endswith((".csi", ".tbi", ".gzi", ".tsv", ".json", ".md5")):
             out.append(p)
     return sorted(out)
 
@@ -102,7 +102,12 @@ def main() -> None:
 
     files = find_files(a.root)
     if not files:
-        sys.exit(f"no GFF files under {a.root}")
+        seen = []
+        for i, p in enumerate(a.root.rglob("*") if a.root.is_dir() else []):
+            if i >= 8:
+                break
+            seen.append(str(p))
+        sys.exit(f"no GFF files under {a.root} (exists={a.root.is_dir()}); first entries: {seen}")
     step = max(1, len(files) // max(1, a.sample))
     sample = files[::step][: a.sample]
     print(f"{len(files)} GFF files found, scanning {len(sample)} (every {step}th)")
