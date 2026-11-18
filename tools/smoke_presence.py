@@ -56,3 +56,45 @@ c = sqlite3.connect(f"file:{r.path}?mode=ro", uri=True)
 rows = c.execute("SELECT name FROM name_dict WHERE n_sym=0 AND name_id % 5000 = 0 LIMIT 25").fetchall()
 print("sample of alias-only names:", [x[0] for x in rows])
 print("peak RSS MiB", resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024)
+
+
+# ---------------------------------------------------------------------------
+# /loci on the real loci.sqlite (cold NFS read, then warm)
+# ---------------------------------------------------------------------------
+from helpers.presence import open_request_connections  # noqa: E402
+from services.presence_loci import build_query, estimate, iter_loci  # noqa: E402
+from services.loci_formats import stream_tsv  # noqa: E402
+
+print("\n--- /loci ---")
+pres, loci, dv = open_request_connections()
+print("loci data_version", dv, "rows", loci.execute("SELECT value FROM meta WHERE key='n_loci'").fetchone()[0])
+
+
+def loci_query(names, **kw):
+    q = build_query(pres, r.all_mask, dv, names, **kw)
+    est = estimate(pres, loci, q)
+    t = time.perf_counter()
+    first = None
+    n = 0
+    for row in iter_loci(pres, loci, q):
+        if first is None:
+            first = (time.perf_counter() - t) * 1000
+        n += 1
+    total = (time.perf_counter() - t) * 1000
+    print(f"[{total:9.1f} ms, first row {first or 0:7.1f} ms] /loci names={names} {kw or ''} -> "
+          f"{n:,} rows (annotations {est['n_annotations']:,}, upper bound {est['n_loci_upper_bound']:,})")
+    return q
+
+
+for names in ("tp53", "tp53", "brca2", "polq", "tp53,brca1,brca2,polq,actb"):
+    loci_query(names)
+loci_query("tp53", include_taxids="40674")
+loci_query("tp53", alias="off")
+q = loci_query("seleno1,selenop,selenow")
+
+t = time.perf_counter()
+size = sum(len(chunk) for chunk in stream_tsv(q, iter_loci(pres, loci, q), 2_000_000))
+print(f"[{(time.perf_counter() - t) * 1000:9.1f} ms] tsv stream of the last query: {size / 1024:.0f} KiB")
+row = next(iter_loci(pres, loci, loci_query("tp53", alias="off")))
+print("example row:", {k: row[k] for k in ("annotation_id", "symbol", "seqid", "start", "end", "strand", "gene_id", "gff_url")})
+print("peak RSS MiB", resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024)
