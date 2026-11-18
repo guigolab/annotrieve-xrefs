@@ -1,7 +1,14 @@
-"""Thread-local tabix handles and gene-window fetches for GFF files (pysam)."""
+"""Tabix reads of GFF windows (pysam), with handles scoped to one request.
+
+Opening a ``TabixFile`` loads the whole ``.csi`` index into memory (tens of MiB for a large
+genome, about 35 ms on NFS). A process- or thread-wide cache of open files therefore grows with
+the number of distinct annotations a worker has seen, which is unbounded in practice (a gene
+name can occur in thousands of annotations). So a :class:`TabixCache` belongs to one request
+(one ``GeneResolver``), keeps at most ``max_handles`` files open (default 2: genes of one
+annotation arrive together) and releases them in :meth:`close`.
+"""
 from __future__ import annotations
 
-import threading
 from collections import OrderedDict
 from pathlib import Path
 
@@ -19,82 +26,50 @@ class FetchError(Exception):
         self.extra = extra
 
 
-_TABIX_LOCAL = threading.local()
-_TABIX_MAX_HANDLES = 32
-_TABIX_REGISTRY_LOCK = threading.Lock()
-# thread ident -> OrderedDict of path -> TabixFile (for process-wide close)
-_TABIX_REGISTRY: dict[int, OrderedDict[str, pysam.TabixFile]] = {}
+class TabixCache:
+    def __init__(self, max_handles: int = 2) -> None:
+        self.max_handles = max(1, int(max_handles))
+        self._handles: OrderedDict[str, pysam.TabixFile] = OrderedDict()
 
+    def __len__(self) -> int:
+        return len(self._handles)
 
-def open_tabix(gff_path: Path, index_path: Path | None = None):
-    """Thread-local LRU of TabixFile handles (pysam is not thread-safe).
-
-    Annotrieve indexes with ``tabix --csi`` (``.csi``), not ``.tbi``. Pass the
-    resolved index path so pysam does not default to looking for ``.tbi``.
-    """
-    cache: OrderedDict[str, pysam.TabixFile] | None = getattr(
-        _TABIX_LOCAL, "handles", None
-    )
-    if cache is None:
-        cache = OrderedDict()
-        _TABIX_LOCAL.handles = cache
-        with _TABIX_REGISTRY_LOCK:
-            _TABIX_REGISTRY[threading.get_ident()] = cache
-    index = str(index_path) if index_path is not None else None
-    key = f"{gff_path}\0{index or ''}"
-    handle = cache.get(key)
-    if handle is not None:
-        cache.move_to_end(key)
+    def _open(self, gff_path: Path, index_path: Path | None) -> pysam.TabixFile:
+        index = str(index_path) if index_path is not None else None
+        key = f"{gff_path}\0{index or ''}"
+        handle = self._handles.get(key)
+        if handle is not None:
+            self._handles.move_to_end(key)
+            return handle
+        handle = (pysam.TabixFile(str(gff_path), index=index) if index
+                  else pysam.TabixFile(str(gff_path)))
+        self._handles[key] = handle
+        while len(self._handles) > self.max_handles:
+            _key, old = self._handles.popitem(last=False)
+            try:
+                old.close()
+            except Exception:                                   # noqa: BLE001
+                pass
         return handle
-    handle = (
-        pysam.TabixFile(str(gff_path), index=index)
-        if index
-        else pysam.TabixFile(str(gff_path))
-    )
-    cache[key] = handle
-    while len(cache) > _TABIX_MAX_HANDLES:
-        _old_key, old = cache.popitem(last=False)
+
+    def fetch(self, files: AnnotationFiles, *, seqid: str, start: int, end: int) -> list[str]:
+        """GFF lines overlapping ``seqid:start-end`` (1-based, inclusive)."""
+        # pysam regions are 0-based half-open.
+        start0 = max(0, int(start) - 1)
+        end0 = max(start0 + 1, int(end))
         try:
-            old.close()
-        except Exception:
-            pass
-    return handle
+            return list(self._open(files.gff_path, files.csi_path).fetch(seqid, start0, end0))
+        except ValueError as exc:                               # unknown contig
+            raise FetchError("seqid_not_resolved",
+                             f"tabix fetch failed for seqid {seqid!r}: {exc}", seqid=seqid) from exc
+        except Exception as exc:                                # OSError and htslib errors
+            raise FetchError("annotation_file_not_found", f"failed to read GFF: {exc}",
+                             gff_path=str(files.gff_path)) from exc
 
-
-def close_tabix_handles() -> None:
-    """Close all thread-local tabix handles (tests / shutdown)."""
-    with _TABIX_REGISTRY_LOCK:
-        caches = list(_TABIX_REGISTRY.values())
-        _TABIX_REGISTRY.clear()
-    for cache in caches:
-        while cache:
-            _key, handle = cache.popitem(last=False)
+    def close(self) -> None:
+        while self._handles:
+            _key, handle = self._handles.popitem(last=False)
             try:
                 handle.close()
-            except Exception:
+            except Exception:                                   # noqa: BLE001
                 pass
-    if getattr(_TABIX_LOCAL, "handles", None) is not None:
-        _TABIX_LOCAL.handles = None
-
-
-def fetch_region_lines(
-    files: AnnotationFiles,
-    *,
-    seqid: str,
-    start: int,
-    end: int,
-) -> list[str]:
-    # pysam regions are 0-based half-open.
-    start0 = max(0, int(start) - 1)
-    end0 = max(start0 + 1, int(end))
-    try:
-        tbx = open_tabix(files.gff_path, files.csi_path)
-        return list(tbx.fetch(seqid, start0, end0))
-    except ValueError as exc:
-        # Unknown contig etc.
-        raise FetchError("seqid_not_resolved", f"tabix fetch failed for seqid {seqid!r}: {exc}", seqid=seqid) from exc
-    except OSError as exc:
-        raise FetchError("annotation_file_not_found", f"failed to read GFF: {exc}", gff_path=str(files.gff_path)) from exc
-    except Exception as exc:
-        # pysam.SamtoolsError and other htslib failures are bare Exception.
-        raise FetchError("annotation_file_not_found", f"failed to read GFF: {exc}", gff_path=str(files.gff_path)) from exc

@@ -266,6 +266,7 @@ def run_export(req: SeqRequest, items: Iterable[Item], *, out_dir: Path,
         manifest_part.unlink(missing_ok=True)
         raise
     finally:
+        resolver.close()
         shutil.rmtree(work_root, ignore_errors=True)
 
     fasta_path, manifest_path = out_dir / "result.fa", out_dir / "manifest.tsv"

@@ -14,7 +14,6 @@ from helpers.logging_config import configure_logging
 from helpers.ncbi_eutils import close_ncbi_client
 from helpers.session import close_reader
 from routers import api_router
-from helpers.tabix_fetch import close_tabix_handles
 
 # Before create_app / worker serve: INFO must reach stderr for ``docker logs``.
 configure_logging()
@@ -25,7 +24,6 @@ async def lifespan(_app: FastAPI):
     # Re-run after worker boot — gunicorn may have reconfigured logging.
     configure_logging()
     yield
-    close_tabix_handles()
     close_ncbi_client()
     close_reader()
 

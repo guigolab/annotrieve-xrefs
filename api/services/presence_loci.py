@@ -183,20 +183,23 @@ def _term_rows(loci: sqlite3.Connection, term_i: int, name_id: int, min_ord: int
         yield (r["ord"], r["local_id"], term_i, r)
 
 
-_SEQID_CACHE: "OrderedDict[tuple[str, int], dict[int, str]]" = OrderedDict()
+_SEQID_CACHE: "OrderedDict[tuple[str, int, int], str]" = OrderedDict()
 _SEQID_LOCK = threading.Lock()
-SEQID_CACHE_ENTRIES = 4096
+SEQID_CACHE_ENTRIES = 50_000       # one short string each (about 10 MB at most)
 
 
-def _seqids(loci: sqlite3.Connection, data_version: str, ord_: int) -> dict[int, str]:
-    """seqid_id -> seqid for one annotation, through a small process-wide LRU cache."""
-    key = (data_version, ord_)
+def _seqid(loci: sqlite3.Connection, data_version: str, ord_: int, seqid_id: int) -> str:
+    """One contig name by key. Whole per-annotation tables are not loaded: a scaffold-level
+    assembly can have tens of thousands of contigs and a query touches only a few of them."""
+    key = (data_version, ord_, seqid_id)
     with _SEQID_LOCK:
         hit = _SEQID_CACHE.get(key)
         if hit is not None:
             _SEQID_CACHE.move_to_end(key)
             return hit
-    value = dict(loci.execute("SELECT seqid_id, seqid FROM seqid WHERE ord=?", (ord_,)))
+    row = loci.execute("SELECT seqid FROM seqid WHERE ord=? AND seqid_id=?",
+                       (ord_, seqid_id)).fetchone()
+    value = row[0] if row else ""
     with _SEQID_LOCK:
         _SEQID_CACHE[key] = value
         while len(_SEQID_CACHE) > SEQID_CACHE_ENTRIES:
@@ -235,7 +238,6 @@ def iter_loci(pres: sqlite3.Connection, loci: sqlite3.Connection, q: LociQuery,
             info = (r0["annotation_id"], r0["organism_name"], r0["assembly_accession"],
                     int(r0["source"]))
         ann_id, organism, accession, source = info
-        seqids = _seqids(loci, q.data_version, ord_)
         out = []
         for local_id, g in genes.items():
             r = g["row"]
@@ -243,7 +245,7 @@ def iter_loci(pres: sqlite3.Connection, loci: sqlite3.Connection, q: LociQuery,
             first = q.terms[terms[0]]["name"]
             pname = r["primary_name"]
             symbol = pname if pname and pname.casefold() == first else first
-            seqid = seqids.get(r["seqid_id"], "")
+            seqid = _seqid(loci, q.data_version, ord_, r["seqid_id"])
             out.append({
                 "annotation_id": ann_id, "ord": ord_,
                 "organism_name": organism,

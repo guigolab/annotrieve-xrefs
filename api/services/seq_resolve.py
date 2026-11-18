@@ -16,7 +16,7 @@ from helpers.annotation_files import (
     resolve_seqid_accession,
 )
 from helpers.gff_slice import TranscriptModel, load_features_from_lines, resolve_transcripts
-from helpers.tabix_fetch import FetchError, fetch_region_lines
+from helpers.tabix_fetch import FetchError, TabixCache
 from helpers.transcript_select import Candidate, Rule, gene_extent, list_candidates, select_transcripts
 from helpers.windows import GenomicWindow
 from services.seq_genes import Gene
@@ -70,8 +70,13 @@ class GeneResolver:
         self.action = action
         self.rule = rule
         self.buffer_bp = buffer_bp
+        self.tabix = TabixCache(max_handles=2)
         self._files: dict[int, AnnotationFiles | AnnotationFilesError] = {}
         self._accessions: dict[tuple[int, str], str | AnnotationFilesError] = {}
+
+    def close(self) -> None:
+        """Release the open GFF files. Call when the request is done."""
+        self.tabix.close()
 
     def _annotation_files(self, gene: Gene) -> AnnotationFiles:
         cached = self._files.get(gene.ord)
@@ -113,13 +118,13 @@ class GeneResolver:
         try:
             region = (gene.start, gene.end)
             feats = load_features_from_lines(
-                fetch_region_lines(files, seqid=gene.seqid, start=region[0], end=region[1]))
+                self.tabix.fetch(files, seqid=gene.seqid, start=region[0], end=region[1]))
             ext = gene_extent(feats, gene.gene_id)
             if ext and (ext[0] < region[0] or ext[1] > region[1]):
                 # A transcript reaches beyond the gene: fetch again so its exons are complete.
                 region = (min(region[0], ext[0]), max(region[1], ext[1]))
                 feats = load_features_from_lines(
-                    fetch_region_lines(files, seqid=gene.seqid, start=region[0], end=region[1]))
+                    self.tabix.fetch(files, seqid=gene.seqid, start=region[0], end=region[1]))
         except FetchError as exc:
             reason = "seqid_not_resolved" if exc.code == "seqid_not_resolved" else "gff_unavailable"
             return res.fail(reason, str(exc))

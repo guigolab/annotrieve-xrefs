@@ -236,7 +236,7 @@ def post_sequences_plan(body: SequencesBody):
                 n_genes_at_least=counted.n_genes, max_genes=cap))
         resolver = GeneResolver(req.action.value, req.rule, req.buffer_bp)
         genes, loci_out = [], []
-        for ref, gene, reason in src.items():
+        for ref, gene, reason in _plan_items(src, resolver):
             if gene is None:
                 genes.append({"locus_ref": ref, "status": "skipped", "reason": reason,
                               "message": reason.replace("_", " "), "transcripts": []})
@@ -261,6 +261,14 @@ def post_sequences_plan(body: SequencesBody):
                 "genes": genes, "loci": loci_out}
     finally:
         src.close()
+
+
+def _plan_items(src: Source, resolver: GeneResolver):
+    """The source's genes; releases the resolver's open GFF files when the loop ends."""
+    try:
+        yield from src.items()
+    finally:
+        resolver.close()
 
 
 def _count_cap(src: Source, cap: int):

@@ -71,7 +71,7 @@ def ref_genes(pres, loci, ref, reader, entries: tuple[LociEntry, ...]
     info = annotation_info(reader)
     paths = annotation_paths(reader)
     ords: dict[str, int | None] = {}
-    seqids: dict[int, dict[int, str]] = {}
+    seqids: dict[tuple[int, int], str] = {}
     for entry in entries:
         if entry.annotation_id not in ords:
             row = pres.execute("SELECT ord FROM annotation WHERE annotation_id=?",
@@ -90,15 +90,16 @@ def ref_genes(pres, loci, ref, reader, entries: tuple[LociEntry, ...]
         if r is None:
             yield entry, None, "locus_not_found"
             continue
-        if ord_ not in seqids:
-            seqids[ord_] = dict(loci.execute("SELECT seqid_id, seqid FROM seqid WHERE ord=?",
-                                             (ord_,)))
+        sq = (ord_, r["seqid_id"])
+        if sq not in seqids:
+            row = loci.execute("SELECT seqid FROM seqid WHERE ord=? AND seqid_id=?", sq).fetchone()
+            seqids[sq] = row[0] if row else ""
         _aid, organism, accession, _source = info[ord_]
         taxid, gff_path = paths[ord_]
         gene_id = r["gene_id"] or ""
         yield entry, Gene(
             ord=ord_, annotation_id=entry.annotation_id, local_id=entry.local_id,
             organism=organism or "", accession=accession or "", taxid=taxid, gff_path=gff_path,
-            seqid=seqids[ord_].get(r["seqid_id"], ""), start=r["start"], end=r["end"],
+            seqid=seqids[sq], start=r["start"], end=r["end"],
             strand=STRAND.get(r["strand"], "."), symbol=r["primary_name"] or gene_id,
             gene_id=gene_id, pinned=entry.transcript_id), ""

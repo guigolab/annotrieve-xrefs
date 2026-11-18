@@ -134,9 +134,8 @@ def main(argv=None) -> int:
         buf = io.StringIO()
         pstats.Stats(prof, stream=buf).sort_stats("cumulative").print_stats(14)
         print("\n".join(ln for ln in buf.getvalue().splitlines() if ln.strip())[:3500])
-    from helpers import tabix_fetch
-    handles = sum(len(c) for c in tabix_fetch._TABIX_REGISTRY.values())
-    print(f"  open tabix handles: {handles}")
+    print(f"  open tabix handles before close: {len(resolver.tabix)}")
+    resolver.close()
     print("  outcome:", dict(reasons))
     print("  candidate transcripts per gene (10 = 10 or more):", dict(sorted(n_cands.items())))
     print("  number of different transcripts chosen by the 6 presets:", dict(sorted(disagree.items())))

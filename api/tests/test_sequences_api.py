@@ -290,3 +290,23 @@ def test_links_use_the_public_base_url_behind_a_proxy(seq_client):
         assert job.json()["status_url"].startswith("https://example.org/annotrieve-xrefs/api/v1/sequence-jobs/")
     finally:
         settings_mod.settings.PUBLIC_BASE_URL = ""
+
+
+def test_tabix_cache_keeps_at_most_two_files_open_and_releases_them(tmp_path):
+    from helpers.annotation_files import AnnotationFiles
+    from helpers.tabix_fetch import FetchError, TabixCache
+
+    cache = TabixCache(max_handles=2)
+    files = []
+    for i in range(5):
+        gff = tmp_path / f"a{i}" / "x.gff.gz"
+        write_tabix(gff, GENE1)
+        files.append(AnnotationFiles(gff, Path(str(gff) + ".tbi"), 9606, "GCF_1", gff.parent, ""))
+    for f in files:
+        assert any("gene-1" in ln for ln in cache.fetch(f, seqid="chr1", start=100, end=150))
+        assert len(cache) <= 2
+    with pytest.raises(FetchError) as exc:
+        cache.fetch(files[0], seqid="no-such-contig", start=1, end=10)
+    assert exc.value.code == "seqid_not_resolved"
+    cache.close()
+    assert len(cache) == 0
