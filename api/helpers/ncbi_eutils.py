@@ -6,6 +6,7 @@ import logging
 import os
 import random
 import struct
+import re
 import tempfile
 import threading
 import time
@@ -499,11 +500,12 @@ class NcbiEutilsClient:
             # Some NCBI errors arrive as HTTP 200 with an explanatory body.
             if not text.lstrip().startswith(">"):
                 preview = text.strip()[:200]
-                lowered = preview.lower()
-                if "not found" in lowered or "failed" in lowered:
+                # NCBI sometimes spaces its letters out ("F a i l e d ..."): compare without blanks.
+                compact = re.sub(r"[\s\x00]+", "", preview).lower()
+                if "notfound" in compact or "failed" in compact:
                     raise NcbiError(
                         "ncbi_sequence_not_found",
-                        f"NCBI sequence not found: {accession}",
+                        f"NCBI has no sequence for {accession}",
                         status=502,
                         accession=accession,
                     )

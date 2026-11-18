@@ -326,6 +326,20 @@ def test_oversized_gff_index_is_skipped_with_a_reason(seq_client):
         settings_mod.settings.SEQUENCES_MAX_INDEX_MB = 0.0
 
 
+def test_contig_unknown_to_ncbi_is_skipped_with_its_own_reason(seq_client):
+    client, _ = seq_client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="Error: F a i l e d  t o  u n d e r s t a n d  i d : chr1")
+
+    reset_ncbi_client(NcbiEutilsClient(rate_per_sec=1000, cache_mb=0,
+                                       transport=httpx.MockTransport(handler)))
+    r = client.post("/sequences", json=TP53)
+    assert r.status_code == 200 and r.headers["X-Sequence-Count"] == "0"
+    man = client.get(f"/sequences/results/{r.headers['X-Result-Id']}/manifest.tsv").text
+    assert {ln.split("\t")[7] for ln in man.strip().splitlines()[1:]} == {"ncbi_sequence_not_found"}
+
+
 def test_request_order_is_kept_when_genes_are_resolved_by_annotation(seq_client):
     client, _ = seq_client
     plan = client.post("/sequence-plans", json=TP53).json()

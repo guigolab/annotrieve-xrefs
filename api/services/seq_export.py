@@ -114,7 +114,8 @@ def _cut(res: Resolved, parent: CoalescedWindow, fetched, buffer_bp: int
     w = res.window
     value = fetched[(parent.accession, parent.start, parent.stop)]
     if isinstance(value, NcbiError):
-        return "ncbi_error", str(value)
+        code = value.code if value.code in ("ncbi_sequence_not_found", "ncbi_timeout") else "ncbi_error"
+        return code, str(value)
     available_stop = parent.start + len(value) - 1
     slice_stop = min(w.stop, available_stop)
     if slice_stop < w.start:

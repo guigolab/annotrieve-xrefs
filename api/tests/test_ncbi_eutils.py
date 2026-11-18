@@ -150,6 +150,20 @@ def test_non_fasta_200_is_error():
     client.close()
 
 
+def test_spaced_out_failure_body_is_sequence_not_found():
+    body = "Error: F a i l e d  t o  u n d e r s t a n d  i d : scaffold_01"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=body)
+
+    client = NcbiEutilsClient(rate_per_sec=1000, cache_mb=0, transport=httpx.MockTransport(handler))
+    with pytest.raises(NcbiError) as exc:
+        client.fetch_window(GenomicWindow("scaffold_01", 1, 4))
+    assert exc.value.code == "ncbi_sequence_not_found"
+    assert "F a i l e d" not in str(exc.value)
+    client.close()
+
+
 def test_404_maps_to_not_found():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, text="not found")

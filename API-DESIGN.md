@@ -195,7 +195,7 @@ Rule object: `{"rank_by": ["coding:desc", "cds_len:desc"], "require": ["coding",
 - Larger requests: `202 {job_id, result_id}`, then `GET /sequence-jobs/{id}` (phase, `done/total`).
 - `GET /sequences/results/{result_id}` (FASTA) and `/manifest.tsv` while the result is cached. FASTA has no safe place for comments, so skip details live only in the manifest.
 - Manifest columns: `locus_ref, symbol, status, transcript_id, rule, n_candidates, reason, seq_length`.
-- Skip reasons: `no_transcript`, `no_cds`, `filtered_out`, `transcript_not_found`, `gff_unavailable`, `seqid_not_resolved`, `window_too_large`, `ncbi_error`.
+- Skip reasons: `no_transcript`, `no_cds`, `filtered_out`, `transcript_not_found`, `gff_unavailable`, `seqid_not_resolved`, `window_too_large`, `ncbi_sequence_not_found` (the contig is not an NCBI sequence), `ncbi_timeout`, `ncbi_error`.
 - FASTA header: `>{symbol}|{organism}|{assembly_accession}|{annotation_id}|{transcript_id}`.
 - Transcript models come from the GFF slice when a request needs them (no global transcript table), with a read-through cache keyed by `annotation_id` and gene. GFF path comes from the presence index (`annotation.taxid`, `annotation.gff_path`).
 - Limits: a global NCBI rate limiter shared by all workers, a per-IP quota, results cached by `result_id`.
