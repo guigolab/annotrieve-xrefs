@@ -275,3 +275,18 @@ def test_missing_ref_index_is_a_clear_503_for_loci_mode_only(seq_client):
     r = client.post("/sequences", json={"action": "cds", "loci": ["ann0:1"]})
     assert r.status_code == 503 and r.json()["detail"]["code"] == "locus_ref_index_unavailable"
     assert client.post("/sequences", json=TP53).status_code == 200
+
+
+def test_links_use_the_public_base_url_behind_a_proxy(seq_client):
+    import settings as settings_mod
+    client, _ = seq_client
+    settings_mod.settings.PUBLIC_BASE_URL = "https://example.org/annotrieve-xrefs/api/v1/"
+    try:
+        r = client.post("/sequences", json=TP53)
+        assert r.headers["X-Manifest-Url"] == (
+            f"https://example.org/annotrieve-xrefs/api/v1/sequences/results/{r.headers['X-Result-Id']}/manifest.tsv")
+        job = client.get(f"/sequence-jobs/{r.headers['X-Result-Id']}")
+        assert job.headers["cache-control"] == "no-store"
+        assert job.json()["status_url"].startswith("https://example.org/annotrieve-xrefs/api/v1/sequence-jobs/")
+    finally:
+        settings_mod.settings.PUBLIC_BASE_URL = ""

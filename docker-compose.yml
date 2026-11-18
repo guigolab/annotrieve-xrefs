@@ -41,8 +41,12 @@ services:
       - xrefs_tmp:/tmp
     environment:
       - GENE_CORPUS_DIR=/data/gene_corpus
+      - PRESENCE_DIR=/data/gene_corpus/serve
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://genome.crg.es/annotrieve-xrefs/api/v1}
+      - SEQUENCES_RESULTS_DIR=/tmp/annotrieve-sequences
       - ANNOTATIONS_DIR=/data/annotations
       - NCBI_WORKERS=4
+      - NCBI_PROCESSES=2
       - PYTHONPATH=/home/appuser
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
       - TMPDIR=/tmp

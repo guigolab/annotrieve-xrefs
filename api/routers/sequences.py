@@ -80,7 +80,7 @@ def _parse(body: SequencesBody, *, default_action: str | None = None) -> SeqRequ
 
 
 def _urls(request: Request, rid: str) -> dict[str, str]:
-    base = str(request.base_url).rstrip("/")
+    base = (settings.PUBLIC_BASE_URL or str(request.base_url)).rstrip("/")
     return {"status_url": f"{base}/sequence-jobs/{rid}",
             "result_url": f"{base}/sequences/results/{rid}",
             "manifest_url": f"{base}/sequences/results/{rid}/manifest.tsv"}
@@ -276,7 +276,8 @@ def get_sequence_job(result_id: str, request: Request):
     if status is None:
         raise HTTPException(status_code=404, detail=error_detail(
             "job_not_found", "no such job (results expire after a while)"))
-    return _job_payload(request, result_id, status)
+    return JSONResponse(_job_payload(request, result_id, status),
+                        headers={"Cache-Control": "no-store"})
 
 
 def _ready(result_id: str) -> tuple[dict, Any]:

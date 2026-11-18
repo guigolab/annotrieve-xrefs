@@ -52,8 +52,14 @@ class Settings:
     NCBI_EMAIL: str = os.getenv("NCBI_EMAIL", "annotrieve-xrefs@crg.eu")
     NCBI_TOOL: str = os.getenv("NCBI_TOOL", "annotrieve-xrefs")
     NCBI_WORKERS: int = _env_int("NCBI_WORKERS", 2)
+    # Number of API processes (gunicorn -w): each has its own token bucket, so the NCBI budget is
+    # divided by this to keep the whole container within it.
+    NCBI_PROCESSES: int = _env_int("NCBI_PROCESSES", 1)
 
     # Sequences endpoint.
+    # Public base of this API (scheme, host and path prefix) used in job/result links, because
+    # the app sits behind a path-rewriting proxy and cannot see its public URL.
+    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "")
     SEQUENCES_MAX_GENES: int = _env_int("SEQUENCES_MAX_GENES", 2000)
     SEQUENCES_SYNC_MAX_GENES: int = _env_int("SEQUENCES_SYNC_MAX_GENES", 50)
     SEQUENCES_PLAN_MAX_GENES: int = _env_int("SEQUENCES_PLAN_MAX_GENES", 200)

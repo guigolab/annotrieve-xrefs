@@ -126,14 +126,15 @@ class _WindowCache:
 
 
 def _default_rate() -> float:
-    """Full NCBI budget for this process (shared by all fetch threads).
+    """This process's share of the NCBI budget (shared by all its fetch threads).
 
     ``NCBI_WORKERS`` only controls thread-pool parallelism; it must not shrink
     the token-bucket rate. One ``NcbiEutilsClient`` / bucket per process via
     ``get_ncbi_client()``.
     """
     key = (settings.NCBI_API_KEY or "").strip()
-    return _RATE_WITH_KEY if key else _RATE_WITHOUT_KEY
+    base = _RATE_WITH_KEY if key else _RATE_WITHOUT_KEY
+    return base / max(1, int(settings.NCBI_PROCESSES))
 
 
 def _parse_fasta_body(text: str) -> str:
