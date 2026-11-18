@@ -222,3 +222,26 @@ def test_worker_memory_cap_turns_overuse_into_an_exception():
         assert ex.submit(_try_alloc, 0).result() == "memory_error"
     with ProcessPoolExecutor(max_workers=1, initializer=_init_worker, initargs=(0,)) as ex:
         assert ex.submit(_try_alloc, 0).result() == "allocated"
+
+
+def test_missing_lists_only_harvestable_catalogue_annotations(tmp_path, capsys):
+    work = make_corpus(tmp_path, n=2)             # ann00 RefSeq, ann01 Ensembl have shards
+    f = tmp_path / "report.tsv"
+    f.write_text("\n".join(tsv(
+        ("ann00", "GCF_1", "n", "o", 9606, "RefSeq", "p", "2024-01-01", "1"),
+        ("new_gb", "GCA_2", "n", "o", 1, "GenBank", "p", "2024-01-01", "1"),
+        ("new_ens", "GCA_3", "n", "o", 1, "Ensembl", "p", "2024-01-01", "1"),
+        ("new_comm", "GCA_4", "n", "o", 1, "CommunityRegistry", "p", "2024-01-01", "1"),
+        ("new_odd", "GCA_5", "n", "o", 1, "Mystery", "p", "2024-01-01", "1"),
+    )) + "\n")
+    serve_build_main(["sidecars", "--work-dir", str(work), "--workers", "1"])
+    serve_build_main(["catalogue", "--work-dir", str(work), "--tsv-file", str(f)])
+    capsys.readouterr()
+    assert serve_build_main(["missing", "--work-dir", str(work)]) == 0
+    out = capsys.readouterr().out
+    assert "without a shard: 4" in out and "harvestable (Ensembl/GenBank/RefSeq): 2" in out
+    assert "community (skipped): 1" in out and "unknown source (skipped): 1" in out
+    ids = (work / "serve" / "missing_ids.txt").read_text().split()
+    assert ids == ["new_ens", "new_gb"]
+    serve_build_main(["missing", "--work-dir", str(work), "--limit", "1"])
+    assert (work / "serve" / "missing_ids.txt").read_text().split() == ["new_ens"]

@@ -24,6 +24,11 @@ class Settings:
     # and {GENE_CORPUS_DIR}/per_gff/<id>/genes.sqlite
     GENE_CORPUS_DIR: str = os.getenv("GENE_CORPUS_DIR", "")
 
+    # Presence index (PLAN-build-tables.md): directory holding the ``current`` symlink to
+    # ``v<data_version>/presence.sqlite``. When set, /names and /hits read it (symbol vs
+    # alias aware) instead of gene_corpus.sqlite xref_file. Empty = legacy behaviour.
+    PRESENCE_DIR: str = os.getenv("PRESENCE_DIR", "")
+
     # Negative cache_size is KiB (~256 MiB).
     READ_CACHE_SIZE: int = _env_int("READ_CACHE_SIZE", -262144)
 
@@ -65,3 +70,8 @@ def annotations_dir() -> Path | None:
     if not raw:
         return None
     return Path(raw)
+
+
+def presence_dir() -> Path | None:
+    raw = (settings.PRESENCE_DIR or "").strip()
+    return Path(raw) if raw else None

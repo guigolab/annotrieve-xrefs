@@ -9,8 +9,10 @@ from helpers.concurrency import BusyError, hits_slot
 from helpers.cursor import QueryError
 from helpers.deps import corpus_conn
 from helpers.errors import error_detail
+from helpers.presence import presence_enabled, presence_reader
 from helpers.pagination import MAX_NAMES_GET, MAX_NAMES_POST
 from services.hits import list_name_hits
+from services.presence_hits import list_name_hits_presence
 
 router = APIRouter()
 
@@ -22,6 +24,7 @@ _VALIDATION_CODES = frozenset(
         "too_many_taxids",
         "wildcard_not_supported",
         "invalid_taxid",
+        "invalid_alias_mode",
     }
 )
 
@@ -36,6 +39,7 @@ class HitsSearchBody(BaseModel):
     names: list[str] = Field(...)
     include_taxids: list[int] | None = None
     exclude_taxids: list[int] | None = None
+    alias: str | None = None
 
 
 def _busy_response() -> JSONResponse:
@@ -73,6 +77,14 @@ def get_hits(
         None,
         description="Comma-separated NCBI taxids to exclude (lineage)",
     ),
+    alias: str = Query(
+        "suggest",
+        description=(
+            "off | suggest | include. suggest (default) counts symbol hits as matches and "
+            "lists alias-only annotations as `alias_only`; include restores the union. "
+            "Only applies when the presence index is enabled (PRESENCE_DIR)."
+        ),
+    ),
 ):
     """
     Presence search by exact gene symbol/synonym names.
@@ -82,6 +94,10 @@ def get_hits(
     """
     try:
         with hits_slot():
+            if presence_enabled():
+                return list_name_hits_presence(
+                    presence_reader(), names, include_taxids=include_taxids,
+                    exclude_taxids=exclude_taxids, alias=alias, max_names=MAX_NAMES_GET)
             return list_name_hits(
                 corpus_conn(),
                 names,
@@ -100,6 +116,11 @@ def post_hits(body: HitsSearchBody):
     """Presence search for a larger name list (JSON body). Prefer GET when ≤200."""
     try:
         with hits_slot():
+            if presence_enabled():
+                return list_name_hits_presence(
+                    presence_reader(), body.names, include_taxids=body.include_taxids,
+                    exclude_taxids=body.exclude_taxids, alias=body.alias,
+                    max_names=MAX_NAMES_POST)
             return list_name_hits(
                 corpus_conn(),
                 body.names,

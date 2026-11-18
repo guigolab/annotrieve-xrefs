@@ -5,7 +5,9 @@ from fastapi import APIRouter, HTTPException, Query
 
 from helpers.cursor import QueryError
 from helpers.deps import corpus_conn
+from helpers.presence import presence_enabled, presence_reader
 from services.names import list_names_by_prefix
+from services.presence_hits import list_names_by_prefix_presence
 
 router = APIRouter()
 
@@ -16,6 +18,7 @@ _VALIDATION_CODES = frozenset(
         "invalid_prefix",
         "too_many_taxids",
         "invalid_taxid",
+        "invalid_alias_mode",
     }
 )
 
@@ -42,6 +45,14 @@ def get_names(
         None,
         description="Comma-separated NCBI taxids to exclude (lineage)",
     ),
+    alias: str = Query(
+        "suggest",
+        description=(
+            "off | suggest | include. n_annotations counts symbol annotations; "
+            "n_alias_extra counts annotations reachable only through an alias. "
+            "Only applies when the presence index is enabled (PRESENCE_DIR)."
+        ),
+    ),
 ):
     """
     Prefix discovery for building an exact gene-name set.
@@ -50,6 +61,10 @@ def get_names(
     Use ``GET|POST /hits`` with the selected exact names to find annotations.
     """
     try:
+        if presence_enabled():
+            return list_names_by_prefix_presence(
+                presence_reader(), prefix, include_taxids=include_taxids,
+                exclude_taxids=exclude_taxids, alias=alias)
         return list_names_by_prefix(
             corpus_conn(),
             prefix,

@@ -36,7 +36,7 @@ from gene_corpus.sql.manifest import (
     work_shard,
 )
 
-COMMANDS = ("catalogue", "sidecars", "status", "build")
+COMMANDS = ("catalogue", "sidecars", "status", "build", "missing")
 
 
 def _log(msg: str) -> None:
@@ -82,6 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--limit-annotations", type=int, default=None, help="trial build: first N annotations")
     b.add_argument("--verify-annotations", type=int, default=30)
     b.add_argument("--keep-runs", action="store_true")
+
+    m = sub.add_parser("missing", help="list catalogue annotations that have no shard yet")
+    _common(m)
+    m.add_argument("--out", type=Path, default=None,
+                   help="write harvestable annotation_ids here (default: <work-dir>/serve/missing_ids.txt)")
+    m.add_argument("--limit", type=int, default=None, help="only the first N ids (pilot)")
 
     t = sub.add_parser("status", help="show manifest counts")
     _common(t)
@@ -233,6 +239,48 @@ def _cmd_sidecars(args) -> int:
     return 130 if interrupted else (1 if failures else 0)
 
 
+def _cmd_missing(args) -> int:
+    from gene_corpus.sql.manifest import STATUS_SKIPPED_COMMUNITY, classify_source
+
+    _per_gff, manifest = _paths(args)
+    if not manifest.exists():
+        print(f"no manifest at {manifest}", file=sys.stderr)
+        return 2
+    conn = open_manifest(manifest)
+    if not conn.execute("SELECT COUNT(*) FROM catalogue").fetchone()[0]:
+        print("catalogue is empty: run `catalogue` first", file=sys.stderr)
+        return 2
+    by_db: Counter = Counter()
+    ids: list[str] = []
+    n_community = n_unknown = 0
+    for aid, database in conn.execute(
+        "SELECT c.annotation_id, c.database FROM catalogue c WHERE NOT EXISTS "
+        "(SELECT 1 FROM annotation a WHERE a.annotation_id = c.annotation_id) "
+        "ORDER BY c.annotation_id"
+    ):
+        by_db[database or "(empty)"] += 1
+        skip = classify_source(database)
+        if skip is None:
+            ids.append(aid)
+        elif skip == STATUS_SKIPPED_COMMUNITY:
+            n_community += 1
+        else:
+            n_unknown += 1
+    total = sum(by_db.values())
+    print(f"catalogue annotations without a shard: {total:,}")
+    for db, n in by_db.most_common():
+        print(f"  {db:<24} {n:>7,}")
+    print(f"  -> harvestable (Ensembl/GenBank/RefSeq): {len(ids):,}; community (skipped): "
+          f"{n_community:,}; unknown source (skipped): {n_unknown:,}")
+    if args.limit:
+        ids = ids[: args.limit]
+    out = args.out or (args.work_dir / "serve" / "missing_ids.txt")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("".join(f"{i}\n" for i in ids), encoding="utf-8")
+    print(f"wrote {len(ids):,} ids to {out}")
+    return 0
+
+
 def _cmd_status(args) -> int:
     _per_gff, manifest = _paths(args)
     if not manifest.exists():
@@ -292,5 +340,5 @@ def _cmd_build(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     return {"catalogue": _cmd_catalogue, "sidecars": _cmd_sidecars, "status": _cmd_status,
-            "build": _cmd_build}[
+            "build": _cmd_build, "missing": _cmd_missing}[
         args.command](args)
