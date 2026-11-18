@@ -44,9 +44,12 @@ def _counts_from_shard(job: AnnotationJob, per_gff_root: str) -> tuple[int, str]
     return n_pairs, job.annotation_id
 
 
-def _harvest_one(job: AnnotationJob, per_gff_root: str) -> tuple[int, str]:
+def _harvest_one(
+    job: AnnotationJob, per_gff_root: str, memory_flush_units: int | None = None
+) -> tuple[int, str]:
     """Worker entry: returns (n_pairs, annotation_id)."""
-    n_pairs = harvest_annotation(job, per_gff_root=Path(per_gff_root))
+    kwargs = {} if memory_flush_units is None else {"memory_flush_units": memory_flush_units}
+    n_pairs = harvest_annotation(job, per_gff_root=Path(per_gff_root), **kwargs)
     return n_pairs, job.annotation_id
 
 
@@ -55,6 +58,7 @@ def process_one(
     per_gff_root: str,
     *,
     force: bool = False,
+    memory_flush_units: int | None = None,
 ) -> tuple[int, str, bool]:
     """
     Harvest or skip if ``genes.sqlite`` already exists (unless ``force``).
@@ -68,7 +72,7 @@ def process_one(
     if shard.is_file() and not force:
         n_pairs, ann_id = _counts_from_shard(job, per_gff_root)
         return n_pairs, ann_id, True
-    n_pairs, ann_id = _harvest_one(job, per_gff_root)
+    n_pairs, ann_id = _harvest_one(job, per_gff_root, memory_flush_units)
     return n_pairs, ann_id, False
 
 
@@ -143,6 +147,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("tmp/gene_corpus_build"),
         help="output root (writes per_gff/ and jobs.jsonl)",
+    )
+    parser.add_argument(
+        "--memory-flush-units",
+        type=int,
+        default=None,
+        help=(
+            "flush the open-locus window at this size (default 2,000,000). "
+            "Lower it (for example 200000) for huge annotations to cut memory."
+        ),
     )
     parser.add_argument(
         "--force",
@@ -254,7 +267,8 @@ def main(argv: list[str] | None = None) -> int:
         for job in prepared:
             try:
                 n_pairs, ann_id, skipped = process_one(
-                    job, str(per_gff_root), force=force
+                    job, str(per_gff_root), force=force,
+                    memory_flush_units=args.memory_flush_units,
                 )
                 if skipped:
                     skipped_existing += 1
@@ -268,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as exc:  # noqa: BLE001
                 errors += 1
                 print(
-                    f"harvest fail {job.annotation_id}: {exc}",
+                    f"harvest fail {job.annotation_id}: {type(exc).__name__}: {exc}",
                     file=sys.stderr,
                 )
             _on_complete()
@@ -276,7 +290,8 @@ def main(argv: list[str] | None = None) -> int:
         with ProcessPoolExecutor(max_workers=args.workers) as pool:
             futures = {
                 pool.submit(
-                    process_one, job, str(per_gff_root), force=force
+                    process_one, job, str(per_gff_root), force=force,
+                    memory_flush_units=args.memory_flush_units,
                 ): job
                 for job in prepared
             }
@@ -296,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception as exc:  # noqa: BLE001
                     errors += 1
                     print(
-                        f"harvest fail {job.annotation_id}: {exc}",
+                        f"harvest fail {job.annotation_id}: {type(exc).__name__}: {exc}",
                         file=sys.stderr,
                     )
                 _on_complete()
