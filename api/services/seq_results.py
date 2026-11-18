@@ -83,13 +83,71 @@ def purge_expired() -> int:
     return removed
 
 
-def start_job(result_id: str, work: Callable[[Path, Callable[..., None]], dict]) -> bool:
+class Refused(Exception):
+    """A request the service will not start now (capacity or per-client limits)."""
+
+    def __init__(self, status: int, code: str, message: str, retry_after: int, **extra) -> None:
+        super().__init__(message)
+        self.status, self.code, self.retry_after, self.extra = status, code, retry_after, extra
+
+
+def _entries() -> list[tuple[Path, dict | None]]:
+    out = []
+    for d in results_root().iterdir():
+        if d.is_dir() and valid_id(d.name):
+            out.append((d, read_status(d.name)))
+    return out
+
+
+def admit(owner: str) -> None:
+    """Check capacity and the client's limits before a new export starts; raises :class:`Refused`.
+
+    Makes room when the store is full by deleting the oldest finished results. Counts come from the
+    retained results' ``status.json``, so every worker sees the same numbers. The check is soft: two
+    simultaneous requests can both pass it.
+    """
+    purge_expired()
+    now = time.time()
+    entries = _entries()
+
+    max_active = int(settings.SEQUENCES_IP_MAX_ACTIVE)
+    if max_active > 0:
+        active = sum(1 for _d, st in entries if st and st.get("owner") == owner
+                     and st.get("state") in ("queued", "running"))
+        if active >= max_active:
+            raise Refused(429, "too_many_active_exports",
+                          f"you already have {active} exports running; wait for one to finish",
+                          retry_after=15, active=active, limit=max_active)
+    per_hour = int(settings.SEQUENCES_IP_MAX_PER_HOUR)
+    if per_hour > 0:
+        mine = sorted(st.get("created", 0) for _d, st in entries
+                      if st and st.get("owner") == owner and now - st.get("created", 0) < 3600)
+        if len(mine) >= per_hour:
+            wait = int(max(1, mine[0] + 3600 - now))
+            raise Refused(429, "export_rate_limited",
+                          f"at most {per_hour} new exports per hour; retry in {wait} s",
+                          retry_after=wait, limit_per_hour=per_hour)
+
+    cap = int(settings.SEQUENCES_MAX_RESULTS)
+    if cap > 0 and len(entries) >= cap:
+        finished = sorted((d for d, st in entries
+                           if d.name not in _LIVE and (st is None or st.get("state") in ("done", "failed"))),
+                          key=lambda d: d.stat().st_mtime)
+        for d in finished[: len(entries) - cap + 1]:
+            shutil.rmtree(d, ignore_errors=True)
+        if len(entries) - min(len(finished), len(entries) - cap + 1) >= cap:
+            raise Refused(503, "sequences_capacity",
+                          f"{cap} exports are running; retry shortly", retry_after=30, max_results=cap)
+
+
+def start_job(result_id: str, work: Callable[[Path, Callable[..., None]], dict], *,
+              owner: str = "") -> bool:
     """Run ``work(out_dir, progress)`` in a background thread. False if already running here."""
     with _LOCK:
         if result_id in _LIVE:
             return False
         _LIVE.add(result_id)
-    write_status(result_id, state="queued", done=0, error=None, created=time.time())
+    write_status(result_id, state="queued", done=0, error=None, created=time.time(), owner=owner)
 
     def progress(done, total, counts) -> None:
         write_status(result_id, state="running", done=done, total=total,

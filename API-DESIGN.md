@@ -186,6 +186,8 @@ Rule object: `{"rank_by": ["coding:desc", "cds_len:desc"], "require": ["coding",
 - `POST /sequence-estimates`: index only, no GFF reads: `{n_genes, n_annotations, est_bp_upper_bound, over_limit}`. Transcript counts are unknown at this stage.
 - `POST /sequence-plans`: same body, reads the GFF slices. One row per eligible transcript with its metrics, `selected`, and the rule that applied. A client edits the table and posts it back as `loci`.
 
+**Storage and abuse limits.** Results and scratch files live under `SEQUENCES_RESULTS_DIR` (shared storage, TTL 24 h), at most `SEQUENCES_MAX_RESULTS` (100) at a time. Each result records a hash of the client IP; a client may have 2 exports running and start 20 per hour (429 `too_many_active_exports` / `export_rate_limited`, with `Retry-After`). The check is soft (two simultaneous requests can both pass) and is computed from the retained results, so every worker agrees. The NCBI rate-limit file stays on local `/tmp` because `flock` is unreliable on NFS.
+
 **NCBI budget.** All API processes share one request budget through a lock file (`NCBI_RATE_STATE_FILE`); a 429 from NCBI delays every process. Per-client fairness is not enforced beyond the proxy's per-IP limit.
 
 **Response.** Every result has a `result_id` = hash of the normalised request + `data_version`.

@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from helpers.client_ip import client_ip, owner_key
 from helpers.concurrency import BusyError, sequences_slot
 from helpers.cursor import QueryError
 from helpers.errors import error_detail
@@ -21,6 +22,8 @@ from services.seq_export import run_export
 from services.seq_request import SeqRequest, parse_request
 from services.seq_resolve import GeneResolver, SeqError
 from services.seq_results import (
+    Refused,
+    admit,
     purge_expired,
     read_status,
     result_dir,
@@ -53,7 +56,9 @@ SEQUENCES_RESPONSES = {
     413: {**_ERR, "description": "`too_many_genes` (over `max_genes`)"},
     422: {**_ERR, "description": "Invalid request (`validation_error`, `exactly_one_source`, "
                                  "`unknown_rank_key`, `invalid_locus_ref`, ...)"},
-    503: {**_ERR, "description": "`sequences_busy`, `annotations_unavailable`, "
+    429: {**_ERR, "description": "`too_many_active_exports` or `export_rate_limited` for this client "
+                                 "IP (see `Retry-After`)"},
+    503: {**_ERR, "description": "`sequences_busy`, `sequences_capacity`, `annotations_unavailable`, "
                                  "`locus_ref_index_unavailable`, `gffread_unavailable`"},
     504: {**_ERR, "description": "`sequences_timeout`"},
 }
@@ -255,10 +260,19 @@ def post_sequences(body: SequencesBody, request: Request):
                 "no_genes_matched", "no gene matches the request", terms=src.terms()))
         data_version = src.data_version
 
+        owner = owner_key(client_ip(request))
+        try:
+            admit(owner)
+        except Refused as exc:
+            raise HTTPException(
+                status_code=exc.status, detail=error_detail(exc.code, str(exc), **exc.extra),
+                headers={"Retry-After": str(exc.retry_after)}) from exc
+
         if counted.n_genes <= int(settings.SEQUENCES_SYNC_MAX_GENES):
             try:
                 with sequences_slot():
-                    write_status(rid, state="running", done=0, total=counted.n_genes)
+                    write_status(rid, state="running", done=0, total=counted.n_genes,
+                                 created=time.time(), owner=owner)
                     t0 = time.monotonic()
                     try:
                         result = run_export(req, src.items(), out_dir=result_dir(rid),
@@ -295,7 +309,7 @@ def post_sequences(body: SequencesBody, request: Request):
             finally:
                 job_src.close()
 
-        start_job(rid, work)
+        start_job(rid, work, owner=owner)
         status = read_status(rid) or {"state": "queued"}
         return JSONResponse(_job_payload(request, rid, status), status_code=202,
                             headers={"Location": _urls(request, rid)["status_url"]})

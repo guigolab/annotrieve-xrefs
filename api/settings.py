@@ -71,6 +71,16 @@ class Settings:
     SEQUENCES_RESULT_TTL_S: int = _env_int("SEQUENCES_RESULT_TTL_S", 86400)
     # Skip genes of annotations whose GFF index (.csi) is bigger than this many MiB on disk:
     # opening it needs about as much memory again (0 = no limit).
+    # Stored results (finished or running) are capped; at the cap the oldest FINISHED ones are
+    # removed first, and a request is refused (503) only if every slot is a running job.
+    SEQUENCES_MAX_RESULTS: int = _env_int("SEQUENCES_MAX_RESULTS", 100)
+    # Per client IP, counted over the retained results: exports running now, and exports started in
+    # the last hour. 0 disables a limit. Cached results cost nothing and are never limited.
+    SEQUENCES_IP_MAX_ACTIVE: int = _env_int("SEQUENCES_IP_MAX_ACTIVE", 2)
+    SEQUENCES_IP_MAX_PER_HOUR: int = _env_int("SEQUENCES_IP_MAX_PER_HOUR", 20)
+    # Proxies in front of the API that append to X-Forwarded-For (Traefik = 1): the client IP is the
+    # entry that many places from the right, so a client cannot choose it by sending the header.
+    TRUSTED_PROXY_HOPS: int = _env_int("TRUSTED_PROXY_HOPS", 1)
     SEQUENCES_MAX_INDEX_MB: float = _env_float("SEQUENCES_MAX_INDEX_MB", 0.0)
     SEQUENCES_MAX_WINDOW_BP: int = _env_int("SEQUENCES_MAX_WINDOW_BP", 5_000_000)
     SEQUENCES_COALESCE_GAP_BP: int = _env_int("SEQUENCES_COALESCE_GAP_BP", 10_000)

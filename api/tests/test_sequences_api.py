@@ -419,3 +419,89 @@ def test_a_result_purged_while_listed_is_404_not_500(seq_client):
     assert client.get(f"/sequences/results/{rid}").status_code == 404
     assert client.get(f"/sequences/results/{rid}/manifest.tsv").status_code in (200, 404)
     shutil.rmtree(result_dir(rid), ignore_errors=True)
+
+
+# ---- storage cap and per-client limits -------------------------------------------------------
+
+@pytest.fixture()
+def limits():
+    import settings as settings_mod
+    st = settings_mod.settings
+    saved = (st.SEQUENCES_MAX_RESULTS, st.SEQUENCES_IP_MAX_ACTIVE, st.SEQUENCES_IP_MAX_PER_HOUR,
+             st.TRUSTED_PROXY_HOPS)
+    yield st
+    (st.SEQUENCES_MAX_RESULTS, st.SEQUENCES_IP_MAX_ACTIVE, st.SEQUENCES_IP_MAX_PER_HOUR,
+     st.TRUSTED_PROXY_HOPS) = saved
+
+
+PRESETS = ["longest", "longest_cds", "most_exons", "shortest_cds", "fewest_exons"]
+
+
+def _variant(i):
+    return {**TP53, "transcript": PRESETS[i]}
+
+
+def test_exports_per_hour_are_capped_per_ip_but_cached_results_are_free(seq_client, limits):
+    client, _ = seq_client
+    limits.SEQUENCES_IP_MAX_PER_HOUR = 2
+    assert client.post("/sequences", json=_variant(0)).status_code == 200
+    assert client.post("/sequences", json=_variant(1)).status_code == 200
+    assert client.post("/sequences", json=_variant(0)).status_code == 200          # cached: free
+    r = client.post("/sequences", json=_variant(2))
+    assert r.status_code == 429 and r.json()["detail"]["code"] == "export_rate_limited"
+    assert int(r.headers["Retry-After"]) > 0
+    other = client.post("/sequences", json=_variant(2), headers={"X-Forwarded-For": "203.0.113.9"})
+    assert other.status_code == 200                                                # another client
+
+
+def test_running_exports_per_ip_are_capped(seq_client, limits):
+    from helpers.client_ip import owner_key
+    from services.seq_results import write_status
+    client, _ = seq_client
+    limits.SEQUENCES_IP_MAX_ACTIVE = 1
+    write_status("a" * 20, state="running", created=__import__("time").time(),
+                 owner=owner_key("testclient"))
+    r = client.post("/sequences", json=_variant(0))
+    assert r.status_code == 429 and r.json()["detail"]["code"] == "too_many_active_exports"
+    ok = client.post("/sequences", json=_variant(0), headers={"X-Forwarded-For": "198.51.100.7"})
+    assert ok.status_code == 200
+
+
+def test_the_client_ip_cannot_be_chosen_with_x_forwarded_for(seq_client, limits):
+    client, _ = seq_client
+    limits.SEQUENCES_IP_MAX_PER_HOUR = 1
+    h = {"X-Forwarded-For": "1.1.1.1, 192.0.2.50"}            # proxy appended 192.0.2.50
+    assert client.post("/sequences", json=_variant(0), headers=h).status_code == 200
+    spoof = {"X-Forwarded-For": "9.9.9.9, 192.0.2.50"}         # same real client, new fake prefix
+    assert client.post("/sequences", json=_variant(1), headers=spoof).status_code == 429
+
+
+def test_at_most_max_results_are_kept_and_the_oldest_finished_go_first(seq_client, limits):
+    import os
+    from services.seq_results import results_root
+    client, _ = seq_client
+    limits.SEQUENCES_IP_MAX_PER_HOUR = 0
+    limits.SEQUENCES_MAX_RESULTS = 3
+    ids = []
+    for i in range(4):
+        r = client.post("/sequences", json=_variant(i))
+        assert r.status_code == 200
+        ids.append(r.headers["X-Result-Id"])
+        stamp = __import__("time").time() - 1000 + i
+        os.utime(results_root() / ids[-1], (stamp, stamp))               # make "age" explicit
+    left = {d.name for d in results_root().iterdir() if d.is_dir()}
+    assert len(left) == 3 and ids[0] not in left and set(ids[1:]) == left
+
+
+def test_full_of_running_jobs_refuses_instead_of_deleting_them(seq_client, limits):
+    import time
+    from services.seq_results import write_status
+    client, _ = seq_client
+    limits.SEQUENCES_IP_MAX_PER_HOUR = 0
+    limits.SEQUENCES_IP_MAX_ACTIVE = 0
+    limits.SEQUENCES_MAX_RESULTS = 2
+    for c in "ab":
+        write_status(c * 20, state="running", created=time.time(), owner="someone")
+    r = client.post("/sequences", json=_variant(0))
+    assert r.status_code == 503 and r.json()["detail"]["code"] == "sequences_capacity"
+    assert "Retry-After" in r.headers

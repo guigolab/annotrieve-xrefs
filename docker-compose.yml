@@ -39,11 +39,19 @@ services:
       - /data/annotrieve/gene_corpus:/data/gene_corpus:ro
       - ${ANNOTATIONS_DATA_PATH:-/data/annotrieve/files}:/data/annotations:ro
       - xrefs_tmp:/tmp
+      # Results and scratch of /sequences: shared storage, not local disk. Must be writable by the
+      # container user (uid 1000): mkdir -p /data/annotrieve-xrefs/sequences
+      - /data/annotrieve-xrefs/sequences:/data/results
     environment:
       - GENE_CORPUS_DIR=/data/gene_corpus
       - PRESENCE_DIR=/data/gene_corpus/serve
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://genome.crg.es/annotrieve-xrefs/api/v1}
-      - SEQUENCES_RESULTS_DIR=/tmp/annotrieve-sequences
+      - SEQUENCES_RESULTS_DIR=/data/results
+      - NCBI_RATE_STATE_FILE=/tmp/annotrieve-ncbi-rate   # local on purpose: flock is unreliable on NFS
+      - SEQUENCES_MAX_RESULTS=100
+      - SEQUENCES_IP_MAX_ACTIVE=2
+      - SEQUENCES_IP_MAX_PER_HOUR=20
+      - TRUSTED_PROXY_HOPS=1
       - ANNOTATIONS_DIR=/data/annotations
       - NCBI_WORKERS=4
       - NCBI_PROCESSES=2        # only used if the shared rate file cannot be opened

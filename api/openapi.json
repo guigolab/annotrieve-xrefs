@@ -1768,8 +1768,11 @@
           "422": {
             "description": "Invalid request (`validation_error`, `exactly_one_source`, `unknown_rank_key`, `invalid_locus_ref`, ...)"
           },
+          "429": {
+            "description": "`too_many_active_exports` or `export_rate_limited` for this client IP (see `Retry-After`)"
+          },
           "503": {
-            "description": "`sequences_busy`, `annotations_unavailable`, `locus_ref_index_unavailable`, `gffread_unavailable`"
+            "description": "`sequences_busy`, `sequences_capacity`, `annotations_unavailable`, `locus_ref_index_unavailable`, `gffread_unavailable`"
           },
           "504": {
             "description": "`sequences_timeout`"
