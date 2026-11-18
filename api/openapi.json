@@ -1697,6 +1697,24 @@
               "title": "Alias",
               "type": "string"
             }
+          },
+          {
+            "description": "Comma-separated Ensembl, GenBank, RefSeq; counts only those annotations",
+            "in": "query",
+            "name": "sources",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated Ensembl, GenBank, RefSeq; counts only those annotations",
+              "title": "Sources"
+            }
           }
         ],
         "responses": {

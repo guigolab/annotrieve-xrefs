@@ -283,3 +283,17 @@ def test_loci_prefix_errors_and_case_sensitive(loci_client) -> None:
     # fixture genes have no primary_name, so a case-sensitive prefix cannot match their spelling
     assert client.get("/loci", params={"names": "uniq*", "case_sensitive": "true",
                                        "alias": "off"}).json()["rows"] == []
+
+
+def test_names_n_loci_and_sources_filter(loci_client) -> None:
+    client, _ = loci_client
+    body = client.get("/names", params={"prefix": "tp5"}).json()
+    row = body["results"][0]
+    assert row["name"] == "tp53" and row["n_loci"] == 5            # symbol gene rows only
+    inc = client.get("/names", params={"prefix": "tp5", "alias": "include"}).json()["results"][0]
+    assert inc["n_loci"] == 7
+    r = client.get("/names", params={"prefix": "tp5", "sources": "Nope"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "invalid_source"
+    scoped = client.get("/names", params={"prefix": "tp5", "sources": "RefSeq,Ensembl,GenBank"}
+                        ).json()["results"][0]
+    assert scoped["n_loci"] == 5 and scoped["n_annotations"] == row["n_annotations"]

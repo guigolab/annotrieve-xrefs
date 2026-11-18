@@ -255,3 +255,11 @@ def test_hits_prefix_limits(presence_client) -> None:
     for q, code in (("se*", "prefix_too_short"), ("sel*no", "invalid_prefix")):
         r = presence_client.get("/hits", params={"names": q})
         assert r.status_code == 422 and r.json()["detail"]["code"] == code
+
+
+def test_names_sources_filter_and_no_n_loci_without_loci_index(presence_client) -> None:
+    client, _ = presence_client
+    body = client.get("/names", params={"prefix": "seleno", "sources": "Ensembl"}).json()
+    assert body["source_filter"] == ["Ensembl"]
+    assert [(r["name"], r["n_annotations"]) for r in body["results"]] == [("selenow", 1)]
+    assert all("n_loci" not in r for r in body["results"])

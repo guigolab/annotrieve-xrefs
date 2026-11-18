@@ -232,6 +232,19 @@ def list_name_hits_presence(
     return {**base, "fields": list(HITS_FIELDS), "total": len(rows), "facets": facets, "rows": rows}
 
 
+def _count_loci(loci, name_id: int, mode: str, ords: set[int] | None) -> int:
+    """Gene rows of one name, optionally restricted to a set of annotation ords (streamed)."""
+    sym_only = mode != "include"
+    if ords is None:
+        sql = "SELECT COUNT(*) FROM locus WHERE name_id=?" + (" AND via=0" if sym_only else "")
+        return int(loci.execute(sql, (name_id,)).fetchone()[0])
+    n = 0
+    for row in loci.execute("SELECT ord, via FROM locus WHERE name_id=?", (name_id,)):
+        if row[0] in ords and not (sym_only and row[1] == 1):
+            n += 1
+    return n
+
+
 def list_names_by_prefix_presence(
     reader,
     prefix: str,
@@ -239,8 +252,14 @@ def list_names_by_prefix_presence(
     include_taxids=None,
     exclude_taxids=None,
     alias: str | None = "suggest",
+    sources=None,
+    loci=None,
 ) -> dict:
+    """Prefix discovery. ``sources`` limits the counted annotations (Ensembl/GenBank/RefSeq);
+    ``loci`` (a loci.sqlite connection) adds ``n_loci`` per name: gene rows in the same scope, symbol
+    rows only unless alias=include (None when the loci index is not available)."""
     mode = parse_alias_mode(alias)
+    source_codes = parse_sources(sources)
     stem = parse_prefix_query(prefix)
     include = parse_taxid_list(include_taxids, field="include_taxids")
     exclude = parse_taxid_list(exclude_taxids, field="exclude_taxids")
@@ -258,8 +277,14 @@ def list_names_by_prefix_presence(
         )
 
     counts: dict[str, tuple[int, int]] = {}
-    if include or exclude:
-        scope = scope_mask(conn, reader.all_mask, include, exclude)
+    scope = scope_mask(conn, reader.all_mask, include, exclude)
+    if source_codes:
+        ph = ",".join("?" for _ in source_codes)
+        smask = 0
+        for (o,) in conn.execute(f"SELECT ord FROM annotation WHERE source IN ({ph})", source_codes):
+            smask |= 1 << int(o)
+        scope &= smask
+    if include or exclude or source_codes:
         by_id = {int(r["name_id"]): r["name"] for r in found}
         for chunk in _chunks(list(by_id)):
             ph = ",".join("?" for _ in chunk)
@@ -272,16 +297,24 @@ def list_names_by_prefix_presence(
         for r in found:
             counts[r["name"]] = (int(r["n_sym"]), int(r["n_alias_only"]))
 
+    ids = {r["name"]: int(r["name_id"]) for r in found}
+    scoped_ords = None
+    if loci is not None and (include or exclude or source_codes):
+        scoped_ords = set(iter_bits(scope))
     results = []
     for name, (n_sym, n_extra) in counts.items():
         n_ann = n_sym + n_extra if mode == "include" else n_sym
         extra = 0 if mode in ("off", "include") else n_extra
         if n_ann == 0:      # alias-only names are listed only with alias=include
             continue
-        results.append({"name": name, "category": classify_name(name),
-                        "n_annotations": n_ann, "n_alias_extra": extra})
+        row = {"name": name, "category": classify_name(name),
+               "n_annotations": n_ann, "n_alias_extra": extra}
+        if loci is not None:
+            row["n_loci"] = _count_loci(loci, ids[name], mode, scoped_ords)
+        results.append(row)
     results.sort(key=lambda r: (-r["n_annotations"], -r["n_alias_extra"], r["name"]))
     return {
         "prefix": stem, "alias": mode, "include_taxids": include, "exclude_taxids": exclude,
+        "source_filter": [SOURCE_LABELS[c] for c in source_codes],
         "total": len(results), "results": results, "data_version": reader.data_version,
     }

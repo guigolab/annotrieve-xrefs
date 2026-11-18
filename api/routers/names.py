@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from helpers.cursor import QueryError
 from helpers.strict import reject_unknown_params
 from helpers.deps import corpus_conn
-from helpers.presence import presence_enabled, presence_reader
+from helpers.presence import open_request_connections, presence_enabled, presence_reader
 from services.names import list_names_by_prefix
 from services.presence_hits import list_names_by_prefix_presence
 
@@ -20,6 +20,7 @@ _VALIDATION_CODES = frozenset(
         "too_many_taxids",
         "invalid_taxid",
         "invalid_alias_mode",
+        "invalid_source",
     }
 )
 
@@ -29,7 +30,17 @@ def _http_for_query_error(exc: QueryError) -> HTTPException:
     return HTTPException(status_code=status, detail=exc.as_detail())
 
 
-_GET_PARAMS = ("prefix", "include_taxids", "exclude_taxids", "alias")
+def _open_loci():
+    """loci.sqlite connection for ``n_loci``, or None when that index is not published."""
+    try:
+        pres, loci, _v = open_request_connections()
+    except HTTPException:
+        return None
+    pres.close()
+    return loci
+
+
+_GET_PARAMS = ("prefix", "include_taxids", "exclude_taxids", "alias", "sources")
 
 
 @router.get("/names")
@@ -58,6 +69,8 @@ def get_names(
             "Only applies when the presence index is enabled (PRESENCE_DIR)."
         ),
     ),
+    sources: str | None = Query(
+        None, description="Comma-separated Ensembl, GenBank, RefSeq; counts only those annotations"),
 ):
     """
     Prefix discovery for building an exact gene-name set.
@@ -68,9 +81,14 @@ def get_names(
     reject_unknown_params(request, _GET_PARAMS)
     try:
         if presence_enabled():
-            return list_names_by_prefix_presence(
-                presence_reader(), prefix, include_taxids=include_taxids,
-                exclude_taxids=exclude_taxids, alias=alias)
+            loci = _open_loci()
+            try:
+                return list_names_by_prefix_presence(
+                    presence_reader(), prefix, include_taxids=include_taxids,
+                    exclude_taxids=exclude_taxids, alias=alias, sources=sources, loci=loci)
+            finally:
+                if loci is not None:
+                    loci.close()
         return list_names_by_prefix(
             corpus_conn(),
             prefix,

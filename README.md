@@ -64,7 +64,7 @@ Paths bow are relative to the base URL.
 | `exclude_taxids` | Optional; drop annotations whose lineage includes any listed taxid. Cap **50**.                                         |
 
 
-More than **500** distinct names → `422 prefix_too_broad`. No pagination (bounded by that expand cap). Results ordered by `n_annotations` desc, then `name`. Categories (first-match-wins): `pseudogene`, `numbered`, `homeolog`, `predicted`, `exact`, `other`.
+`sources` (Ensembl, GenBank, RefSeq; comma-separated) counts only those annotations. With the loci index published each result also has `n_loci` (gene rows in the same scope; symbol rows only unless `alias=include`), so a client can warn before a large `/loci` export; without it the field is absent. More than **500** distinct names → `422 prefix_too_broad`. No pagination (bounded by that expand cap). Results ordered by `n_annotations` desc, then `name`. Categories (first-match-wins): `pseudogene`, `numbered`, `homeolog`, `predicted`, `exact`, `other`.
 
 ```http
 GET /names?prefix=seleno&include_taxids=7742
