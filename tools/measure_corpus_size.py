@@ -316,17 +316,25 @@ def step_shards(pdir: Path, cdir: Path | None, n: int, all_shards: bool, seed: i
 
 # ---------------------------------------------------------------- gff
 
-def resolve_gff(gff_root: Path | None, raw: str | None) -> Path | None:
+def resolve_gff(gff_root: Path | None, raw: str | None, prefix: str = "") -> Path | None:
+    """gff_path is the host root the index was harvested with plus the file's relative path.
+    Remap `prefix` onto `gff_root` (the API does the same with ANNOTATIONS_GFF_PATH_PREFIX)."""
     if not raw:
         return None
     p = Path(raw)
-    if p.is_absolute() and p.exists():
+    if p.exists():
         return p
     if gff_root is not None:
-        for cand in (gff_root / raw, gff_root / p.name):
-            if cand.exists():
-                return cand
-    return p if p.exists() else None
+        if prefix and raw.startswith(prefix):
+            cand = gff_root / raw[len(prefix):].lstrip("/")
+        else:
+            cand = gff_root / raw.lstrip("/")
+        if cand.exists():
+            return cand
+        cand = gff_root / p.name
+        if cand.exists():
+            return cand
+    return None
 
 
 def count_gff(path: Path, timeout_s: float) -> tuple[Counter, bool]:
@@ -353,14 +361,14 @@ def table_size(rows: float, exons_per_tx: float) -> dict:
 
 
 def step_gff(pdir: Path, cdir: Path | None, gff_root: Path | None, n: int, seed: int,
-             timeout_s: float, prior: dict) -> dict:
+             timeout_s: float, prior: dict, prefix: str = "") -> dict:
     rows = annotation_rows(pdir)
     sample = pick_sample([r for r in rows if r[3]], n, seed)
     log(f"gff: streaming {len(sample)} GFF files (timeout {timeout_s:.0f}s each)")
     totals: Counter = Counter()
     per_file = []
     for _ord, aid, src, raw in sample:
-        path = resolve_gff(gff_root, raw)
+        path = resolve_gff(gff_root, raw, prefix)
         if path is None:
             per_file.append({"annotation_id": aid, "status": "gff not found", "path": raw})
             continue
@@ -413,7 +421,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--presence-dir", default=os.getenv("PRESENCE_DIR", ""))
     ap.add_argument("--corpus-dir", default=os.getenv("GENE_CORPUS_DIR", ""))
-    ap.add_argument("--gff-root", default="", help="base dir for relative gff_path values")
+    ap.add_argument("--gff-root", default=os.getenv("ANNOTATIONS_DIR", ""),
+                    help="where the GFF files are mounted (default: $ANNOTATIONS_DIR)")
+    ap.add_argument("--gff-prefix", default=os.getenv("ANNOTATIONS_GFF_PATH_PREFIX", ""),
+                    help="host root stored in gff_path, remapped onto --gff-root")
     ap.add_argument("--out-dir", default="measure-out")
     ap.add_argument("--tmp-dir", default="", help="SQLite temp files (use the NFS work area)")
     ap.add_argument("--steps", default="presence,loci,shards,gff")
@@ -451,7 +462,7 @@ def main() -> int:
             result = step_shards(pdir, cdir, args.shard_sample, args.all_shards, args.seed)
         elif step == "gff":
             result = step_gff(pdir, cdir, gff_root, args.gff_sample, args.seed,
-                              args.gff_timeout, done)
+                              args.gff_timeout, done, args.gff_prefix)
         else:
             log(f"unknown step {step!r}")
             continue
