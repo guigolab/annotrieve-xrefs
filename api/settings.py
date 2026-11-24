@@ -86,36 +86,44 @@ class Settings:
     # rate / NCBI_PROCESSES (set it to the number of gunicorn workers).
     NCBI_PROCESSES: int = _env_int("NCBI_PROCESSES", 1)
 
-    # Sequences endpoint.
-    # Public base of this API (scheme, host and path prefix) used in job/result links, because
-    # the app sits behind a path-rewriting proxy and cannot see its public URL.
-    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "")
-    # One request is answered in the response and holds at most this many genes and this many
-    # sequences (a gene gives one sequence unless the transcript rule keeps several).
-    SEQUENCES_MAX_GENES: int = _env_int("SEQUENCES_MAX_GENES", 200)
-    SEQUENCES_MAX_SEQUENCES: int = _env_int("SEQUENCES_MAX_SEQUENCES", 200)
+    # Downloads (FASTA) endpoint.
+    # A download (POST /downloads) holds at most this many genes and this many sequences (a gene
+    # gives one sequence unless the transcript rule keeps several).
+    SEQUENCES_MAX_GENES: int = _env_int("SEQUENCES_MAX_GENES", 1000)
+    SEQUENCES_MAX_SEQUENCES: int = _env_int("SEQUENCES_MAX_SEQUENCES", 1000)
     SEQUENCES_PLAN_MAX_GENES: int = _env_int("SEQUENCES_PLAN_MAX_GENES", 200)
     SEQUENCES_BATCH_GENES: int = _env_int("SEQUENCES_BATCH_GENES", 25)
+    # Downloads (requests, status, gzipped FASTA, quota ledger) live here, shared by all workers.
     SEQUENCES_RESULTS_DIR: str = os.getenv("SEQUENCES_RESULTS_DIR", "")
-    SEQUENCES_RESULT_TTL_S: int = _env_int("SEQUENCES_RESULT_TTL_S", 86400)
-    # Stored results (finished or running) are capped; at the cap the oldest FINISHED ones are
-    # removed first, and a request is refused (503) only if every slot is a running job.
+    # How long files stay: after the first complete download, if never downloaded, if failed.
+    DOWNLOAD_KEEP_AFTER_FETCH_S: int = _env_int("DOWNLOAD_KEEP_AFTER_FETCH_S", 600)
+    DOWNLOAD_KEEP_UNFETCHED_S: int = _env_int("DOWNLOAD_KEEP_UNFETCHED_S", 7200)
+    DOWNLOAD_KEEP_FAILED_S: int = _env_int("DOWNLOAD_KEEP_FAILED_S", 3600)
+    # Downloads stored at once (any state) and waiting in the queue at once; over either, a new
+    # download is refused with 503. Finished ones are never removed to make room.
     SEQUENCES_MAX_RESULTS: int = _env_int("SEQUENCES_MAX_RESULTS", 100)
-    # Per client IP, counted over the retained results: exports running now, and exports started in
-    # the last hour. 0 disables a limit. Cached results cost nothing and are never limited.
+    DOWNLOADS_MAX_QUEUED: int = _env_int("DOWNLOADS_MAX_QUEUED", 50)
+    # Per client IP: downloads waiting or running now, and new downloads in the last 24 hours
+    # (like the GFF upload quota in Annotrieve). A request equal to a stored download is free.
+    # 0 disables a limit.
     SEQUENCES_IP_MAX_ACTIVE: int = _env_int("SEQUENCES_IP_MAX_ACTIVE", 2)
-    SEQUENCES_IP_MAX_PER_HOUR: int = _env_int("SEQUENCES_IP_MAX_PER_HOUR", 20)
+    DOWNLOADS_PER_DAY: int = _env_int("DOWNLOADS_PER_DAY", 10)
+    # One queue for the whole container: a file lock lets one runner at a time work (NCBI budget).
+    DOWNLOADS_LOCK_FILE: str = os.getenv("DOWNLOADS_LOCK_FILE", "")
+    DOWNLOADS_POLL_S: float = _env_float("DOWNLOADS_POLL_S", 2.0)
     # Proxies in front of the API that append to X-Forwarded-For (Traefik = 1): the client IP is the
     # entry that many places from the right, so a client cannot choose it by sending the header.
     TRUSTED_PROXY_HOPS: int = _env_int("TRUSTED_PROXY_HOPS", 1)
+    # Public base of this API (scheme, host and path prefix) used in links, because the app sits
+    # behind a path-rewriting proxy and cannot see its public URL.
+    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "")
     # Skip genes of annotations whose GFF index (.csi) is bigger than this many MiB on disk:
     # opening it needs about as much memory again (0 = no limit).
     SEQUENCES_MAX_INDEX_MB: float = _env_float("SEQUENCES_MAX_INDEX_MB", 256.0)
     SEQUENCES_MAX_WINDOW_BP: int = _env_int("SEQUENCES_MAX_WINDOW_BP", 5_000_000)
     SEQUENCES_COALESCE_GAP_BP: int = _env_int("SEQUENCES_COALESCE_GAP_BP", 10_000)
     SEQUENCES_CACHE_MB: int = _env_int("SEQUENCES_CACHE_MB", 32)
-    SEQUENCES_MAX_INFLIGHT: int = _env_int("SEQUENCES_MAX_INFLIGHT", 1)
-    SEQUENCES_DEADLINE_S: float = _env_float("SEQUENCES_DEADLINE_S", 120.0)
+    SEQUENCES_DEADLINE_S: float = _env_float("SEQUENCES_DEADLINE_S", 1800.0)
     # Data-size limit (MB) of each gffread child; it is also the first process the kernel kills when
     # the container runs out of memory. 0 = no limit.
     GFFREAD_MAX_DATA_MB: int = _env_int("GFFREAD_MAX_DATA_MB", 128)

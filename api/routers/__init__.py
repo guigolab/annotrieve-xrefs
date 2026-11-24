@@ -6,7 +6,7 @@ Do not use ``from __future__ import annotations`` here: it binds the name
 
 from fastapi import APIRouter
 
-from routers import annotations, health, hits, loci, names, sequences
+from routers import annotations, health, hits, loci, names, downloads
 
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["system"])
@@ -14,4 +14,4 @@ api_router.include_router(hits.router, tags=["search"])
 api_router.include_router(names.router, tags=["search"])
 api_router.include_router(loci.router, tags=["loci"])
 api_router.include_router(annotations.router, tags=["annotations"])
-api_router.include_router(sequences.router, tags=["sequences"])
+api_router.include_router(downloads.router, tags=["downloads"])

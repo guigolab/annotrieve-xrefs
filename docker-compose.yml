@@ -51,7 +51,7 @@ services:
       - /data/annotrieve/gene_corpus:/data/gene_corpus:ro
       - ${ANNOTATIONS_DATA_PATH:-/data/annotrieve/files}:/data/annotations:ro
       - xrefs_tmp:/tmp
-      # Results and scratch of /sequences: shared storage, not local disk. Must be writable by the
+      # Downloads (queue, status, gzipped FASTA, quota ledger) and scratch: shared storage, not local disk. Must be writable by the
       # container user (uid 1000): mkdir -p /data/annotrieve-xrefs/sequences
       - /data/annotrieve-xrefs/sequences:/data/results
     environment:
@@ -66,7 +66,9 @@ services:
       - NCBI_RATE_STATE_FILE=/tmp/annotrieve-ncbi-rate   # local on purpose: flock is unreliable on NFS
       - SEQUENCES_MAX_RESULTS=100
       - SEQUENCES_IP_MAX_ACTIVE=2
-      - SEQUENCES_IP_MAX_PER_HOUR=20
+      - DOWNLOADS_PER_DAY=10
+      - DOWNLOADS_MAX_QUEUED=50
+      - DOWNLOADS_LOCK_FILE=/tmp/annotrieve-downloads.lock   # local on purpose: flock is unreliable on NFS
       - TRUSTED_PROXY_HOPS=1
       - ANNOTATIONS_DIR=/data/annotations
       # Host root the index was harvested with (gff_path = this + bgzip_path); remapped onto /data/annotations.

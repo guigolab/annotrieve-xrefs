@@ -1,6 +1,114 @@
 {
   "components": {
     "schemas": {
+      "DownloadBody": {
+        "additionalProperties": false,
+        "description": "Exactly one of ``query``, ``loci`` or ``items`` selects the genes.",
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "cds | transcript | protein",
+            "title": "Action"
+          },
+          "buffer_bp": {
+            "default": 0,
+            "title": "Buffer Bp",
+            "type": "integer"
+          },
+          "include_exon_coords": {
+            "default": false,
+            "title": "Include Exon Coords",
+            "type": "boolean"
+          },
+          "items": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "legacy: {annotation_id, local_id, transcript_id} objects",
+            "title": "Items"
+          },
+          "loci": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "'annotation_id:local_id' strings or {locus_ref, transcript_id} objects",
+            "title": "Loci"
+          },
+          "max_genes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Genes"
+          },
+          "on_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "skip (default for query) | fail (default for loci)",
+            "title": "On Error"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "names, include_taxids, exclude_taxids, alias, annotation_ids, case_sensitive (same meaning as /loci)",
+            "title": "Query"
+          },
+          "transcript": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "preset (longest, longest_spliced, longest_cds, shortest_cds, most_exons, fewest_exons, all) or {rank_by, require, keep}",
+            "title": "Transcript"
+          }
+        },
+        "title": "DownloadBody",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -439,87 +547,6 @@
         "title": "PlanTranscript",
         "type": "object"
       },
-      "SequenceEstimate": {
-        "description": "What a request would cost, from the index alone (nothing is extracted).",
-        "properties": {
-          "cached": {
-            "description": "a finished result for this request exists",
-            "title": "Cached",
-            "type": "boolean"
-          },
-          "complete": {
-            "description": "false when counting stopped at max_genes",
-            "title": "Complete",
-            "type": "boolean"
-          },
-          "data_version": {
-            "title": "Data Version",
-            "type": "string"
-          },
-          "est_bp_upper_bound": {
-            "description": "Sum of gene lengths: bound of the bases to fetch",
-            "title": "Est Bp Upper Bound",
-            "type": "integer"
-          },
-          "max_genes": {
-            "title": "Max Genes",
-            "type": "integer"
-          },
-          "max_sequences": {
-            "description": "most sequences one request may return",
-            "title": "Max Sequences",
-            "type": "integer"
-          },
-          "n_genes": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "null when over the limit (see n_genes_at_least)",
-            "title": "N Genes"
-          },
-          "n_genes_at_least": {
-            "title": "N Genes At Least",
-            "type": "integer"
-          },
-          "over_limit": {
-            "title": "Over Limit",
-            "type": "boolean"
-          },
-          "result_id": {
-            "description": "Id the finished result would have",
-            "title": "Result Id",
-            "type": "string"
-          },
-          "terms": {
-            "description": "query mode: each name and whether it was found",
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Terms",
-            "type": "array"
-          }
-        },
-        "required": [
-          "data_version",
-          "result_id",
-          "n_genes_at_least",
-          "complete",
-          "est_bp_upper_bound",
-          "max_genes",
-          "over_limit",
-          "max_sequences",
-          "cached",
-          "terms"
-        ],
-        "title": "SequenceEstimate",
-        "type": "object"
-      },
       "SequencePlan": {
         "description": "The transcripts a request would extract, with the metrics behind the choice.",
         "properties": {
@@ -539,7 +566,7 @@
             "type": "array"
           },
           "loci": {
-            "description": "the selection, ready to post to /sequences as `loci`",
+            "description": "the selection, ready to post to /downloads as `loci`",
             "items": {
               "$ref": "#/components/schemas/PlanLocus"
             },
@@ -564,114 +591,6 @@
           "loci"
         ],
         "title": "SequencePlan",
-        "type": "object"
-      },
-      "SequencesBody": {
-        "additionalProperties": false,
-        "description": "Exactly one of ``query``, ``loci`` or ``items`` selects the genes.",
-        "properties": {
-          "action": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "cds | transcript | protein",
-            "title": "Action"
-          },
-          "buffer_bp": {
-            "default": 0,
-            "title": "Buffer Bp",
-            "type": "integer"
-          },
-          "include_exon_coords": {
-            "default": false,
-            "title": "Include Exon Coords",
-            "type": "boolean"
-          },
-          "items": {
-            "anyOf": [
-              {
-                "items": {},
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "legacy: {annotation_id, local_id, transcript_id} objects",
-            "title": "Items"
-          },
-          "loci": {
-            "anyOf": [
-              {
-                "items": {},
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "'annotation_id:local_id' strings or {locus_ref, transcript_id} objects",
-            "title": "Loci"
-          },
-          "max_genes": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Genes"
-          },
-          "on_error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "skip (default for query) | fail (default for loci)",
-            "title": "On Error"
-          },
-          "query": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "names, include_taxids, exclude_taxids, alias, annotation_ids, case_sensitive (same meaning as /loci)",
-            "title": "Query"
-          },
-          "transcript": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "preset (longest, longest_spliced, longest_cds, shortest_cds, most_exons, fewest_exons, all) or {rank_by, require, keep}",
-            "title": "Transcript"
-          }
-        },
-        "title": "SequencesBody",
         "type": "object"
       },
       "ValidationError": {
@@ -717,7 +636,7 @@
     }
   },
   "info": {
-    "description": "From gene names to annotations, gene coordinates and sequences.\n\n- **search**: `/names` (prefix discovery), `/hits` (which annotations contain these exact gene names).\n- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv or ndjson).\n- **sequences**: `/sequences` (CDS, transcript or protein FASTA for a query or a list of `locus_ref`s), with `/sequence-estimates`, `/sequence-plans`, jobs and cached results.\n- **annotations**: per-annotation genes and cross-references (legacy shard-backed).",
+    "description": "From gene names to annotations, gene coordinates and sequences.\n\n- **search**: `/names` (prefix discovery), `/hits` (which annotations contain these exact gene names).\n- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv or ndjson).\n- **downloads**: `/downloads` (queue a CDS, transcript or protein FASTA for up to 1,000 genes, poll it, fetch the gzipped file; `?dry_run=true` estimates), `/downloads/quota`, and `/sequence-plans` (which transcripts a request would pick).\n- **annotations**: per-annotation genes and cross-references (legacy shard-backed).",
     "title": "Annotrieve xrefs",
     "version": "1.1.0"
   },
@@ -1168,6 +1087,304 @@
         "summary": "Get Annotation Namespace Accessions",
         "tags": [
           "annotations"
+        ]
+      }
+    },
+    "/downloads": {
+      "post": {
+        "description": "Queue a CDS, transcript or protein FASTA for the genes of a query or an explicit list.\n\nAll downloads wait in one queue (one runs at a time, because of the NCBI request budget). The\nanswer is `202` with the status; poll `GET /downloads/{id}` and fetch `/fasta` when `state`\nis `done`. An equal request returns the download that exists.",
+        "operationId": "create_download_downloads_post",
+        "parameters": [
+          {
+            "description": "only count and estimate; nothing is queued and no quota is used",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "only count and estimate; nothing is queued and no quota is used",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloadBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "`dry_run=true`: the estimate. Otherwise the finished download already stored for an equal request (same body as GET /downloads/{id})."
+          },
+          "202": {
+            "description": "Queued (or already queued/running for an equal request). `Location` is the status URL; poll it with `Retry-After`."
+          },
+          "404": {
+            "description": "`no_genes_matched`, or a pinned/unknown locus (loci mode, on_error=fail)"
+          },
+          "413": {
+            "description": "`too_many_genes` or `too_many_sequences` (over the limit of one download)"
+          },
+          "422": {
+            "description": "Invalid request (`validation_error`, `exactly_one_source`, `unknown_rank_key`, `invalid_locus_ref`, ...)"
+          },
+          "429": {
+            "description": "`too_many_active_downloads` or `daily_quota_exceeded` for this client IP (see `Retry-After` and GET /downloads/quota)"
+          },
+          "503": {
+            "description": "`downloads_queue_full`, `downloads_capacity`, `annotations_unavailable`, `locus_ref_index_unavailable`"
+          }
+        },
+        "summary": "Ask for a FASTA download",
+        "tags": [
+          "downloads"
+        ]
+      }
+    },
+    "/downloads/quota": {
+      "get": {
+        "description": "New downloads used and left in the last 24 hours (an equal request is free), and the\ndownloads of this client that are waiting or running now.",
+        "operationId": "get_download_quota_downloads_quota_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Rolling 24-hour quota of the calling IP."
+          }
+        },
+        "summary": "Downloads left for this client today",
+        "tags": [
+          "downloads"
+        ]
+      }
+    },
+    "/downloads/{download_id}": {
+      "delete": {
+        "description": "Takes it out of the queue, stops it if running (at the next batch), or deletes the files.\nOnly the client that asked for it may delete it.",
+        "operationId": "delete_download_downloads__download_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "download_id",
+            "required": true,
+            "schema": {
+              "title": "Download Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel or delete a download",
+        "tags": [
+          "downloads"
+        ]
+      },
+      "get": {
+        "description": "`state` is `queued`, `running`, `done` or `failed`. While waiting, `queue_position` tells how\nmany downloads are ahead; while running, `progress` counts genes. `Retry-After` says when to\nask again.",
+        "operationId": "get_download_downloads__download_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "download_id",
+            "required": true,
+            "schema": {
+              "title": "Download Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Status of a download",
+        "tags": [
+          "downloads"
+        ]
+      }
+    },
+    "/downloads/{download_id}/fasta": {
+      "get": {
+        "operationId": "get_download_fasta_downloads__download_id__fasta_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "download_id",
+            "required": true,
+            "schema": {
+              "title": "Download Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/gzip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "gzip-compressed FASTA (`application/gzip`). Removed 10 minutes after the first complete download.",
+            "headers": {
+              "X-Data-Version": {
+                "description": "Index version used",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Download-Id": {
+                "description": "Identifier of this download",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Gene-Count": {
+                "description": "Genes processed",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Sequence-Count": {
+                "description": "Sequences in the FASTA",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Skipped-Count": {
+                "description": "Genes skipped (see the report)",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "409": {
+            "description": "`download_not_ready`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The FASTA (gzip)",
+        "tags": [
+          "downloads"
+        ]
+      }
+    },
+    "/downloads/{download_id}/report": {
+      "get": {
+        "operationId": "get_download_report_downloads__download_id__report_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "download_id",
+            "required": true,
+            "schema": {
+              "title": "Download Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/tab-separated-values": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "tsv"
+          },
+          "404": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "409": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Per-gene outcome table (tsv)",
+        "tags": [
+          "downloads"
         ]
       }
     },
@@ -1868,47 +2085,6 @@
         ]
       }
     },
-    "/sequence-estimates": {
-      "post": {
-        "description": "Cheap preview: gene count and an upper bound of the bases to fetch. Reads only the index.",
-        "operationId": "create_sequence_estimate_sequence_estimates_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SequencesBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SequenceEstimate"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "413": {
-            "description": "Error: `detail` is `{code, message, ...}`."
-          },
-          "422": {
-            "description": "Error: `detail` is `{code, message, ...}`."
-          },
-          "503": {
-            "description": "Error: `detail` is `{code, message, ...}`."
-          }
-        },
-        "summary": "Estimate a sequence request",
-        "tags": [
-          "sequences"
-        ]
-      }
-    },
     "/sequence-plans": {
       "post": {
         "description": "Which transcripts the request would extract, with the metrics behind the choice.\n\nReads the GFF slices (no network). A client can edit the result and post the selected\n``loci`` back to ``/sequences``.",
@@ -1917,7 +2093,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SequencesBody"
+                "$ref": "#/components/schemas/DownloadBody"
               }
             }
           },
@@ -1946,241 +2122,7 @@
         },
         "summary": "Plan the transcripts of a sequence request",
         "tags": [
-          "sequences"
-        ]
-      }
-    },
-    "/sequences": {
-      "post": {
-        "description": "Extract CDS, transcript or protein FASTA for the genes of a query or an explicit list.",
-        "operationId": "post_sequences_sequences_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SequencesBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              },
-              "text/x-fasta": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "FASTA (`text/x-fasta`). Headers: result id, counts, manifest link.",
-            "headers": {
-              "X-Data-Version": {
-                "description": "Index version used",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Gene-Count": {
-                "description": "Genes processed",
-                "schema": {
-                  "type": "integer"
-                }
-              },
-              "X-Manifest-Url": {
-                "description": "Per-gene outcome table (tsv)",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Result-Id": {
-                "description": "Identifier of this result",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Sequence-Count": {
-                "description": "Sequences in the FASTA",
-                "schema": {
-                  "type": "integer"
-                }
-              },
-              "X-Skipped-Count": {
-                "description": "Genes skipped (see the manifest)",
-                "schema": {
-                  "type": "integer"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "`no_genes_matched`, or a pinned/unknown locus (loci mode, on_error=fail)"
-          },
-          "409": {
-            "description": "`export_running`: an identical request is being produced; retry shortly"
-          },
-          "413": {
-            "description": "`too_many_genes` or `too_many_sequences` (over the limit of one request)"
-          },
-          "422": {
-            "description": "Invalid request (`validation_error`, `exactly_one_source`, `unknown_rank_key`, `invalid_locus_ref`, ...)"
-          },
-          "429": {
-            "description": "`too_many_active_exports` or `export_rate_limited` for this client IP (see `Retry-After`)"
-          },
-          "503": {
-            "description": "`sequences_busy`, `sequences_capacity`, `annotations_unavailable`, `locus_ref_index_unavailable`, `gffread_unavailable`"
-          },
-          "504": {
-            "description": "`sequences_timeout`"
-          }
-        },
-        "summary": "FASTA for a query or a list of loci",
-        "tags": [
-          "sequences"
-        ]
-      }
-    },
-    "/sequences/results/{result_id}": {
-      "get": {
-        "operationId": "get_sequence_result_sequences_results__result_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "result_id",
-            "required": true,
-            "schema": {
-              "title": "Result Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              },
-              "text/x-fasta": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "FASTA (`text/x-fasta`). Headers: result id, counts, manifest link.",
-            "headers": {
-              "X-Data-Version": {
-                "description": "Index version used",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Gene-Count": {
-                "description": "Genes processed",
-                "schema": {
-                  "type": "integer"
-                }
-              },
-              "X-Manifest-Url": {
-                "description": "Per-gene outcome table (tsv)",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Result-Id": {
-                "description": "Identifier of this result",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Sequence-Count": {
-                "description": "Sequences in the FASTA",
-                "schema": {
-                  "type": "integer"
-                }
-              },
-              "X-Skipped-Count": {
-                "description": "Genes skipped (see the manifest)",
-                "schema": {
-                  "type": "integer"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Error: `detail` is `{code, message, ...}`."
-          },
-          "409": {
-            "description": "`result_not_ready`"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Download a finished FASTA",
-        "tags": [
-          "sequences"
-        ]
-      }
-    },
-    "/sequences/results/{result_id}/manifest.tsv": {
-      "get": {
-        "operationId": "get_sequence_manifest_sequences_results__result_id__manifest_tsv_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "result_id",
-            "required": true,
-            "schema": {
-              "title": "Result Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              },
-              "text/tab-separated-values": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "tsv"
-          },
-          "404": {
-            "description": "Error: `detail` is `{code, message, ...}`."
-          },
-          "409": {
-            "description": "Error: `detail` is `{code, message, ...}`."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Per-gene outcome table",
-        "tags": [
-          "sequences"
+          "downloads"
         ]
       }
     }
@@ -2199,8 +2141,8 @@
       "name": "loci"
     },
     {
-      "description": "FASTA export, previews, jobs and results.",
-      "name": "sequences"
+      "description": "Queued FASTA downloads, quota and transcript plans.",
+      "name": "downloads"
     },
     {
       "description": "Per-annotation genes and xrefs (legacy).",

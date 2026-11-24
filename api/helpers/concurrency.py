@@ -11,10 +11,6 @@ from settings import settings
 HITS_MAX_INFLIGHT = max(1, int(settings.HITS_MAX_INFLIGHT))
 _HITS_SEMAPHORE = threading.Semaphore(HITS_MAX_INFLIGHT)
 
-_SEQUENCES_SEMAPHORE = threading.Semaphore(
-    max(1, int(settings.SEQUENCES_MAX_INFLIGHT))
-)
-
 
 _ANNOTATIONS_SEMAPHORE = threading.Semaphore(max(1, int(settings.ANNOTATIONS_MAX_INFLIGHT)))
 _LOCI_SEMAPHORE = threading.Semaphore(max(1, int(settings.LOCI_MAX_INFLIGHT)))
@@ -37,21 +33,6 @@ def hits_slot(*, blocking: bool = False) -> Iterator[None]:
         yield
     finally:
         _HITS_SEMAPHORE.release()
-
-
-@contextmanager
-def sequences_slot(*, blocking: bool = False) -> Iterator[None]:
-    """
-    Acquire a sequences in-flight slot.
-
-    Non-blocking by default: raises ``BusyError`` if all slots are taken.
-    """
-    if not _SEQUENCES_SEMAPHORE.acquire(blocking=blocking):
-        raise BusyError("too many concurrent sequences requests")
-    try:
-        yield
-    finally:
-        _SEQUENCES_SEMAPHORE.release()
 
 
 def acquire_loci_slot() -> None:

@@ -137,7 +137,7 @@ Pipelines want the whole result set, so exports are streamed, not paginated:
 
 One locus per gene: a gene matching several terms appears once with the matched terms listed.
 
-### 4.4 `POST /sequences` (FASTA) - **implemented** (new index only, no old shard or corpus table; needs `loci_ref.sqlite` for `loci` lists, built by `serve_build loci-ref`)
+### 4.4 FASTA request body (posted to `/downloads`, 4.5) - **implemented** (new index only, no old shard or corpus table; needs `loci_ref.sqlite` for `loci` lists, built by `serve_build loci-ref`)
 
 Flat JSON body. Exactly one source of genes:
 
@@ -185,19 +185,36 @@ Rule object: `{"rank_by": ["coding:desc", "cds_len:desc"], "require": ["coding",
 - `POST /sequence-estimates`: index only, no GFF reads: `{n_genes, n_annotations, est_bp_upper_bound, over_limit}`. Transcript counts are unknown at this stage.
 - `POST /sequence-plans`: same body, reads the GFF slices. One row per eligible transcript with its metrics, `selected`, and the rule that applied. A client edits the table and posts it back as `loci`.
 
-**Storage and abuse limits.** Results and scratch files live under `SEQUENCES_RESULTS_DIR` (shared storage, TTL 24 h), at most `SEQUENCES_MAX_RESULTS` (100) at a time. Each result records a hash of the client IP; a client may have 2 exports running and start 20 per hour (429 `too_many_active_exports` / `export_rate_limited`, with `Retry-After`). The check is soft (two simultaneous requests can both pass) and is computed from the retained results, so every worker agrees. The NCBI rate-limit file stays on local `/tmp` because `flock` is unreliable on NFS.
+**Storage and abuse limits.** See 4.5.
 
 **NCBI budget.** All API processes share one request budget through a lock file (`NCBI_RATE_STATE_FILE`); a 429 from NCBI delays every process. Per-client fairness is not enforced beyond the proxy's per-IP limit.
 
-**Response.** Every result has a `result_id` = hash of the normalised request + `data_version`.
-- Small requests (default up to 50 genes): `200 text/x-fasta` with headers `X-Sequence-Count`, `X-Skipped-Count`, `X-Result-Id`, `X-Data-Version`.
-- (Removed 2026-11-24: larger requests no longer become jobs; see the implementation notes.)
-- `GET /sequences/results/{result_id}` (FASTA) and `/manifest.tsv` while the result is cached. FASTA has no safe place for comments, so skip details live only in the manifest.
+**Response.** Superseded by 4.5: there is no `POST /sequences`; the same body goes to `POST /downloads`.
 - Manifest columns: `locus_ref, symbol, status, transcript_id, rule, n_candidates, reason, seq_length`.
 - Skip reasons: `no_transcript`, `no_cds`, `filtered_out`, `transcript_not_found`, `gff_unavailable`, `seqid_not_resolved`, `window_too_large`, `ncbi_sequence_not_found` (the contig is not an NCBI sequence), `ncbi_timeout`, `ncbi_error`.
 - FASTA header: `>{symbol}|{organism}|{assembly_accession}|{annotation_id}|{transcript_id}`.
 - Transcript models come from the GFF slice when a request needs them (no global transcript table), with a read-through cache keyed by `annotation_id` and gene. GFF path comes from the presence index (`annotation.taxid`, `annotation.gff_path`).
 - Limits: see "Storage and abuse limits" and "NCBI budget" above (shared NCBI limiter, per-IP quota, results cached by `result_id`).
+
+### 4.5 `/downloads` (queued FASTA) - **implemented 2026-11-24**
+
+Replaces the synchronous `POST /sequences`, `/sequence-estimates` and the removed job polling. One resource, plain noun, same body as 4.4.
+
+| Request | Answer |
+|---|---|
+| `POST /downloads?dry_run=true` | `200` estimate (genes, base-pair bound, limits, `cached`); nothing is queued |
+| `POST /downloads` | `202` + `Location: /downloads/{id}`; `200` if an equal download is finished; `413`, `404 no_genes_matched`, `422`, `429`, `503` before queueing |
+| `GET /downloads/{id}` | `state` queued / running / done / failed, `queue_position`, `progress {genes_done, genes_total}`, counts, `links`, `expires_at`; `Retry-After: 5` while not finished |
+| `GET /downloads/{id}/fasta` | gzip FASTA, `Content-Length`, counts in `X-*` headers; `409 download_not_ready` |
+| `GET /downloads/{id}/report` | tsv, one row per gene |
+| `DELETE /downloads/{id}` | `204`; owner only (`403 not_your_download`); running ones stop at the next batch |
+| `GET /downloads/quota` | rolling 24 h quota of the caller |
+
+- **One queue.** Every worker runs a runner thread; a file lock (`DOWNLOADS_LOCK_FILE`) lets one runner at a time take the oldest queued download, so one download at a time uses the NCBI budget (shared limiter) and the memory of one batch. A crash leaves a `running` status that reads as `failed: download_lost` after the deadline plus a minute.
+- **id** = hash of the normalised request and the data version; an equal request finds the download that exists.
+- **Quota** (like the GFF upload quota in Annotrieve): 10 new downloads per client IP in a rolling 24 h, kept in `<results>/.quota/<owner>.json` (a hash of the IP; it survives the deletion of the downloads). Equal requests are free. Also 2 waiting or running per IP, 50 waiting overall, 100 stored overall; nothing is evicted to make room.
+- **Storage:** FASTA is gzipped after the run (`result.fa.gz`, streamed in 1 MiB blocks), removed 10 minutes after the first complete download (only a fully sent file counts), 2 hours after `done` if never fetched, 1 hour after a failure.
+- **Limit:** 1,000 genes and 1,000 sequences per download; deadline 30 minutes.
 
 ### 4.5 Kept as they are
 `GET /annotations/{id}/genes`, `/genes/{local_id}`, `/xrefs`, `/namespaces`: single-annotation drill-in. They read the shards, so they stay for gene cards and are not used for bulk work.

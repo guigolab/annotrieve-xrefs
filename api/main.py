@@ -43,7 +43,11 @@ async def lifespan(_app: FastAPI):
             await run_in_threadpool(presence_reader)
         except Exception:  # not published yet: /health reports it
             pass
+    from services.seq_runner import start_runner, stop_runner
+    if settings.SEQUENCES_RESULTS_DIR:
+        start_runner()               # this worker's share of the one downloads queue
     yield
+    stop_runner()
     close_ncbi_client()
     close_reader()
 
@@ -84,16 +88,16 @@ def create_app() -> FastAPI:
             "these exact gene names).\n"
             "- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv "
             "or ndjson).\n"
-            "- **sequences**: `/sequences` (CDS, transcript or protein FASTA for a query or a "
-            "list of `locus_ref`s), with `/sequence-estimates`, `/sequence-plans`, jobs and "
-            "cached results.\n"
+            "- **downloads**: `/downloads` (queue a CDS, transcript or protein FASTA for up to "
+            "1,000 genes, poll it, fetch the gzipped file; `?dry_run=true` estimates), "
+            "`/downloads/quota`, and `/sequence-plans` (which transcripts a request would pick).\n"
             "- **annotations**: per-annotation genes and cross-references (legacy shard-backed)."
         ),
         openapi_tags=[
             {"name": "system", "description": "Liveness."},
             {"name": "search", "description": "Gene-name discovery and annotation presence."},
             {"name": "loci", "description": "Gene coordinates."},
-            {"name": "sequences", "description": "FASTA export, previews, jobs and results."},
+            {"name": "downloads", "description": "Queued FASTA downloads, quota and transcript plans."},
             {"name": "annotations", "description": "Per-annotation genes and xrefs (legacy)."},
         ],
         version="1.1.0",
@@ -116,7 +120,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=allowed_origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS", "HEAD"],
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS", "HEAD"],
         allow_headers=["Content-Type", "Accept", "Cache-Control"],
         expose_headers=[
             "Content-Length",
@@ -126,9 +130,8 @@ def create_app() -> FastAPI:
             "X-Sequence-Count",
             "X-Skipped-Count",
             "X-Gene-Count",
-            "X-Result-Id",
+            "X-Download-Id",
             "X-Data-Version",
-            "X-Manifest-Url",
             "Location",
             "Retry-After",
         ],
