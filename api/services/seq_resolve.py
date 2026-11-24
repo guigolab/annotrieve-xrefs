@@ -1,6 +1,6 @@
 """Resolve one gene for /sequences: GFF slice -> transcript candidates -> chosen transcripts.
 
-Local only (no network). The same result feeds ``/sequence-plans`` and the export. A per-gene
+Local only (no network). The same result feeds ``/transcripts`` and the export. A per-gene
 problem never raises: it is recorded as ``reason`` so the caller can skip the gene (manifest) or
 fail the request, as ``on_error`` says. Only conditions that affect every gene (for example the
 annotation directory not being configured) raise :class:`SeqError`.

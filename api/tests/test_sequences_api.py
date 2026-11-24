@@ -1,4 +1,4 @@
-"""/downloads (queue, quota, gzip FASTA), /sequence-plans (new index only)."""
+"""/downloads (queue, quota, gzip FASTA), /transcripts (new index only)."""
 from __future__ import annotations
 
 import gzip
@@ -204,7 +204,7 @@ def test_transcript_rules(seq_client):
 
 def test_loci_mode_pinned_transcript_and_fail_by_default(seq_client):
     client, _ = seq_client
-    aid = client.post("/sequence-plans", json=TP53).json()["genes"][0]["annotation_id"]
+    aid = client.post("/transcripts", json=TP53).json()["genes"][0]["annotation_id"]
     ok = dl(client, {"action": "transcript",
                                          "loci": [{"locus_ref": f"{aid}:1", "transcript_id": "tx1b"}]})
     assert ok.status_code == 200 and headers(ok.text)[0].split("|")[4].split()[0] == "tx1b"
@@ -234,7 +234,7 @@ def test_noncoding_gene_is_skipped_with_reason_and_fails_when_asked(seq_client):
 
 def test_transcript_beyond_gene_bounds_is_fetched_whole(seq_client):
     client, _ = seq_client
-    plan = client.post("/sequence-plans", json={
+    plan = client.post("/transcripts", json={
         "query": {"names": ["uniq0"], "alias": "off"}, "action": "cds"}).json()
     tx = plan["genes"][0]["transcripts"][0]
     assert tx["transcript_id"] == "tx2" and tx["spliced_len"] == 51 + 31 and tx["n_exons"] == 2
@@ -243,7 +243,7 @@ def test_transcript_beyond_gene_bounds_is_fetched_whole(seq_client):
 
 def test_plan_lists_candidates_and_a_postable_selection(seq_client):
     client, _ = seq_client
-    plan = client.post("/sequence-plans", json={**TP53, "transcript": "most_exons"}).json()
+    plan = client.post("/transcripts", json={**TP53, "transcript": "most_exons"}).json()
     assert plan["n_genes"] == 5 and plan["n_skipped"] == 0 and len(plan["loci"]) == 5
     g = plan["genes"][0]
     assert [t["transcript_id"] for t in g["transcripts"]] == ["tx1a", "tx1b"]
@@ -487,7 +487,7 @@ def test_contig_unknown_to_ncbi_is_skipped_with_its_own_reason(seq_client):
 
 def test_request_order_is_kept_when_genes_are_resolved_by_annotation(seq_client):
     client, _ = seq_client
-    plan = client.post("/sequence-plans", json=TP53).json()
+    plan = client.post("/transcripts", json=TP53).json()
     refs = [g["locus_ref"] for g in plan["genes"]][::-1]           # reverse: annotation order differs
     r = dl(client, {"action": "cds", "loci": refs})
     got = [h.split("|")[3] for h in headers(r.text)]
@@ -533,7 +533,7 @@ FUZZ_BODIES = [
 
 
 @pytest.mark.parametrize("body", FUZZ_BODIES)
-@pytest.mark.parametrize("path", ["/downloads", "/downloads?dry_run=true", "/sequence-plans"])
+@pytest.mark.parametrize("path", ["/downloads", "/downloads?dry_run=true", "/transcripts"])
 def test_malformed_bodies_never_cause_a_server_error(seq_client, path, body):
     client, _ = seq_client
     r = client.post(path, json=body)
@@ -698,3 +698,18 @@ def test_prefix_terms_in_sequences_query(seq_client):
     assert bad.status_code == 422 and bad.json()["detail"]["code"] == "option_needs_prefix"
     short = dl(client, {"query": {"names": ["un*"]}, "action": "cds"})
     assert short.status_code == 422 and short.json()["detail"]["code"] == "prefix_too_short"
+
+
+def test_transcripts_of_one_gene_by_locus_ref(seq_client):
+    client, _ = seq_client
+    aid = client.post("/transcripts", json=TP53).json()["genes"][0]["annotation_id"]
+    g = client.get(f"/genes/{aid}:1/transcripts").json()
+    assert [t["transcript_id"] for t in g["transcripts"]] == ["tx1a", "tx1b"]
+    assert [t["selected"] for t in g["transcripts"]] == [True, False]          # longest CDS
+    most = client.get(f"/genes/{aid}:1/transcripts", params={"transcript": "most_exons"}).json()
+    assert [t["selected"] for t in most["transcripts"]] == [False, True]
+    assert client.get(f"/genes/{aid}:999/transcripts").status_code == 404
+    assert client.get("/genes/nope:1/transcripts").json()["detail"]["code"] == "annotation_not_found"
+    bad = client.get(f"/genes/{aid}:1/transcripts", params={"action": "dna"})
+    assert bad.status_code == 422
+    assert client.get("/genes/no-colon/transcripts").json()["detail"]["code"] == "invalid_locus_ref"

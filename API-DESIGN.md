@@ -183,7 +183,7 @@ Rule object: `{"rank_by": ["coding:desc", "cds_len:desc"], "require": ["coding",
 
 **Companion resources** (stateless, computed from the same body as `POST /sequences`; nothing is stored; renamed from `/sequences/estimate` and `/sequences/plan`; typed in `api/openapi.json`)
 - `POST /sequence-estimates`: index only, no GFF reads: `{n_genes, n_annotations, est_bp_upper_bound, over_limit}`. Transcript counts are unknown at this stage.
-- `POST /sequence-plans`: same body, reads the GFF slices. One row per eligible transcript with its metrics, `selected`, and the rule that applied. A client edits the table and posts it back as `loci`.
+- `POST /transcripts` (and `GET /genes/{locus_ref}/transcripts` for one gene; renamed from `/sequence-plans` 2026-11-24): same body, reads the GFF slices. One row per eligible transcript with its metrics, `selected`, and the rule that applied. A client edits the table and posts it back as `loci`.
 
 **Storage and abuse limits.** See 4.5.
 

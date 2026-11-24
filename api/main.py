@@ -90,7 +90,7 @@ def create_app() -> FastAPI:
             "or ndjson).\n"
             "- **downloads**: `/downloads` (queue a CDS, transcript or protein FASTA for up to "
             "1,000 genes, poll it, fetch the gzipped file; `?dry_run=true` estimates), "
-            "`/downloads/quota`, and `/sequence-plans` (which transcripts a request would pick).\n"
+            "`/downloads/quota`, and `/transcripts` and `/genes/{locus_ref}/transcripts` (which transcripts a request would pick).\n"
             "- **annotations**: per-annotation genes and cross-references (legacy shard-backed)."
         ),
         openapi_tags=[

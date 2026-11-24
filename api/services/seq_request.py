@@ -1,4 +1,4 @@
-"""Parse and normalise the body of ``POST /sequences`` (and ``/sequence-estimates``, ``/sequence-plans``).
+"""Parse and normalise the body of ``POST /downloads`` (and ``/transcripts``).
 
 Exactly one source of genes:
 

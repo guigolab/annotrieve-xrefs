@@ -91,8 +91,8 @@ server {
         add_header X-Content-Type-Options "nosniff" always;
     }
 
-    # Transcript plans read GFF slices for up to a few hundred genes: long timeout, never cached.
-    location ^~ /annotrieve-xrefs/api/v1/sequence-plans {
+    # Transcript lists read GFF slices for up to a few hundred genes: long timeout, never cached.
+    location ^~ /annotrieve-xrefs/api/v1/transcripts {
         access_log /var/log/nginx/api.log analytics_json;
 
         limit_req zone=xrefs_global burst=40 nodelay;

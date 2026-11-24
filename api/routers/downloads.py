@@ -1,4 +1,4 @@
-"""FASTA downloads (``/downloads``) and transcript plans (``/sequence-plans``).
+"""FASTA downloads (``/downloads``) and transcript choice (``/transcripts``, ``/genes/{ref}/transcripts``).
 
 ``POST /downloads`` puts a request in the one queue and answers 202 with a link; a runner (one at a
 time for the whole container, see ``seq_runner``) produces a gzipped FASTA and a report. The id of
@@ -115,7 +115,7 @@ class PlanLocus(BaseModel):
     transcript_id: str
 
 
-class SequencePlan(BaseModel):
+class TranscriptPlan(BaseModel):
     """The transcripts a request would extract, with the metrics behind the choice."""
 
     data_version: str
@@ -298,51 +298,82 @@ def create_download(body: DownloadBody, request: Request,
         src.close()
 
 
-@router.post("/sequence-plans", response_model=SequencePlan,
-             summary="Plan the transcripts of a sequence request",
-             responses={413: _ERR, 422: _ERR, 503: _ERR})
-def create_sequence_plan(body: DownloadBody):
-    """Which transcripts the request would extract, with the metrics behind the choice.
+def _build_plan(req: SeqRequest, src: Source, *, cap: int) -> dict:
+    counted = _count_cap(src, cap)
+    if not counted.complete:
+        raise HTTPException(status_code=413, detail=error_detail(
+            "plan_too_large", f"this covers at most {cap} genes; narrow the request",
+            n_genes_at_least=counted.n_genes, max_genes=cap))
+    resolver = GeneResolver(req.action.value, req.rule, req.buffer_bp)
+    genes, loci_out = [], []
+    for ref, gene, reason in _plan_items(src, resolver):
+        if gene is None:
+            genes.append({"locus_ref": ref, "status": "skipped", "reason": reason,
+                          "message": reason.replace("_", " "), "transcripts": []})
+            continue
+        try:
+            res = resolver.resolve(gene)
+        except SeqError as exc:
+            raise _http(exc) from exc
+        chosen = {c.transcript_id for c in res.chosen}
+        genes.append({
+            "locus_ref": ref, "annotation_id": gene.annotation_id, "symbol": gene.symbol,
+            "organism_name": gene.organism, "assembly_accession": gene.accession,
+            "seqid": gene.seqid, "start": gene.start, "end": gene.end, "strand": gene.strand,
+            "status": "ok" if res.ok else "skipped", "reason": res.reason,
+            "message": res.message, "rule": res.rule, "n_candidates": res.n_candidates,
+            "transcripts": [{"transcript_id": c.transcript_id,
+                             "selected": c.transcript_id in chosen, **c.metrics()}
+                            for c in res.candidates]})
+        loci_out += [{"locus_ref": ref, "transcript_id": t} for t in sorted(chosen)]
+    return {"data_version": src.data_version, "action": req.action.value,
+            "n_genes": len(genes), "n_skipped": sum(g["status"] == "skipped" for g in genes),
+            "genes": genes, "loci": loci_out}
 
-    Reads the GFF slices (no network). A client can edit the result and post the selected
-    ``loci`` back to ``/sequences``.
+
+@router.post("/transcripts", response_model=TranscriptPlan,
+             summary="Which transcripts a request would pick",
+             responses={413: _ERR, 422: _ERR, 503: _ERR})
+def list_transcripts(body: DownloadBody):
+    """The candidate transcripts of every gene of the request, with the metrics behind the choice
+    and the ones the rule selects. Same body as `POST /downloads`.
+
+    Reads the GFF slices (no network, nothing stored). A client can change the selection and post
+    the resulting ``loci`` to ``/downloads``.
     """
     req = _parse(body)
     src = _open_source(req)
     try:
-        cap = min(req.max_genes, int(settings.SEQUENCES_PLAN_MAX_GENES))
-        counted = _count_cap(src, cap)
-        if not counted.complete:
-            raise HTTPException(status_code=413, detail=error_detail(
-                "plan_too_large", f"a plan covers at most {cap} genes; narrow the request",
-                n_genes_at_least=counted.n_genes, max_genes=cap))
-        resolver = GeneResolver(req.action.value, req.rule, req.buffer_bp)
-        genes, loci_out = [], []
-        for ref, gene, reason in _plan_items(src, resolver):
-            if gene is None:
-                genes.append({"locus_ref": ref, "status": "skipped", "reason": reason,
-                              "message": reason.replace("_", " "), "transcripts": []})
-                continue
-            try:
-                res = resolver.resolve(gene)
-            except SeqError as exc:
-                raise _http(exc) from exc
-            chosen = {c.transcript_id for c in res.chosen}
-            genes.append({
-                "locus_ref": ref, "annotation_id": gene.annotation_id, "symbol": gene.symbol,
-                "organism_name": gene.organism, "assembly_accession": gene.accession,
-                "seqid": gene.seqid, "start": gene.start, "end": gene.end, "strand": gene.strand,
-                "status": "ok" if res.ok else "skipped", "reason": res.reason,
-                "message": res.message, "rule": res.rule, "n_candidates": res.n_candidates,
-                "transcripts": [{"transcript_id": c.transcript_id,
-                                 "selected": c.transcript_id in chosen, **c.metrics()}
-                                for c in res.candidates]})
-            loci_out += [{"locus_ref": ref, "transcript_id": t} for t in sorted(chosen)]
-        return {"data_version": src.data_version, "action": req.action.value,
-                "n_genes": len(genes), "n_skipped": sum(g["status"] == "skipped" for g in genes),
-                "genes": genes, "loci": loci_out}
+        return _build_plan(req, src, cap=min(req.max_genes, int(settings.SEQUENCES_PLAN_MAX_GENES)))
     finally:
         src.close()
+
+
+@router.get("/genes/{locus_ref}/transcripts", response_model=PlanGene,
+            summary="Transcripts of one gene", responses={404: _ERR, 422: _ERR, 503: _ERR})
+def get_gene_transcripts(
+    locus_ref: str,
+    action: str = Query("cds", description="cds | transcript | protein: decides which transcripts "
+                                           "are eligible (`cds`/`protein` need a CDS)"),
+    transcript: str | None = Query(None, description="selection preset (default `longest`)"),
+):
+    """Every transcript of one gene (`annotation_id:local_id`) with its metrics, and which one
+    the preset would select."""
+    data: dict[str, Any] = {"action": action, "loci": [locus_ref]}
+    if transcript:
+        data["transcript"] = transcript
+    try:
+        req = parse_request(data)
+    except QueryError as exc:
+        raise http_for_query_error(exc) from exc
+    src = _open_source(req)
+    try:
+        gene = _build_plan(req, src, cap=1)["genes"][0]
+    finally:
+        src.close()
+    if gene["status"] == "skipped" and gene["reason"] in ("annotation_not_found", "locus_not_found"):
+        raise HTTPException(status_code=404, detail=error_detail(gene["reason"], gene["message"]))
+    return gene
 
 
 def _plan_items(src: Source, resolver: GeneResolver):

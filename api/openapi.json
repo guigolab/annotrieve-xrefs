@@ -547,7 +547,7 @@
         "title": "PlanTranscript",
         "type": "object"
       },
-      "SequencePlan": {
+      "TranscriptPlan": {
         "description": "The transcripts a request would extract, with the metrics behind the choice.",
         "properties": {
           "action": {
@@ -590,7 +590,7 @@
           "genes",
           "loci"
         ],
-        "title": "SequencePlan",
+        "title": "TranscriptPlan",
         "type": "object"
       },
       "ValidationError": {
@@ -636,7 +636,7 @@
     }
   },
   "info": {
-    "description": "From gene names to annotations, gene coordinates and sequences.\n\n- **search**: `/names` (prefix discovery), `/hits` (which annotations contain these exact gene names).\n- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv or ndjson).\n- **downloads**: `/downloads` (queue a CDS, transcript or protein FASTA for up to 1,000 genes, poll it, fetch the gzipped file; `?dry_run=true` estimates), `/downloads/quota`, and `/sequence-plans` (which transcripts a request would pick).\n- **annotations**: per-annotation genes and cross-references (legacy shard-backed).",
+    "description": "From gene names to annotations, gene coordinates and sequences.\n\n- **search**: `/names` (prefix discovery), `/hits` (which annotations contain these exact gene names).\n- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv or ndjson).\n- **downloads**: `/downloads` (queue a CDS, transcript or protein FASTA for up to 1,000 genes, poll it, fetch the gzipped file; `?dry_run=true` estimates), `/downloads/quota`, and `/transcripts` and `/genes/{locus_ref}/transcripts` (which transcripts a request would pick).\n- **annotations**: per-annotation genes and cross-references (legacy shard-backed).",
     "title": "Annotrieve xrefs",
     "version": "1.1.0"
   },
@@ -1429,6 +1429,78 @@
         ]
       }
     },
+    "/genes/{locus_ref}/transcripts": {
+      "get": {
+        "description": "Every transcript of one gene (`annotation_id:local_id`) with its metrics, and which one\nthe preset would select.",
+        "operationId": "get_gene_transcripts_genes__locus_ref__transcripts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locus_ref",
+            "required": true,
+            "schema": {
+              "title": "Locus Ref",
+              "type": "string"
+            }
+          },
+          {
+            "description": "cds | transcript | protein: decides which transcripts are eligible (`cds`/`protein` need a CDS)",
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "default": "cds",
+              "description": "cds | transcript | protein: decides which transcripts are eligible (`cds`/`protein` need a CDS)",
+              "title": "Action",
+              "type": "string"
+            }
+          },
+          {
+            "description": "selection preset (default `longest`)",
+            "in": "query",
+            "name": "transcript",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "selection preset (default `longest`)",
+              "title": "Transcript"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanGene"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "422": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          },
+          "503": {
+            "description": "Error: `detail` is `{code, message, ...}`."
+          }
+        },
+        "summary": "Transcripts of one gene",
+        "tags": [
+          "downloads"
+        ]
+      }
+    },
     "/genes/{locus_ref}/xrefs": {
       "get": {
         "description": "Cross-references of one gene by its `locus_ref`; same answer as the nested route.",
@@ -2085,10 +2157,10 @@
         ]
       }
     },
-    "/sequence-plans": {
+    "/transcripts": {
       "post": {
-        "description": "Which transcripts the request would extract, with the metrics behind the choice.\n\nReads the GFF slices (no network). A client can edit the result and post the selected\n``loci`` back to ``/sequences``.",
-        "operationId": "create_sequence_plan_sequence_plans_post",
+        "description": "The candidate transcripts of every gene of the request, with the metrics behind the choice\nand the ones the rule selects. Same body as `POST /downloads`.\n\nReads the GFF slices (no network, nothing stored). A client can change the selection and post\nthe resulting ``loci`` to ``/downloads``.",
+        "operationId": "list_transcripts_transcripts_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -2104,7 +2176,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SequencePlan"
+                  "$ref": "#/components/schemas/TranscriptPlan"
                 }
               }
             },
@@ -2120,7 +2192,7 @@
             "description": "Error: `detail` is `{code, message, ...}`."
           }
         },
-        "summary": "Plan the transcripts of a sequence request",
+        "summary": "Which transcripts a request would pick",
         "tags": [
           "downloads"
         ]
