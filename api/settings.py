@@ -38,10 +38,10 @@ class Settings:
         "ANNOTRIEVE_FILES_BASE", "https://genome.crg.es/annotrieve/files")
     LOCI_MAX_ROWS: int = _env_int("LOCI_MAX_ROWS", 2_000_000)
     LOCI_CACHE_KIB: int = _env_int("LOCI_CACHE_KIB", 16384)
-    LOCI_MAX_INFLIGHT: int = _env_int("LOCI_MAX_INFLIGHT", 4)
+    LOCI_MAX_INFLIGHT: int = _env_int("LOCI_MAX_INFLIGHT", 3)
 
-    # Negative cache_size is KiB (~256 MiB).
-    READ_CACHE_SIZE: int = _env_int("READ_CACHE_SIZE", -262144)
+    # Negative cache_size is KiB (2 MiB per connection; see API-LOCKED-DECISIONS.md section 4).
+    READ_CACHE_SIZE: int = _env_int("READ_CACHE_SIZE", -2048)
 
     # Search index in RAM (API-LOCKED-DECISIONS.md, D1). When set, presence.sqlite is copied from the
     # (NFS) version directory into this directory, which must be on tmpfs (for example /dev/shm/...),
@@ -56,7 +56,7 @@ class Settings:
     PRESENCE_RECHECK_S: float = _env_float("PRESENCE_RECHECK_S", 0.0)
 
     # Concurrent /hits requests per worker (each can hold tens of MB while it builds its answer).
-    HITS_MAX_INFLIGHT: int = _env_int("HITS_MAX_INFLIGHT", 16)
+    HITS_MAX_INFLIGHT: int = _env_int("HITS_MAX_INFLIGHT", 3)
 
     # On-disk annotation GFFs (same host tree as Annotrieve).
     ANNOTATIONS_DIR: str = os.getenv("ANNOTATIONS_DIR", "")
@@ -99,11 +99,11 @@ class Settings:
     TRUSTED_PROXY_HOPS: int = _env_int("TRUSTED_PROXY_HOPS", 1)
     # Skip genes of annotations whose GFF index (.csi) is bigger than this many MiB on disk:
     # opening it needs about as much memory again (0 = no limit).
-    SEQUENCES_MAX_INDEX_MB: float = _env_float("SEQUENCES_MAX_INDEX_MB", 0.0)
+    SEQUENCES_MAX_INDEX_MB: float = _env_float("SEQUENCES_MAX_INDEX_MB", 256.0)
     SEQUENCES_MAX_WINDOW_BP: int = _env_int("SEQUENCES_MAX_WINDOW_BP", 5_000_000)
     SEQUENCES_COALESCE_GAP_BP: int = _env_int("SEQUENCES_COALESCE_GAP_BP", 10_000)
     SEQUENCES_CACHE_MB: int = _env_int("SEQUENCES_CACHE_MB", 32)
-    SEQUENCES_MAX_INFLIGHT: int = _env_int("SEQUENCES_MAX_INFLIGHT", 2)
+    SEQUENCES_MAX_INFLIGHT: int = _env_int("SEQUENCES_MAX_INFLIGHT", 1)
     SEQUENCES_DEADLINE_S: float = _env_float("SEQUENCES_DEADLINE_S", 800.0)
     GFFREAD_BIN: str = os.getenv("GFFREAD_BIN", "gffread")
     GFFREAD_TIMEOUT_S: float = _env_float("GFFREAD_TIMEOUT_S", 120.0)

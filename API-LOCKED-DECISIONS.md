@@ -128,7 +128,7 @@ Order matters: D1 first, then the limits that make the budget true.
 
 - [x] D1 index in RAM (`/dev/shm` copy, version check every few seconds)
 - [x] Compose: `mem_limit`, `memswap_limit`, `shm_size`, log rotation, `TMPDIR` and `SQLITE_TMPDIR` on NFS
-- [ ] Caps: `HITS_MAX_INFLIGHT=3`, `LOCI_MAX_INFLIGHT=3`, `SEQUENCES_MAX_INFLIGHT=1`, SQLite caches, `--max-requests`, `SEQUENCES_MAX_INDEX_MB=256`
+- [x] Caps: `HITS_MAX_INFLIGHT=3`, `LOCI_MAX_INFLIGHT=3`, `SEQUENCES_MAX_INFLIGHT=1`, SQLite caches, `--max-requests`, `SEQUENCES_MAX_INDEX_MB=256`
 - [ ] D3 connection pool and shared annotation list
 - [ ] D6 limits and time budgets on `/annotations/*`
 - [ ] D8 real health check
@@ -140,3 +140,4 @@ Order matters: D1 first, then the limits that make the budget true.
 
 - 2026-11-24: decisions locked; worst-case `/hits` memory measured (section 3); budget drafted.
 - 2026-11-24: D1 done in code (`helpers/presence.py`: copy to `PRESENCE_RAM_DIR` under a file lock, fallback to disk when too large / no space, no network-drive calls between checks every `PRESENCE_RECHECK_S`), 5 new tests in `tests/test_presence_ram.py`. Compose now has `mem_limit`/`memswap_limit` 2g, `shm_size` 1g, log rotation, scratch dir on NFS. Test run: 349 pass; `test_committed_openapi_schema_matches_the_app` fails with or without this change (checked by stashing it).
+- 2026-11-24: caps done as defaults in `api/settings.py` (HITS 3, LOCI 3, SEQUENCES 1, SQLite cache 2 MiB, `SEQUENCES_MAX_INDEX_MB` 256), SQLite `soft_heap_limit` 64 MiB (presence and legacy corpus reader), gunicorn `--max-requests 5000 --max-requests-jitter 500`. Tests: 349 pass (openapi test excluded, known failure). Still open from the settings table: gate on `/annotations/*` (D6) and the connection pool (D3).

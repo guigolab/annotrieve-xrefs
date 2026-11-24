@@ -18,7 +18,7 @@ from settings import presence_dir, presence_ram_dir, settings
 
 PRESENCE_FILE = "presence.sqlite"
 _LOCAL = threading.local()
-_SOFT_HEAP_LIMIT = 256 * 1024 * 1024
+_SOFT_HEAP_LIMIT = 64 * 1024 * 1024
 _LOG = logging.getLogger(__name__)
 _RAM_FAILED: set[Path] = set()  # versions that could not be copied to RAM: do not retry per request
 _RAM_LOCK = threading.Lock()

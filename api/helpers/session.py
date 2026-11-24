@@ -15,7 +15,7 @@ _REGISTRY_LOCK = threading.Lock()
 _REGISTRY: dict[int, sqlite3.Connection] = {}
 
 # Soft heap so sorts/hashes spill to temp files instead of growing unbounded.
-_SOFT_HEAP_LIMIT = 512 * 1024 * 1024  # 512 MiB
+_SOFT_HEAP_LIMIT = 64 * 1024 * 1024  # 64 MiB
 
 
 class GeneCorpusUnavailable(Exception):
