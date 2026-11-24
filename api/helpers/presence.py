@@ -22,6 +22,7 @@ _SOFT_HEAP_LIMIT = 64 * 1024 * 1024
 _LOG = logging.getLogger(__name__)
 _RAM_FAILED: set[Path] = set()  # versions that could not be copied to RAM: do not retry per request
 _RAM_LOCK = threading.Lock()
+_LAST_VERSION: str | None = None  # data version of the most recently opened index
 
 
 @dataclass
@@ -33,6 +34,11 @@ class _Reader:
     data_version: str
     db_path: Path | None = None  # file actually opened (RAM copy or `path`)
     checked: float = 0.0  # monotonic time of the last check of the published link
+
+
+def current_data_version() -> str | None:
+    """Data version last seen by any thread (no file access); None before the first request."""
+    return _LAST_VERSION
 
 
 def presence_enabled() -> bool:
@@ -133,6 +139,8 @@ def _open(resolved: Path) -> _Reader:
     for (o,) in conn.execute("SELECT ord FROM annotation"):
         mask |= 1 << int(o)
     meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+    global _LAST_VERSION
+    _LAST_VERSION = str(meta.get("data_version", ""))
     return _Reader(resolved, resolved.stat().st_mtime, conn, mask,
                    str(meta.get("data_version", "")), db_path=db_file,
                    checked=time.monotonic())

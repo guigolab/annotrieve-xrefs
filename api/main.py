@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from helpers.errors import error_detail
+from helpers.http_cache import DataVersionCache
 from helpers.logging_config import configure_logging
 from helpers.ncbi_eutils import close_ncbi_client
 from helpers.session import close_reader
@@ -34,6 +35,14 @@ async def lifespan(_app: FastAPI):
                 os.makedirs(os.environ[var], exist_ok=True)
             except OSError:
                 pass
+    # Open the published index now, so its data version is known before the first request.
+    from starlette.concurrency import run_in_threadpool
+    from helpers.presence import presence_enabled, presence_reader
+    if presence_enabled():
+        try:
+            await run_in_threadpool(presence_reader)
+        except Exception:  # not published yet: /health reports it
+            pass
     yield
     close_ncbi_client()
     close_reader()
@@ -90,6 +99,8 @@ def create_app() -> FastAPI:
         version="1.1.0",
         lifespan=lifespan,
     )
+
+    app.add_middleware(DataVersionCache)
 
     allowed_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
     if allowed_origins_env:

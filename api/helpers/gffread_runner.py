@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import resource
 import shutil
 import subprocess
 from enum import Enum
@@ -28,6 +29,18 @@ _ACTION_FLAG = {
     SequenceAction.transcript: "-w",
     SequenceAction.protein: "-y",
 }
+
+
+def limit_child() -> None:
+    """Run in the child before exec: cap its data memory and make it the OOM killer's first pick."""
+    limit = int(settings.GFFREAD_MAX_DATA_MB) * 1024 * 1024
+    if limit > 0:
+        resource.setrlimit(resource.RLIMIT_DATA, (limit, limit))
+    try:
+        with open("/proc/self/oom_score_adj", "w") as f:
+            f.write("1000")
+    except OSError:
+        pass
 
 
 def gffread_bin() -> str:
@@ -96,6 +109,7 @@ def run_gffread(
             text=True,
             timeout=timeout,
             check=False,
+            preexec_fn=limit_child,
         )
     except subprocess.TimeoutExpired as exc:
         raise GffreadError(

@@ -114,6 +114,12 @@ class Settings:
     SEQUENCES_CACHE_MB: int = _env_int("SEQUENCES_CACHE_MB", 32)
     SEQUENCES_MAX_INFLIGHT: int = _env_int("SEQUENCES_MAX_INFLIGHT", 1)
     SEQUENCES_DEADLINE_S: float = _env_float("SEQUENCES_DEADLINE_S", 800.0)
+    # Data-size limit (MB) of each gffread child; it is also the first process the kernel kills when
+    # the container runs out of memory. 0 = no limit.
+    GFFREAD_MAX_DATA_MB: int = _env_int("GFFREAD_MAX_DATA_MB", 128)
+    # Browsers and the nginx cache may reuse an answer this long; after that they ask again with the
+    # data-version ETag and get a cheap 304 while the data has not changed. 0 = no Cache-Control.
+    HTTP_CACHE_MAX_AGE_S: int = _env_int("HTTP_CACHE_MAX_AGE_S", 300)
     GFFREAD_BIN: str = os.getenv("GFFREAD_BIN", "gffread")
     GFFREAD_TIMEOUT_S: float = _env_float("GFFREAD_TIMEOUT_S", 120.0)
 
