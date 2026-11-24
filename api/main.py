@@ -14,7 +14,6 @@ from helpers.errors import error_detail
 from helpers.http_cache import DataVersionCache
 from helpers.logging_config import configure_logging
 from helpers.ncbi_eutils import close_ncbi_client
-from helpers.session import close_reader
 from routers import api_router
 from settings import settings
 
@@ -49,7 +48,6 @@ async def lifespan(_app: FastAPI):
     yield
     stop_runner()
     close_ncbi_client()
-    close_reader()
 
 
 def _validation_message(errors: list[dict]) -> str:

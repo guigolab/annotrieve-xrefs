@@ -196,12 +196,6 @@ def test_sidecars_reapplies_stored_catalogue(tmp_path):
     assert conn.execute("SELECT assembly_name FROM annotation WHERE annotation_id='ann00'").fetchone()[0] == "GRCh38"
 
 
-def test_legacy_build_arguments_still_dispatch_to_the_old_build(tmp_path, capsys):
-    rc = serve_build_main(["--work-dir", str(tmp_path)])     # no gene_corpus.sqlite there
-    assert rc == 2
-    assert "gene_corpus.sqlite missing" in capsys.readouterr().err
-
-
 def _try_alloc(_):
     try:
         bytearray(400 * 1024 * 1024)

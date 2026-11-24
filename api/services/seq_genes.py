@@ -45,10 +45,6 @@ def build_loci_query(pres: sqlite3.Connection, reader, data_version: str, req: S
         annotation_ids=q["annotation_ids"], case_sensitive=q["case_sensitive"], flank_bp=0)
 
 
-def query_estimate(pres, loci, q: LociQuery) -> dict:
-    return estimate(pres, loci, q)
-
-
 def query_genes(pres, loci, reader, q: LociQuery) -> Iterator[Gene]:
     info = annotation_info(reader)
     paths = annotation_paths(reader)

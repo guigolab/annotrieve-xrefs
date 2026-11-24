@@ -6,9 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from helpers.cursor import QueryError
 from helpers.errors import http_for_query_error
 from helpers.strict import reject_unknown_params
-from helpers.deps import corpus_conn
-from helpers.presence import open_request_connections, presence_enabled, presence_reader
-from services.names import list_names_by_prefix
+from helpers.presence import open_request_connections, presence_reader
 from services.presence_hits import list_names_by_prefix_presence
 
 router = APIRouter()
@@ -65,20 +63,13 @@ def get_names(
     """
     reject_unknown_params(request, _GET_PARAMS)
     try:
-        if presence_enabled():
-            loci = _open_loci()
-            try:
-                return list_names_by_prefix_presence(
-                    presence_reader(), prefix, include_taxids=include_taxids,
-                    exclude_taxids=exclude_taxids, alias=alias, sources=sources, loci=loci)
-            finally:
-                if loci is not None:
-                    loci.close()
-        return list_names_by_prefix(
-            corpus_conn(),
-            prefix,
-            include_taxids=include_taxids,
-            exclude_taxids=exclude_taxids,
-        )
+        loci = _open_loci()
+        try:
+            return list_names_by_prefix_presence(
+                presence_reader(), prefix, include_taxids=include_taxids,
+                exclude_taxids=exclude_taxids, alias=alias, sources=sources, loci=loci)
+        finally:
+            if loci is not None:
+                loci.close()
     except QueryError as exc:
         raise http_for_query_error(exc) from exc

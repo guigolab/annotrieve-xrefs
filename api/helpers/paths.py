@@ -1,22 +1,13 @@
-"""Resolve published gene_corpus paths (global DB + per-GFF shards)."""
+"""Resolve published per-annotation shard paths."""
 from __future__ import annotations
 
 from pathlib import Path
 
 from settings import gene_corpus_dir
 
-GENE_CORPUS_SQLITE = "gene_corpus.sqlite"
 PER_GFF_DIRNAME = "per_gff"
 SHARD_GENES_SQLITE = "genes.sqlite"
 MAX_ANNOTATION_ID_CHARS = 128
-
-
-def gene_corpus_db_path(base: Path | None = None) -> Path | None:
-    """Return ``{dir}/gene_corpus.sqlite`` if the parent dir is configured."""
-    root = base if base is not None else gene_corpus_dir()
-    if root is None:
-        return None
-    return root / GENE_CORPUS_SQLITE
 
 
 def sanitize_annotation_id(annotation_id: str) -> str:

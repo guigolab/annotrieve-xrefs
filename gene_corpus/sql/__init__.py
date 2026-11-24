@@ -1,22 +1,5 @@
 """SQLite build helpers for gene_corpus."""
 
-from gene_corpus.sql.attach import (
-    annotation_id_exists,
-    attach_shard,
-    existing_annotation_ids,
-    next_annotation_key,
-    read_seed_row_from_shard,
-    rebuild_namespace_stats,
-    seed_row_from_shard_meta,
-)
-from gene_corpus.sql.lineage import (
-    fill_annotation_lineage,
-    fill_lineage_for_annotation,
-    load_parent_map,
-    refresh_lineage_if_taxonomy_changed,
-    taxonomy_file_sha256,
-)
-from gene_corpus.sql.merge import merge_shards_into_db
 from gene_corpus.sql.per_gff import (
     build_tier_a_counts,
     connect_per_gff,
@@ -34,65 +17,21 @@ from gene_corpus.sql.per_gff import (
     tier_a_counts_n,
     write_shard_meta,
 )
-from gene_corpus.sql.repair_quotes import (
-    recompute_xref_meta_from_state,
-    repair_wrapped_accessions,
-)
-from gene_corpus.sql.schema import (
-    SCHEMA_VERSION,
-    checkpoint_wal,
-    connect_for_build,
-    create_indexes,
-    init_schema,
-    seed_annotations,
-)
-from gene_corpus.sql.prune_xref_file import apply_prune, summarize_prune
-from gene_corpus.sql.xref_index import (
-    ensure_schema as ensure_xref_index_schema,
-    index_annotation,
-    index_missing_annotations,
-)
 
 __all__ = [
-    "SCHEMA_VERSION",
-    "annotation_id_exists",
-    "apply_prune",
-    "attach_shard",
     "build_tier_a_counts",
-    "checkpoint_wal",
-    "connect_for_build",
     "connect_per_gff",
-    "create_indexes",
     "create_per_gff_indexes",
     "discover_shard_paths",
-    "ensure_xref_index_schema",
-    "existing_annotation_ids",
-    "fill_annotation_lineage",
-    "fill_lineage_for_annotation",
     "finalize_shard",
-    "index_annotation",
-    "index_missing_annotations",
     "init_per_gff_schema",
-    "init_schema",
     "insert_genes",
     "insert_xrefs",
-    "load_parent_map",
-    "merge_shards_into_db",
     "meta_complete",
-    "next_annotation_key",
-    "read_seed_row_from_shard",
     "read_shard_meta",
-    "rebuild_namespace_stats",
-    "recompute_xref_meta_from_state",
-    "refresh_lineage_if_taxonomy_changed",
-    "repair_wrapped_accessions",
-    "seed_annotations",
-    "seed_row_from_shard_meta",
     "shard_dir",
     "shard_sqlite_path",
     "shard_tmp_path",
-    "summarize_prune",
-    "taxonomy_file_sha256",
     "tier_a_counts_n",
     "write_shard_meta",
 ]

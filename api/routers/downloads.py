@@ -68,22 +68,6 @@ POST_RESPONSES = {
 logger = logging.getLogger(__name__)
 
 
-class DownloadEstimate(BaseModel):
-    """What a request would cost, from the index alone (nothing is extracted)."""
-
-    data_version: str
-    id: str = Field(description="Id the download would have")
-    n_genes: int | None = Field(None, description="null when over the limit (see n_genes_at_least)")
-    n_genes_at_least: int
-    complete: bool = Field(description="false when counting stopped at max_genes")
-    est_bp_upper_bound: int = Field(description="Sum of gene lengths: bound of the bases to fetch")
-    max_genes: int
-    over_limit: bool
-    max_sequences: int = Field(description="most sequences one download may hold")
-    cached: bool = Field(description="a finished download for this request is stored")
-    terms: list[dict[str, Any]] = Field(description="query mode: each name and whether it was found")
-
-
 class PlanTranscript(BaseModel):
     model_config = ConfigDict(extra="allow")
 

@@ -33,7 +33,6 @@ from helpers.pagination import (
     clamp_offset,
     page_envelope,
 )
-from helpers.session import GeneCorpusUnavailable
 from helpers.strand import format_strand
 
 _SHARD_CACHE_SIZE = -16384  # 16 MiB
@@ -42,6 +41,10 @@ _GENE_COLS = (
     "local_id, source_gene_id, feature_type, seqid, start, end, "
     "strand, biotype, primary_name, prose, prose_kind"
 )
+
+
+class GeneCorpusUnavailable(Exception):
+    """The gene corpus directory is not configured."""
 
 
 class ShardUnavailable(Exception):

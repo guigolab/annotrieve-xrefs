@@ -151,50 +151,6 @@ def count_fasta_records(path: Path) -> int:
     return count
 
 
-def rewrite_fasta_headers(
-    in_path: Path,
-    out_path: Path,
-    *,
-    header_for_id: dict[str, str],
-) -> list[str]:
-    """
-    Stream ``in_path`` to ``out_path``, replacing deflines.
-
-    ``header_for_id`` maps the first whitespace-delimited token of the
-    gffread defline (transcript id) to the full new header (without ``>``).
-    Returns the ordered list of transcript ids written.
-    """
-    written: list[str] = []
-    current_id: str | None = None
-    with open(in_path, encoding="utf-8", errors="replace") as src, open(
-        out_path, "w", encoding="utf-8"
-    ) as dst:
-        for line in src:
-            if line.startswith(">"):
-                token = line[1:].strip().split()[0] if line[1:].strip() else ""
-                # gffread may emit ``id`` or ``id seqid:coords``. Exact match only.
-                tid = token.split("|")[0]
-                header = header_for_id.get(tid)
-                if header is None and token != tid:
-                    header = header_for_id.get(token)
-                    if header is not None:
-                        tid = token
-                if header is None:
-                    raise GffreadError(
-                        "gffread_failed",
-                        f"unexpected gffread record id {token!r}",
-                        transcript_id=token,
-                    )
-                dst.write(f">{header}\n")
-                written.append(tid)
-                current_id = tid
-            else:
-                if current_id is None:
-                    continue
-                dst.write(line)
-    return written
-
-
 def split_fasta_to_record_files(
     in_path: Path,
     out_dir: Path,

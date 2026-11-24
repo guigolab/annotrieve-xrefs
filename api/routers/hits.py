@@ -7,12 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from helpers.concurrency import BusyError, hits_slot
 from helpers.cursor import QueryError
-from helpers.deps import corpus_conn
 from helpers.errors import error_detail, http_for_query_error
-from helpers.presence import presence_enabled, presence_reader
+from helpers.presence import presence_reader
 from helpers.pagination import MAX_NAMES_GET, MAX_NAMES_POST
 from helpers.strict import reject_unknown_params
-from services.hits import list_name_hits
 from services.hits_formats import stream_hits_tsv
 from services.presence_hits import list_name_hits_presence, render_hits_json
 
@@ -68,14 +66,6 @@ def _run(*, names, terms=None, include_taxids, exclude_taxids, alias, sources, m
     if fmt == "tsv" and shape and shape.strip().lower() != "records":
         raise QueryError("format=tsv is always one row per annotation: use shape=records or omit shape",
                          code="invalid_combination", format=fmt, shape=shape)
-    if not presence_enabled():
-        if sources or min_matched or (shape or "compact") != "compact" or fmt != "json":
-            raise QueryError("sources, min_matched, shape and format need the presence index",
-                             code="presence_required")
-        if terms:
-            raise QueryError("terms need the presence index", code="presence_required")
-        return list_name_hits(corpus_conn(), names, include_taxids=include_taxids,
-                              exclude_taxids=exclude_taxids, max_names=max_names)
     reader = presence_reader()
     args = dict(include_taxids=include_taxids, exclude_taxids=exclude_taxids, alias=alias,
                 max_names=max_names, sources=sources, min_matched=min_matched)

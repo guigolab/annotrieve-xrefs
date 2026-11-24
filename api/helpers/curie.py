@@ -122,26 +122,9 @@ def _parse_curie_parts(raw: str) -> tuple[str, str]:
     return prefix, accession
 
 
-def parse_curie(raw: str) -> tuple[str, str]:
-    """
-    Split ``prefix:accession`` on the first colon.
-
-    Returns ``(namespace, accession)``. Raises CurieError when the string
-    has no colon or the prefix is empty/unknown (searchable allowlist).
-    """
-    prefix, accession = _parse_curie_parts(raw)
-    namespace = resolve_namespace(prefix)
-    if namespace is None:
-        raise CurieError(
-            f"unknown CURIE prefix: {prefix}",
-            code="unknown_prefix",
-        )
-    return namespace, normalize_accession(namespace, accession)
-
-
 def parse_curie_local(raw: str) -> tuple[str, str]:
     """
-    Like ``parse_curie``, but any non-empty prefix maps to a stored namespace.
+    Any non-empty prefix maps to a stored namespace.
 
     Used by annotation-scoped ``curies`` / accessions routes (chip namespaces).
     """
@@ -153,11 +136,3 @@ def parse_curie_local(raw: str) -> tuple[str, str]:
             code="unknown_prefix",
         )
     return namespace, normalize_accession(namespace, accession)
-
-
-def format_curie(namespace: str, accession: str) -> str:
-    """Public id string for a stored (namespace, accession) pair."""
-    for prefix, ns in PREFIX_TO_NAMESPACE.items():
-        if ns == namespace:
-            return f"{prefix}:{accession}"
-    return f"{namespace}:{accession}"

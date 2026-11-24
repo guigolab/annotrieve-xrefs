@@ -5,20 +5,7 @@ import sqlite3
 
 from helpers.errors import http_error
 from helpers.paths import MAX_ANNOTATION_ID_CHARS
-from helpers.session import GeneCorpusUnavailable, open_reader
-from services.annotations import ShardUnavailable, open_shard
-
-
-def corpus_conn() -> sqlite3.Connection:
-    """Return this thread's gene_corpus reader, or 503 if unpublished."""
-    try:
-        return open_reader()
-    except GeneCorpusUnavailable as exc:
-        raise http_error(
-            503,
-            "gene_corpus_unavailable",
-            str(exc),
-        ) from exc
+from services.annotations import GeneCorpusUnavailable, ShardUnavailable, open_shard
 
 
 def annotation_shard(annotation_id: str) -> sqlite3.Connection:
