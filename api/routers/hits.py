@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from helpers.concurrency import BusyError, hits_slot
 from helpers.cursor import QueryError
 from helpers.deps import corpus_conn
-from helpers.errors import error_detail
+from helpers.errors import error_detail, http_for_query_error
 from helpers.presence import presence_enabled, presence_reader
 from helpers.pagination import MAX_NAMES_GET, MAX_NAMES_POST
 from helpers.strict import reject_unknown_params
@@ -18,29 +18,6 @@ from services.presence_hits import list_name_hits_presence, render_hits_json
 
 router = APIRouter()
 
-# Validation-style QueryError codes → HTTP 422
-_VALIDATION_CODES = frozenset(
-    {
-        "names_required",
-        "too_many_names",
-        "too_many_taxids",
-        "wildcard_not_supported",
-        "invalid_taxid",
-        "invalid_alias_mode",
-        "invalid_source",
-        "invalid_min_matched",
-        "invalid_shape",
-        "invalid_format",
-        "presence_required",
-        "invalid_terms",
-        "unknown_term_field",
-        "invalid_category",
-        "option_needs_prefix",
-        "invalid_prefix",
-        "prefix_too_short",
-        "prefix_too_broad",
-    }
-)
 _FORMATS = ("json", "tsv")
 _GET_PARAMS = ("names", "include_taxids", "exclude_taxids", "alias", "sources", "min_matched",
                "shape", "format")
@@ -83,16 +60,14 @@ def _busy_response() -> JSONResponse:
     )
 
 
-def _http_for_query_error(exc: QueryError) -> HTTPException:
-    status = 422 if exc.code in _VALIDATION_CODES else 400
-    return HTTPException(status_code=status, detail=exc.as_detail())
-
-
 def _run(*, names, terms=None, include_taxids, exclude_taxids, alias, sources, min_matched, shape, fmt, max_names):
     """One search for GET and POST; returns a JSON-able dict or a streaming TSV response."""
     fmt = (fmt or "json").strip().lower()
     if fmt not in _FORMATS:
         raise QueryError("format must be json or tsv", code="invalid_format", value=fmt)
+    if fmt == "tsv" and shape and shape.strip().lower() != "records":
+        raise QueryError("format=tsv is always one row per annotation: use shape=records or omit shape",
+                         code="invalid_combination", format=fmt, shape=shape)
     if not presence_enabled():
         if sources or min_matched or (shape or "compact") != "compact" or fmt != "json":
             raise QueryError("sources, min_matched, shape and format need the presence index",
@@ -144,8 +119,9 @@ def get_hits(
         None, description="Comma-separated Ensembl, GenBank, RefSeq; omit for all"),
     min_matched: int | None = Query(
         None, ge=1, description="Keep annotations that match at least this many terms"),
-    shape: str = Query(
-        "compact", description="compact (positional fields/rows) | records (one object per annotation)"),
+    shape: str | None = Query(
+        None, description="compact (default for json: positional fields/rows) | records (one "
+                          "object per annotation; always used by format=tsv)"),
     format: str = Query(
         "json", description="json | tsv (a table with # provenance lines; implies records)"),
 ):
@@ -166,7 +142,7 @@ def get_hits(
     except BusyError:
         return _busy_response()
     except QueryError as exc:
-        raise _http_for_query_error(exc) from exc
+        raise http_for_query_error(exc) from exc
 
 
 @router.post("/hits")
@@ -181,4 +157,4 @@ def post_hits(body: HitsSearchBody):
     except BusyError:
         return _busy_response()
     except QueryError as exc:
-        raise _http_for_query_error(exc) from exc
+        raise http_for_query_error(exc) from exc

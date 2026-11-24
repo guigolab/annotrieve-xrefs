@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from helpers.cursor import QueryError
+from helpers.errors import http_for_query_error
 from helpers.strict import reject_unknown_params
 from helpers.deps import corpus_conn
 from helpers.presence import open_request_connections, presence_enabled, presence_reader
@@ -12,22 +13,6 @@ from services.presence_hits import list_names_by_prefix_presence
 
 router = APIRouter()
 
-_VALIDATION_CODES = frozenset(
-    {
-        "prefix_too_short",
-        "prefix_too_broad",
-        "invalid_prefix",
-        "too_many_taxids",
-        "invalid_taxid",
-        "invalid_alias_mode",
-        "invalid_source",
-    }
-)
-
-
-def _http_for_query_error(exc: QueryError) -> HTTPException:
-    status = 422 if exc.code in _VALIDATION_CODES else 400
-    return HTTPException(status_code=status, detail=exc.as_detail())
 
 
 def _open_loci():
@@ -96,4 +81,4 @@ def get_names(
             exclude_taxids=exclude_taxids,
         )
     except QueryError as exc:
-        raise _http_for_query_error(exc) from exc
+        raise http_for_query_error(exc) from exc

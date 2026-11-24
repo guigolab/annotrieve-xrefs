@@ -27,3 +27,14 @@ def http_error(
         status_code=status_code,
         detail=error_detail(code, message, **extra),
     )
+
+
+def http_for_query_error(exc: Exception) -> "HTTPException":
+    """The one place that turns a rejected query (``QueryError``) into an HTTP answer: always 422.
+
+    Every input problem (a bad value, a bad combination, a bad cursor or offset, a prefix that is
+    too broad) is the client's to fix and answers 422 with ``detail = {code, message, ...}``.
+    """
+    from fastapi import HTTPException
+
+    return HTTPException(status_code=422, detail=exc.as_detail())

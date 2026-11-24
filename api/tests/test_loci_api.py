@@ -296,3 +296,9 @@ def test_names_n_loci_and_sources_filter(loci_client) -> None:
     scoped = client.get("/names", params={"prefix": "tp5", "sources": "RefSeq,Ensembl,GenBank"}
                         ).json()["results"][0]
     assert scoped["n_loci"] == 5 and scoped["n_annotations"] == row["n_annotations"]
+
+
+def test_a_bad_cursor_is_a_422_with_a_code(loci_client) -> None:
+    client = loci_client[0]
+    r = client.get("/loci", params={"names": "tp53", "cursor": "not-a-cursor"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "invalid_cursor"

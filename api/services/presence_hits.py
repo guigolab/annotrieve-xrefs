@@ -328,14 +328,15 @@ def list_name_hits_presence(
                 "missing": [i for i in range(h.n_terms) if i not in matched_set],
                 "download_url": download_url(gff),
             })
-        return {**h.base, "total": len(results), "facets": h.facets, "results": results}
+        return {**h.base, "shape": shape, "total": len(results), "facets": h.facets,
+                "results": results}
     rows = []
     for o in h.ords:
         aid, taxid, source, date, asm, org, acc, _gff = rec[o]
         rows.append([aid, taxid, source, sorted(h.ann_matched.get(o, [])), date, asm,
                      sorted(h.ann_alias.get(o, [])), org, acc])
-    return {**h.base, "fields": list(HITS_FIELDS), "total": len(rows), "facets": h.facets,
-            "rows": rows}
+    return {**h.base, "shape": shape, "fields": list(HITS_FIELDS), "total": len(rows),
+            "facets": h.facets, "rows": rows}
 
 
 def render_hits_json(
@@ -358,7 +359,7 @@ def render_hits_json(
                 sources=sources, min_matched=min_matched)
     store, am, aa, n_terms = h.store, h.ann_matched, h.ann_alias, h.n_terms
     total = len(h.ords)
-    head: dict = dict(h.base)
+    head: dict = {**h.base, "shape": shape}
     if shape == "records":
         head["total"] = total
         head["facets"] = h.facets

@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from helpers.concurrency import BusyError, acquire_loci_slot, release_loci_slot
 from helpers.cursor import QueryError
-from helpers.errors import error_detail, http_error
+from helpers.errors import error_detail, http_error, http_for_query_error
 from helpers.pagination import MAX_NAMES_GET, MAX_NAMES_POST, clamp_limit
 from helpers.strict import reject_unknown_params
 from helpers.presence import (
@@ -136,7 +136,7 @@ def _wrap(**kwargs):
     try:
         return _run(**kwargs)
     except QueryError as exc:
-        raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
+        raise http_for_query_error(exc) from exc
 
 
 @router.get("/loci")

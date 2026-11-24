@@ -1203,15 +1203,21 @@
             }
           },
           {
-            "description": "compact (positional fields/rows) | records (one object per annotation)",
+            "description": "compact (default for json: positional fields/rows) | records (one object per annotation; always used by format=tsv)",
             "in": "query",
             "name": "shape",
             "required": false,
             "schema": {
-              "default": "compact",
-              "description": "compact (positional fields/rows) | records (one object per annotation)",
-              "title": "Shape",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "compact (default for json: positional fields/rows) | records (one object per annotation; always used by format=tsv)",
+              "title": "Shape"
             }
           },
           {

@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from helpers.client_ip import client_ip, owner_key
 from helpers.concurrency import BusyError, sequences_slot
 from helpers.cursor import QueryError
-from helpers.errors import error_detail
+from helpers.errors import error_detail, http_for_query_error
 from services.seq_export import count_sequences, run_export
 from services.seq_request import SeqRequest, parse_request
 from services.seq_resolve import GeneResolver, SeqError
@@ -165,7 +165,7 @@ def _parse(body: SequencesBody, *, default_action: str | None = None) -> SeqRequ
     try:
         return parse_request(data)
     except QueryError as exc:
-        raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
+        raise http_for_query_error(exc) from exc
 
 
 def _urls(request: Request, rid: str) -> dict[str, str]:
@@ -180,14 +180,14 @@ def _open_source(req: SeqRequest) -> Source:
     except SeqError as exc:
         raise _http(exc) from exc
     except QueryError as exc:
-        raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
+        raise http_for_query_error(exc) from exc
 
 
 def _count(src: Source, req: SeqRequest):
     try:
         return src.count(req.max_genes)
     except QueryError as exc:
-        raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
+        raise http_for_query_error(exc) from exc
 
 
 def _fasta_response(request: Request, rid: str, status: dict) -> FileResponse:
@@ -266,7 +266,7 @@ def post_sequences(body: SequencesBody, request: Request):
                     raise _http(exc) from exc
                 except QueryError as exc:
                     shutil.rmtree(result_dir(rid), ignore_errors=True)
-                    raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
+                    raise http_for_query_error(exc) from exc
                 except BaseException:
                     # Never leave a "running" status behind: equal requests would be told
                     # to wait for an export that does not exist.
@@ -366,7 +366,7 @@ def _count_cap(src: Source, cap: int):
     try:
         return src.count(cap)
     except QueryError as exc:
-        raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
+        raise http_for_query_error(exc) from exc
 
 
 def _ready(result_id: str) -> tuple[dict, Any]:

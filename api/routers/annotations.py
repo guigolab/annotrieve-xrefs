@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from helpers.concurrency import annotations_slot
 from helpers.cursor import QueryError
 from helpers.deps import annotation_shard
-from helpers.errors import error_detail, http_error
+from helpers.errors import error_detail, http_error, http_for_query_error
 from helpers.match import MATCH_ANY
 from helpers.pagination import (
     DEFAULT_LIMIT,
@@ -27,28 +27,6 @@ router = APIRouter(dependencies=[Depends(annotations_slot)])
 
 _MATCH_DESC = "any (union over terms, default) or all (intersection over terms)"
 
-# Validation-style QueryError codes → HTTP 422 (align with /hits)
-_VALIDATION_CODES = frozenset(
-    {
-        "names_required",
-        "too_many_names",
-        "curies_required",
-        "too_many_curies",
-        "names_and_curies",
-        "prefix_too_short",
-        "wildcard_not_supported",
-        "invalid_match",
-        "missing_colon",
-        "empty_prefix",
-        "empty_accession",
-        "unknown_prefix",
-    }
-)
-
-
-def _http_for_query_error(exc: QueryError) -> HTTPException:
-    status = 422 if exc.code in _VALIDATION_CODES else 400
-    return HTTPException(status_code=status, detail=exc.as_detail())
 
 
 @router.get("/annotations/{annotation_id}/namespaces")
@@ -103,10 +81,10 @@ def get_annotation_namespace_accessions(
                 offset=offset,
             )
         except QueryError as exc:
-            raise _http_for_query_error(exc) from exc
+            raise http_for_query_error(exc) from exc
         except ValueError as exc:
             raise HTTPException(
-                status_code=400,
+                status_code=422,
                 detail=error_detail("invalid_offset", str(exc)),
             ) from exc
     finally:
@@ -155,10 +133,10 @@ def get_annotation_genes(
                 offset=offset,
             )
         except QueryError as exc:
-            raise _http_for_query_error(exc) from exc
+            raise http_for_query_error(exc) from exc
         except ValueError as exc:
             raise HTTPException(
-                status_code=400,
+                status_code=422,
                 detail=error_detail("invalid_offset", str(exc)),
             ) from exc
     finally:
@@ -185,7 +163,7 @@ def get_annotation_gene_xrefs(
             )
         except ValueError as exc:
             raise HTTPException(
-                status_code=400,
+                status_code=422,
                 detail=error_detail("invalid_offset", str(exc)),
             ) from exc
     finally:
