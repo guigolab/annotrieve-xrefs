@@ -395,3 +395,25 @@ def test_accessions_prefix_is_the_same_filter_as_q(client: TestClient) -> None:
     assert same.status_code == 200
     clash = client.get(path, params={"q": "XM_0", "prefix": "XM_1"})
     assert clash.status_code == 422 and clash.json()["detail"]["code"] == "invalid_combination"
+
+
+def test_namespaces_have_kind_and_slug(client: TestClient) -> None:
+    rows = {r["namespace"]: r for r in client.get("/annotations/ann-human/namespaces").json()["results"]}
+    assert rows["symbol"]["kind"] == "name"
+    assert rows["refseq_transcript"]["kind"] == "database"
+    assert rows["uniprot/swiss-prot"]["slug"] == "uniprot-swiss-prot"
+    assert rows["symbol"]["slug"] == "symbol"
+    r = client.get("/annotations/ann-human/namespaces/uniprot-swiss-prot/accessions")
+    assert r.status_code == 200 and r.json()["total"] == 1
+
+
+def test_genes_by_locus_ref(client: TestClient) -> None:
+    nested = client.get("/annotations/ann-human/genes/10").json()
+    assert client.get("/genes/ann-human:10").json() == nested
+    assert client.get("/genes/ann-human:999").status_code == 404
+    x1 = client.get("/annotations/ann-human/genes/10/xrefs").json()
+    assert client.get("/genes/ann-human:10/xrefs").json() == x1
+    for bad in ("ann-human", "ann-human:x", ":10", "ann-human:-1"):
+        r = client.get(f"/genes/{bad}")
+        assert r.status_code == 422, bad
+        assert r.json()["detail"]["code"] == "invalid_locus_ref"

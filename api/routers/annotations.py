@@ -62,8 +62,8 @@ def get_annotation_namespace_accessions(
     namespace: str = Path(
         ...,
         description=(
-            "Stored namespace or public short prefix (swiss-prot). "
-            "Slash forms: literal path or percent-encoded (%2F)."
+            "The `slug` from the namespaces list (imgt-gene-db), the stored name (imgt/gene-db, "
+            "literal or percent-encoded %2F) or a public short prefix (swiss-prot)."
         ),
     ),
     q: str | None = Query(
@@ -231,3 +231,32 @@ def get_annotation_gene(
             f"Gene local_id {local_id} not found in {annotation_id}",
         )
     return row
+
+
+def _split_locus_ref(locus_ref: str) -> tuple[str, int]:
+    annotation_id, _, local = locus_ref.rpartition(":")
+    if not annotation_id or not local.isdigit() or int(local) > 2**63 - 1:
+        raise http_for_query_error(QueryError(
+            "locus_ref must look like 'annotation_id:local_id'", code="invalid_locus_ref",
+            value=locus_ref))
+    return annotation_id, int(local)
+
+
+@router.get("/genes/{locus_ref}")
+def get_gene_by_locus_ref(locus_ref: str):
+    """One gene card by its `locus_ref` (`annotation_id:local_id`, as returned by `/loci`)."""
+    annotation_id, local_id = _split_locus_ref(locus_ref)
+    return get_annotation_gene(annotation_id, local_id)
+
+
+@router.get("/genes/{locus_ref}/xrefs")
+def get_gene_xrefs_by_locus_ref(
+    locus_ref: str,
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
+    cursor: str | None = Query(
+        None, description="`next_cursor` of the previous page; use it instead of `offset`"),
+):
+    """Cross-references of one gene by its `locus_ref`; same answer as the nested route."""
+    annotation_id, local_id = _split_locus_ref(locus_ref)
+    return get_annotation_gene_xrefs(annotation_id, local_id, limit, offset, cursor)

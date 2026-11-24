@@ -10,12 +10,25 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from gene_corpus.namespaces.tiers import SEARCHABLE_NAMESPACES  # noqa: E402
+from gene_corpus.namespaces.tiers import SEARCHABLE_NAMESPACES, TIER_A, TIER_B  # noqa: E402
 
 # Public prefix → SQL namespace (slash forms are not legal CURIE prefixes).
 PREFIX_TO_NAMESPACE: dict[str, str] = {
     "swiss-prot": "uniprot/swiss-prot",
 }
+
+# Slash-free form of the namespaces that contain a slash (``imgt/gene-db`` -> ``imgt-gene-db``).
+SLUG_TO_NAMESPACE: dict[str, str] = {
+    ns.replace("/", "-"): ns
+    for ns in sorted(set(TIER_A) | set(TIER_B) | set(PREFIX_TO_NAMESPACE.values()))
+    if "/" in ns
+}
+
+
+def namespace_slug(namespace: str) -> str:
+    """The namespace as one path segment: no slash."""
+    return namespace.replace("/", "-")
+
 
 # Namespaces whose accession is casefolded at harvest (symbol / alias).
 CASEFOLD_NAMESPACES = frozenset({"symbol", "alias"})
@@ -71,7 +84,14 @@ def resolve_namespace_local(prefix: str) -> str | None:
         return None
     if key in PREFIX_TO_NAMESPACE:
         return PREFIX_TO_NAMESPACE[key]
+    if key in SLUG_TO_NAMESPACE:
+        return SLUG_TO_NAMESPACE[key]
     return key
+
+
+def namespace_kind(namespace: str) -> str:
+    """``name`` for the two gene-name types ``/hits`` searches, ``database`` for every other namespace."""
+    return "name" if namespace in CASEFOLD_NAMESPACES else "database"
 
 
 def normalize_accession(namespace: str, accession: str) -> str:

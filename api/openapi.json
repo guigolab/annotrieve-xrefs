@@ -1056,12 +1056,12 @@
             }
           },
           {
-            "description": "Stored namespace or public short prefix (swiss-prot). Slash forms: literal path or percent-encoded (%2F).",
+            "description": "The `slug` from the namespaces list (imgt-gene-db), the stored name (imgt/gene-db, literal or percent-encoded %2F) or a public short prefix (swiss-prot).",
             "in": "path",
             "name": "namespace",
             "required": true,
             "schema": {
-              "description": "Stored namespace or public short prefix (swiss-prot). Slash forms: literal path or percent-encoded (%2F).",
+              "description": "The `slug` from the namespaces list (imgt-gene-db), the stored name (imgt/gene-db, literal or percent-encoded %2F) or a public short prefix (swiss-prot).",
               "title": "Namespace",
               "type": "string"
             }
@@ -1166,6 +1166,130 @@
           }
         },
         "summary": "Get Annotation Namespace Accessions",
+        "tags": [
+          "annotations"
+        ]
+      }
+    },
+    "/genes/{locus_ref}": {
+      "get": {
+        "description": "One gene card by its `locus_ref` (`annotation_id:local_id`, as returned by `/loci`).",
+        "operationId": "get_gene_by_locus_ref_genes__locus_ref__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locus_ref",
+            "required": true,
+            "schema": {
+              "title": "Locus Ref",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Gene By Locus Ref",
+        "tags": [
+          "annotations"
+        ]
+      }
+    },
+    "/genes/{locus_ref}/xrefs": {
+      "get": {
+        "description": "Cross-references of one gene by its `locus_ref`; same answer as the nested route.",
+        "operationId": "get_gene_xrefs_by_locus_ref_genes__locus_ref__xrefs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locus_ref",
+            "required": true,
+            "schema": {
+              "title": "Locus Ref",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "`next_cursor` of the previous page; use it instead of `offset`",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`next_cursor` of the previous page; use it instead of `offset`",
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Gene Xrefs By Locus Ref",
         "tags": [
           "annotations"
         ]

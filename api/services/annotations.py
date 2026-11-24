@@ -13,6 +13,7 @@ from helpers.curie import (
     resolve_namespace_local,
 )
 from helpers.cursor import QueryError
+from helpers.curie import namespace_kind, namespace_slug
 from helpers.match import (
     MATCH_ALL,
     MATCH_ANY,
@@ -199,6 +200,8 @@ def list_annotation_namespaces(
     results = [
         {
             "namespace": str(row["namespace"]),
+            "slug": namespace_slug(str(row["namespace"])),
+            "kind": namespace_kind(str(row["namespace"])),
             "accession_count": int(row["accession_count"]),
         }
         for row in rows
