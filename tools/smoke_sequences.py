@@ -1,5 +1,5 @@
 """
-Smoke test of /sequences on the real index and GFF files (read-only, no API server).
+Smoke test of the download pipeline (gffread and NCBI) on the real index and GFF files (read-only, no API server).
 
     python3 tools/smoke_sequences.py \
         --serve-dir /data/annotrieve/gene_corpus/serve --annotations-dir /data/annotrieve/files

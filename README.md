@@ -12,6 +12,8 @@ Typical flow (happy path):
 2. **Search by gene names** — `GET|POST /hits?names=…` (symbol∪alias; a trailing `*` makes a prefix term)
 3. **Drill in** — `GET /annotations/{id}/genes?names=…` and `…/xrefs`
 4. **Or browse xrefs** — `…/namespaces` → `…/namespaces/{ns}/accessions?q=…` → `…/genes?curies=ns:acc`
+5. **Where the genes are** — `GET|POST /loci` (one row per gene as json, tsv or ndjson); one gene: `GET /genes/{annotation_id}:{local_id}` and its `/xrefs` and `/transcripts`
+6. **Sequences** — `POST /downloads` (queued FASTA), after `POST /transcripts` if you want to choose transcripts
 
 ---
 
@@ -243,27 +245,33 @@ Limits per client IP: 10 new downloads per rolling 24 hours (`429 daily_quota_ex
 **Ops / env** (see `.env.example`; never put the NCBI key in compose):
 
 - `ANNOTATIONS_DIR` — mount of Annotrieve’s annotation files (prod: `/data/annotations`).
-- `PRESENCE_DIR` — directory with the `current` symlink to `v<version>/presence.sqlite` (built by `serve_build build`). When set, `/names` and `/hits` read it and support `alias=off|suggest|include` (default `suggest`: symbol hits are matches, alias-only annotations are listed as `alias_only`, `n_alias_extra` per term/name). Unset = legacy `xref_file` behaviour. `/loci` also needs `loci.sqlite` in the same version directory; related settings: `ANNOTRIEVE_API_BASE` (for `gff_url`), `LOCI_MAX_ROWS`, `LOCI_CACHE_KIB`, `LOCI_MAX_INFLIGHT`. `/downloads` also needs `ANNOTATIONS_DIR` (GFF files), `gffread` and, for `loci` lists, `loci_ref.sqlite` in the version directory (`serve_build loci-ref`); settings: `SEQUENCES_MAX_GENES` (1000) and `SEQUENCES_MAX_SEQUENCES` (1000): the most one download holds (over it: `413 too_many_genes` or `413 too_many_sequences`, before queueing), `SEQUENCES_DEADLINE_S` (1800: longest a download may run), `SEQUENCES_PLAN_MAX_GENES` (200), `SEQUENCES_BATCH_GENES` (25), `SEQUENCES_RESULTS_DIR` (downloads, quota ledger and scratch, shared by all workers; in compose the host folder `/data/annotrieve-xrefs/sequences` mounted at `/data/results`, which must be writable by uid 1000), `DOWNLOADS_PER_DAY` (10 new downloads per client IP per rolling 24 h; equal requests are free; 0 disables), `SEQUENCES_IP_MAX_ACTIVE` (2 waiting or running per client IP), `DOWNLOADS_MAX_QUEUED` (50), `SEQUENCES_MAX_RESULTS` (100 stored; nothing is removed to make room, new downloads get 503), `DOWNLOAD_KEEP_AFTER_FETCH_S` (600), `DOWNLOAD_KEEP_UNFETCHED_S` (7200), `DOWNLOAD_KEEP_FAILED_S` (3600), `DOWNLOADS_LOCK_FILE` (the one-runner lock, local disk: `/tmp/annotrieve-downloads.lock`), `DOWNLOADS_POLL_S` (2), `TRUSTED_PROXY_HOPS` (1: the client IP is the last `X-Forwarded-For` entry, so the nginx template must keep passing that header); `NCBI_RATE_STATE_FILE` (all API processes share one NCBI budget, 2.5 req/s or 9 with `NCBI_API_KEY`, through a lock file; default `<SEQUENCES_RESULTS_DIR>/.ncbi-rate`; a 429 from NCBI slows every process; if the file cannot be opened each process limits itself to rate / `NCBI_PROCESSES`, set that to the gunicorn worker count); `PUBLIC_BASE_URL` (public scheme, host and path prefix, e.g. `https://genome.crg.es/annotrieve-xrefs/api/v1`) so `Location` and the links are correct behind the proxy.
+- `PRESENCE_DIR` — directory with the `current` symlink to `v<version>/presence.sqlite` (built by `serve_build build`). Required: `/names`, `/hits` and `/loci` read it, and they support `alias=off|suggest|include` (default `suggest`: symbol hits are matches, alias-only annotations are listed as `alias_only`, `n_alias_extra` per term/name). `/loci` also needs `loci.sqlite` in the same version directory; related settings: `ANNOTRIEVE_API_BASE` (for `gff_url`), `LOCI_MAX_ROWS`, `LOCI_CACHE_KIB`, `LOCI_MAX_INFLIGHT`. `/downloads` also needs `ANNOTATIONS_DIR` (GFF files), `gffread` and, for `loci` lists, `loci_ref.sqlite` in the version directory (`serve_build loci-ref`); settings: `SEQUENCES_MAX_GENES` (1000) and `SEQUENCES_MAX_SEQUENCES` (1000): the most one download holds (over it: `413 too_many_genes` or `413 too_many_sequences`, before queueing), `SEQUENCES_DEADLINE_S` (1800: longest a download may run), `SEQUENCES_PLAN_MAX_GENES` (200), `SEQUENCES_BATCH_GENES` (25), `SEQUENCES_RESULTS_DIR` (downloads, quota ledger and scratch, shared by all workers; in compose the host folder `/data/annotrieve-xrefs/sequences` mounted at `/data/results`, which must be writable by uid 1000), `DOWNLOADS_PER_DAY` (10 new downloads per client IP per rolling 24 h; equal requests are free; 0 disables), `SEQUENCES_IP_MAX_ACTIVE` (2 waiting or running per client IP), `DOWNLOADS_MAX_QUEUED` (50), `SEQUENCES_MAX_RESULTS` (100 stored; nothing is removed to make room, new downloads get 503), `DOWNLOAD_KEEP_AFTER_FETCH_S` (600), `DOWNLOAD_KEEP_UNFETCHED_S` (7200), `DOWNLOAD_KEEP_FAILED_S` (3600), `DOWNLOADS_LOCK_FILE` (the one-runner lock, local disk: `/tmp/annotrieve-downloads.lock`), `DOWNLOADS_POLL_S` (2), `TRUSTED_PROXY_HOPS` (1: the client IP is the last `X-Forwarded-For` entry, so the nginx template must keep passing that header); `NCBI_RATE_STATE_FILE` (all API processes share one NCBI budget, 2.5 req/s or 9 with `NCBI_API_KEY`, through a lock file; default `<SEQUENCES_RESULTS_DIR>/.ncbi-rate`; a 429 from NCBI slows every process; if the file cannot be opened each process limits itself to rate / `NCBI_PROCESSES`, set that to the gunicorn worker count); `PUBLIC_BASE_URL` (public scheme, host and path prefix, e.g. `https://genome.crg.es/annotrieve-xrefs/api/v1`) so `Location` and the links are correct behind the proxy.
 - `ANNOTATIONS_GFF_PATH_PREFIX` — optional harvest `--files-root` to rebase `annotation.gff_path`.
 - `NCBI_API_KEY` — optional; with key ~9 req/s, without ~2.5 req/s (one shared token bucket per API process).
 - `NCBI_WORKERS` — fetch thread-pool size only (does not divide the rate).
-- `NCBI_EMAIL`, `NCBI_TOOL`, gunicorn `--timeout 900`, nginx `proxy_read_timeout 900s` on this location.
+- `NCBI_EMAIL`, `NCBI_TOOL`.
 
 ---
 
 
 
-## Building the corpus
+## Building the served files
 
-1. **Harvest** — per-annotation gene / xref shards
-2. **Merge** — global `gene_corpus.sqlite` (catalogue, meta, optional `gene_hit`)
-3. **Index** — `xref_file` presence for `/hits`
-4. **Labels** (optional) — `xref_label` / FTS (corpus tooling; not exposed as HTTP discovery)
+The API reads files built from the per-annotation shards (`<work-dir>/per_gff/<annotation_id>/genes.sqlite`). Run from the repository root:
 
 ```bash
-PYTHONPATH=. python -m gene_corpus.index --work-dir /path/to/gene_corpus
-PYTHONPATH=. python -m gene_corpus.labels --work-dir /path/to/gene_corpus
+# 1. shards: annotation report -> one genes.sqlite per annotation
+PYTHONPATH=. python -m gene_corpus.harvest --gff-mode local --files-root /data/files --work-dir /data/gene_corpus
+
+# 2. served files, published as <work-dir>/serve/current -> v<data_version>/
+PYTHONPATH=. python -m gene_corpus.serve_build catalogue --work-dir /data/gene_corpus   # annotation metadata -> manifest
+PYTHONPATH=. python -m gene_corpus.serve_build sidecars  --work-dir /data/gene_corpus   # one sorted sidecar per shard
+PYTHONPATH=. python -m gene_corpus.serve_build build     --work-dir /data/gene_corpus   # presence.sqlite
+PYTHONPATH=. python -m gene_corpus.serve_build loci      --work-dir /data/gene_corpus   # loci.sqlite
+PYTHONPATH=. python -m gene_corpus.serve_build loci-ref  --work-dir /data/gene_corpus   # loci_ref.sqlite
 ```
+
+`serve_build status` shows the manifest counts and `serve_build missing` lists catalogue annotations without a shard. Every command streams its input and keeps memory small (see `CLAUDE.md`); older `v<data_version>` directories stay in place until you remove them (`tools/free_disk.py`).
 
 ---
 
@@ -292,4 +300,4 @@ PYTHONPATH=api:. pytest gene_corpus/tests api/tests -q
 
 ## API schema
 
-The OpenAPI schema is committed as `api/openapi.json` (interactive docs at `/docs` when the service runs). After changing a route or a model, regenerate it with `python3 tools/export_openapi.py`; a test fails when the file is stale. Unknown top-level fields in a `/sequences` body are rejected with `validation_error` instead of being ignored.
+The OpenAPI schema is committed as `api/openapi.json` (interactive docs at `/docs` when the service runs). After changing a route or a model, regenerate it with `python3 tools/export_openapi.py`; a test fails when the file is stale. Unknown top-level fields in a `/downloads` body are rejected with `validation_error` instead of being ignored.
