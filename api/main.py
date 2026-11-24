@@ -23,6 +23,13 @@ configure_logging()
 async def lifespan(_app: FastAPI):
     # Re-run after worker boot — gunicorn may have reconfigured logging.
     configure_logging()
+    # Scratch directory on the network drive (compose sets TMPDIR/SQLITE_TMPDIR there): make sure it exists.
+    for var in ("TMPDIR", "SQLITE_TMPDIR"):
+        if os.getenv(var):
+            try:
+                os.makedirs(os.environ[var], exist_ok=True)
+            except OSError:
+                pass
     yield
     close_ncbi_client()
     close_reader()

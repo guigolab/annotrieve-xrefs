@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from settings import settings
 
 # Cap overlapping annotation-search work per gunicorn worker (RAM back-pressure).
-HITS_MAX_INFLIGHT = 16
+HITS_MAX_INFLIGHT = max(1, int(settings.HITS_MAX_INFLIGHT))
 _HITS_SEMAPHORE = threading.Semaphore(HITS_MAX_INFLIGHT)
 
 _SEQUENCES_SEMAPHORE = threading.Semaphore(

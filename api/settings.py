@@ -43,6 +43,21 @@ class Settings:
     # Negative cache_size is KiB (~256 MiB).
     READ_CACHE_SIZE: int = _env_int("READ_CACHE_SIZE", -262144)
 
+    # Search index in RAM (API-LOCKED-DECISIONS.md, D1). When set, presence.sqlite is copied from the
+    # (NFS) version directory into this directory, which must be on tmpfs (for example /dev/shm/...),
+    # once per data version and shared by all workers. Empty = read it in place, as before.
+    PRESENCE_RAM_DIR: str = os.getenv("PRESENCE_RAM_DIR", "")
+    # Largest presence.sqlite (MB) that may be copied into RAM; bigger files are read in place.
+    PRESENCE_RAM_MAX_MB: int = _env_int("PRESENCE_RAM_MAX_MB", 450)
+    # SQLite page cache (KiB) of a connection that reads the RAM copy: pages are memory-mapped from
+    # the tmpfs file, so the private cache can stay small.
+    PRESENCE_RAM_CACHE_KIB: int = _env_int("PRESENCE_RAM_CACHE_KIB", 2048)
+    # Seconds between checks of the published `current` link (0 = check on every request).
+    PRESENCE_RECHECK_S: float = _env_float("PRESENCE_RECHECK_S", 0.0)
+
+    # Concurrent /hits requests per worker (each can hold tens of MB while it builds its answer).
+    HITS_MAX_INFLIGHT: int = _env_int("HITS_MAX_INFLIGHT", 16)
+
     # On-disk annotation GFFs (same host tree as Annotrieve).
     ANNOTATIONS_DIR: str = os.getenv("ANNOTATIONS_DIR", "")
     # Optional harvest --files-root prefix to strip from annotation.gff_path.
@@ -113,4 +128,9 @@ def annotations_dir() -> Path | None:
 
 def presence_dir() -> Path | None:
     raw = (settings.PRESENCE_DIR or "").strip()
+    return Path(raw) if raw else None
+
+
+def presence_ram_dir() -> Path | None:
+    raw = (settings.PRESENCE_RAM_DIR or "").strip()
     return Path(raw) if raw else None

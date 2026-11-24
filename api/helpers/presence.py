@@ -1,19 +1,27 @@
 """Read-only thread-local connection to ``presence.sqlite`` and taxon-scope bitsets."""
 from __future__ import annotations
 
+import fcntl
+import logging
+import os
+import shutil
 import sqlite3
 import threading
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from helpers.errors import http_error
 from helpers.postings import iter_bits  # noqa: F401  (re-export for services)
-from settings import presence_dir, settings
+from settings import presence_dir, presence_ram_dir, settings
 
 PRESENCE_FILE = "presence.sqlite"
 _LOCAL = threading.local()
 _SOFT_HEAP_LIMIT = 256 * 1024 * 1024
+_LOG = logging.getLogger(__name__)
+_RAM_FAILED: set[Path] = set()  # versions that could not be copied to RAM: do not retry per request
+_RAM_LOCK = threading.Lock()
 
 
 @dataclass
@@ -25,6 +33,8 @@ class _Reader:
     data_version: str
     ann_info: dict | None = None
     ann_paths: dict | None = None
+    db_path: Path | None = None  # file actually opened (RAM copy or `path`)
+    checked: float = 0.0  # monotonic time of the last check of the published link
 
 
 def presence_enabled() -> bool:
@@ -46,30 +56,102 @@ def close_presence() -> None:
     _LOCAL.reader = None
 
 
+def _same_file(a: os.stat_result, b: os.stat_result) -> bool:
+    return a.st_size == b.st_size and a.st_mtime_ns == b.st_mtime_ns
+
+
+def _prune_ram_dir(ram: Path, keep: str) -> None:
+    """Keep the version in use and the newest other one (a worker may still be switching)."""
+    others = sorted((d for d in ram.iterdir() if d.is_dir() and d.name != keep),
+                    key=lambda d: d.stat().st_mtime, reverse=True)
+    for d in others[1:]:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def ram_copy_path(resolved: Path) -> Path | None:
+    """
+    Path of the tmpfs copy of ``resolved`` (a ``presence.sqlite``), creating it when needed.
+
+    One copy is shared by every worker (a file lock makes the first one copy, the rest wait).
+    Returns None, and the caller reads ``resolved`` in place, when RAM mode is off, the file is
+    larger than PRESENCE_RAM_MAX_MB, the tmpfs is too small, or the copy fails.
+    """
+    ram = presence_ram_dir()
+    if ram is None or resolved in _RAM_FAILED:
+        return None
+    target = ram / resolved.parent.name / PRESENCE_FILE
+    try:
+        src = resolved.stat()
+        if target.is_file() and _same_file(src, target.stat()):
+            return target
+        if src.st_size > settings.PRESENCE_RAM_MAX_MB * 1024 * 1024:
+            raise OSError(f"{src.st_size} bytes is larger than PRESENCE_RAM_MAX_MB="
+                          f"{settings.PRESENCE_RAM_MAX_MB}")
+        ram.mkdir(parents=True, exist_ok=True)
+        with open(ram / ".lock", "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)  # released when the file closes
+            if target.is_file() and _same_file(src, target.stat()):
+                return target  # another worker copied it while we waited
+            if shutil.disk_usage(ram).free < src.st_size + 16 * 1024 * 1024:
+                raise OSError(f"not enough free space in {ram} for {src.st_size} bytes")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_name(f"{PRESENCE_FILE}.{os.getpid()}.tmp")
+            try:
+                shutil.copyfile(resolved, tmp)
+                os.utime(tmp, ns=(src.st_atime_ns, src.st_mtime_ns))
+                if not _same_file(src, tmp.stat()):
+                    raise OSError("copy has a different size than the source")
+                os.replace(tmp, target)
+            finally:
+                tmp.unlink(missing_ok=True)
+            _prune_ram_dir(ram, target.parent.name)
+        _LOG.info("presence index %s copied to RAM (%s, %.0f MB)", resolved.parent.name, target,
+                  src.st_size / 1e6)
+        return target
+    except OSError as exc:
+        with _RAM_LOCK:
+            _RAM_FAILED.add(resolved)
+        _LOG.warning("presence index stays on disk (%s): %s", resolved, exc)
+        return None
+
+
 def _open(resolved: Path) -> _Reader:
-    conn = sqlite3.connect(f"file:{resolved}?mode=ro&immutable=1", uri=True,
+    ram_file = ram_copy_path(resolved)
+    db_file = ram_file or resolved
+    conn = sqlite3.connect(f"file:{db_file}?mode=ro&immutable=1", uri=True,
                            check_same_thread=True)
     conn.row_factory = sqlite3.Row
-    conn.execute(f"PRAGMA cache_size={settings.READ_CACHE_SIZE}")
+    if ram_file is not None:
+        # Pages come straight from the shared tmpfs file: no big private cache needed.
+        conn.execute(f"PRAGMA cache_size=-{settings.PRESENCE_RAM_CACHE_KIB}")
+        conn.execute(f"PRAGMA mmap_size={max(ram_file.stat().st_size, 1)}")
+    else:
+        conn.execute(f"PRAGMA cache_size={settings.READ_CACHE_SIZE}")
+        conn.execute("PRAGMA mmap_size=0")
     conn.execute("PRAGMA temp_store=FILE")
-    conn.execute("PRAGMA mmap_size=0")
     conn.execute(f"PRAGMA soft_heap_limit={_SOFT_HEAP_LIMIT}")
     conn.execute("PRAGMA query_only=ON")
     mask = 0
     for (o,) in conn.execute("SELECT ord FROM annotation"):
         mask |= 1 << int(o)
     meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
-    return _Reader(resolved, resolved.stat().st_mtime, conn, mask, str(meta.get("data_version", "")))
+    return _Reader(resolved, resolved.stat().st_mtime, conn, mask,
+                   str(meta.get("data_version", "")), db_path=db_file,
+                   checked=time.monotonic())
 
 
 def presence_reader() -> _Reader:
     """This thread's reader; reopens when ``current`` points at a new version."""
+    state: _Reader | None = getattr(_LOCAL, "reader", None)
+    recheck = settings.PRESENCE_RECHECK_S
+    if state is not None and recheck > 0 and time.monotonic() - state.checked < recheck:
+        return state  # no network-drive calls between checks
     db = presence_db_path()
     if db is None or not db.is_file():
         raise http_error(503, "presence_unavailable", "Presence index is not published")
     resolved = db.resolve()
-    state: _Reader | None = getattr(_LOCAL, "reader", None)
     if state is not None and state.path == resolved and state.mtime == resolved.stat().st_mtime:
+        state.checked = time.monotonic()
         return state
     close_presence()
     _LOCAL.reader = _open(resolved)
@@ -130,7 +212,7 @@ def open_request_connections() -> tuple[sqlite3.Connection, sqlite3.Connection, 
         conn.execute("PRAGMA query_only=ON")
         return conn
 
-    pres = connect(reader.path)
+    pres = connect(reader.db_path or reader.path)
     loci = connect(loci_path)
     try:
         v = loci.execute("SELECT value FROM meta WHERE key='data_version'").fetchone()

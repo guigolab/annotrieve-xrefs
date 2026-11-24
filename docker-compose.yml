@@ -32,6 +32,18 @@ services:
       dockerfile: api/Dockerfile
     container_name: annotrieve-xrefs-api
     restart: always
+    # Hard memory limit for the whole container (both workers, /dev/shm and child processes);
+    # see API-LOCKED-DECISIONS.md section 4. memswap_limit equal to mem_limit = no swap.
+    mem_limit: 2g
+    memswap_limit: 2g
+    # /dev/shm holds the search index copy (310 MB; room for two during a data-version switch).
+    shm_size: 1g
+    # Container logs are kept on local disk: at most 3 x 10 MB.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file:
       - path: .env
         required: false
@@ -45,6 +57,10 @@ services:
     environment:
       - GENE_CORPUS_DIR=/data/gene_corpus
       - PRESENCE_DIR=/data/gene_corpus/serve
+      # Search index copied once per version from the network drive into RAM, shared by the workers.
+      - PRESENCE_RAM_DIR=/dev/shm/presence
+      - PRESENCE_RAM_MAX_MB=450
+      - PRESENCE_RECHECK_S=5
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://genome.crg.es/annotrieve-xrefs/api/v1}
       - SEQUENCES_RESULTS_DIR=/data/results
       - NCBI_RATE_STATE_FILE=/tmp/annotrieve-ncbi-rate   # local on purpose: flock is unreliable on NFS
@@ -59,7 +75,9 @@ services:
       - NCBI_PROCESSES=2        # only used if the shared rate file cannot be opened
       - PYTHONPATH=/home/appuser
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
-      - TMPDIR=/tmp
+      # Scratch files (SQLite temp, Python tempfile) go to the network drive, not local disk.
+      - TMPDIR=/data/results/tmp
+      - SQLITE_TMPDIR=/data/results/tmp
     expose:
       - "5000"
     networks:
