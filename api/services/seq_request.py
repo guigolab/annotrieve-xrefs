@@ -56,6 +56,13 @@ class SeqRequest:
     query: dict | None = None
     loci: tuple[LociEntry, ...] | None = None
 
+    @property
+    def can_give_several_per_gene(self) -> bool:
+        """True when a gene can yield more than one sequence (the rule keeps several transcripts)."""
+        if self.rule.keep == 1:
+            return False
+        return self.loci is None or any(e.transcript_id is None for e in self.loci)
+
     def normalised(self) -> dict:
         return {
             "action": self.action.value,
@@ -238,7 +245,7 @@ def parse_request(body: dict) -> SeqRequest:
     if on_error not in ON_ERROR:
         raise _bad("on_error must be skip or fail", "validation_error", field="on_error")
 
-    hard = int(settings.SEQUENCES_MAX_GENES)
+    hard = min(int(settings.SEQUENCES_MAX_GENES), int(settings.SEQUENCES_MAX_SEQUENCES))
     try:
         max_genes = hard if body.get("max_genes") is None else int(body["max_genes"])
     except (TypeError, ValueError):

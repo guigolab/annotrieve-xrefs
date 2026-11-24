@@ -135,6 +135,7 @@
                       "type": "string"
                     },
                     {
+                      "additionalProperties": true,
                       "type": "object"
                     }
                   ]
@@ -274,6 +275,7 @@
                       "type": "string"
                     },
                     {
+                      "additionalProperties": true,
                       "type": "object"
                     }
                   ]
@@ -446,10 +448,10 @@
             "title": "Max Genes",
             "type": "integer"
           },
-          "mode": {
-            "description": "sync (FASTA in the response) | job (202 + polling)",
-            "title": "Mode",
-            "type": "string"
+          "max_sequences": {
+            "description": "most sequences one request may return",
+            "title": "Max Sequences",
+            "type": "integer"
           },
           "n_genes": {
             "anyOf": [
@@ -476,13 +478,10 @@
             "title": "Result Id",
             "type": "string"
           },
-          "sync_max_genes": {
-            "title": "Sync Max Genes",
-            "type": "integer"
-          },
           "terms": {
             "description": "query mode: each name and whether it was found",
             "items": {
+              "additionalProperties": true,
               "type": "object"
             },
             "title": "Terms",
@@ -497,131 +496,11 @@
           "est_bp_upper_bound",
           "max_genes",
           "over_limit",
-          "mode",
-          "sync_max_genes",
+          "max_sequences",
           "cached",
           "terms"
         ],
         "title": "SequenceEstimate",
-        "type": "object"
-      },
-      "SequenceJob": {
-        "properties": {
-          "done": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Done"
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error"
-          },
-          "job_id": {
-            "title": "Job Id",
-            "type": "string"
-          },
-          "manifest_url": {
-            "title": "Manifest Url",
-            "type": "string"
-          },
-          "n_ok": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "N Ok"
-          },
-          "n_sequences": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "N Sequences"
-          },
-          "n_skipped": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "N Skipped"
-          },
-          "reasons": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "integer"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reasons"
-          },
-          "result_id": {
-            "title": "Result Id",
-            "type": "string"
-          },
-          "result_url": {
-            "title": "Result Url",
-            "type": "string"
-          },
-          "state": {
-            "description": "queued | running | done | failed",
-            "title": "State",
-            "type": "string"
-          },
-          "status_url": {
-            "title": "Status Url",
-            "type": "string"
-          },
-          "total": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Total"
-          }
-        },
-        "required": [
-          "job_id",
-          "result_id",
-          "status_url",
-          "result_url",
-          "manifest_url",
-          "state"
-        ],
-        "title": "SequenceJob",
         "type": "object"
       },
       "SequencePlan": {
@@ -748,6 +627,7 @@
           "query": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -763,6 +643,7 @@
                 "type": "string"
               },
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -778,6 +659,13 @@
       },
       "ValidationError": {
         "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
           "loc": {
             "items": {
               "anyOf": [
@@ -1784,51 +1672,6 @@
         ]
       }
     },
-    "/sequence-jobs/{result_id}": {
-      "get": {
-        "operationId": "get_sequence_job_sequence_jobs__result_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "result_id",
-            "required": true,
-            "schema": {
-              "title": "Result Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SequenceJob"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "404": {
-            "description": "Error: `detail` is `{code, message, ...}`."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Job status",
-        "tags": [
-          "sequences"
-        ]
-      }
-    },
     "/sequence-plans": {
       "post": {
         "description": "Which transcripts the request would extract, with the metrics behind the choice.\n\nReads the GFF slices (no network). A client can edit the result and post the selected\n``loci`` back to ``/sequences``.",
@@ -1936,21 +1779,14 @@
               }
             }
           },
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SequenceJob"
-                }
-              }
-            },
-            "description": "More genes than `SEQUENCES_SYNC_MAX_GENES`: a job started. Poll `status_url`, then fetch `result_url` and `manifest_url`."
-          },
           "404": {
             "description": "`no_genes_matched`, or a pinned/unknown locus (loci mode, on_error=fail)"
           },
+          "409": {
+            "description": "`export_running`: an identical request is being produced; retry shortly"
+          },
           "413": {
-            "description": "`too_many_genes` (over `max_genes`)"
+            "description": "`too_many_genes` or `too_many_sequences` (over the limit of one request)"
           },
           "422": {
             "description": "Invalid request (`validation_error`, `exactly_one_source`, `unknown_rank_key`, `invalid_locus_ref`, ...)"

@@ -164,6 +164,27 @@ def _run_gffread(res: Resolved, window: GenomicWindow, sequence: str, req: SeqRe
     return split_fasta_to_record_files(raw, work / f"{gid}.records", header_for_id=headers)
 
 
+def count_sequences(req: SeqRequest, items: Iterable[Item], limit: int) -> int:
+    """
+    Sequences the request would give, from the GFF slices only (no network); stops once the count
+    is above ``limit``. Genes that cannot be resolved give none (they are skipped later).
+    """
+    resolver = GeneResolver(req.action.value, req.rule, req.buffer_bp)
+    total = 0
+    try:
+        for _ref, gene, _reason in items:
+            if gene is None:
+                continue
+            res = resolver.resolve(gene)
+            if res.ok:
+                total += len(res.chosen)
+                if total > limit:
+                    break
+    finally:
+        resolver.close()
+    return total
+
+
 def _row(*cols) -> str:
     return "\t".join(str(c).replace("\t", " ").replace("\n", " ") for c in cols) + "\n"
 
@@ -216,6 +237,11 @@ def run_export(req: SeqRequest, items: Iterable[Item], *, out_dir: Path,
                 resolved: list[tuple[str, Gene | None, Resolved | None, str, str]] = slots
 
                 ok = [r for _, _, r, reason, _ in resolved if r is not None and not reason]
+                limit = int(settings.SEQUENCES_MAX_SEQUENCES)
+                if n_seq + sum(len(r.chosen) for r in ok) > limit:
+                    raise SeqError("too_many_sequences", f"the request gives more than {limit} "
+                                   "sequences; narrow it or choose one transcript per gene",
+                                   status=413)
                 parent, fetched = ({}, {})
                 if ok:
                     parent, fetched = _fetch_windows([r.window for r in ok], deadline)

@@ -4,7 +4,7 @@ Status: proposal written 2026-11-24, nothing implemented yet. Tick the boxes in 
 
 Scope: the public routes of the xrefs API (`/hits`, `/names`, `/loci`, `/annotations/...`, `/sequences...`). Memory and speed decisions are in `API-LOCKED-DECISIONS.md`; this file is only about how the routes look and behave.
 
-**Compatibility rule for everything below:** a change may add a name, a field or a header, but never removes or renames what clients use today. Old names stay as aliases and answer with a `Deprecation: true` header, so scripts keep working. The only intentional removal is the job mode of `/sequences` (section 2), which you asked for.
+**Compatibility rule for everything below (the sequences change is the exception: nothing uses `/sequences` yet except the genes page, which is still in development, so job mode is removed outright, including the `mode` and `sync_max_genes` estimate fields):** a change may add a name, a field or a header, but never removes or renames what clients use today. Old names stay as aliases and answer with a `Deprecation: true` header, so scripts keep working. The only intentional removal is the job mode of `/sequences` (section 2), which you asked for.
 
 ---
 
@@ -130,8 +130,8 @@ Each step ends with: tests, the committed `api/openapi.json` regenerated, a line
 
 ## 4. Work list
 
-- [ ] Find every client of `/sequence-jobs` and of the 202 answer (front end, `annocli`, docs, tests); list what must change
-- [ ] Sequences: 200-sequence limit, resolve before fetch, remove job mode, `SEQUENCES_DEADLINE_S` 120, estimate fields, nginx timeout
+- [x] Find every client of `/sequence-jobs` and of the 202 answer: only the genes page of `annotrieve-genes-ui` (`front/lib/api/xrefs.ts`, `xrefs-types.ts`, `xrefs-sequences.test.ts`); nothing else uses sequences yet (confirmed by the owner), so no compatibility is kept
+- [x] Sequences: 200-sequence limit, resolve before fetch, remove job mode, `SEQUENCES_DEADLINE_S` 120, estimate fields, nginx timeout
 - [ ] Sequences: measure a full 200-sequence request on the real stack and write the time here
 - [ ] Check on the server why the human RefSeq annotation `a63cdc06...` answers `gff_unavailable`
 - [ ] 1.5 one status-code decision, test over all error codes
@@ -141,8 +141,9 @@ Each step ends with: tests, the committed `api/openapi.json` regenerated, a line
 - [ ] 1.7 `kind` and `slug` for namespaces
 - [ ] 1.2 `/genes/{locus_ref}` routes
 - [ ] 1.6 route text for `rows` and `results`, test that every list has exactly one
-- [ ] Regenerate `api/openapi.json` (the committed one is already out of date: its test fails before any of this work)
+- [x] Regenerate `api/openapi.json` (the committed one was stale: its test failed before this work; regenerated inside the production image)
 
 ## 5. Progress log
 
 - 2026-11-24: plan written; live sequences timing taken (10 genes 3.0 s, 50 genes 13.4 s); the `gff_unavailable` finding recorded.
+- 2026-11-24: sequences done. One mode only: `200` with the FASTA. Limits `SEQUENCES_MAX_GENES` 200 and `SEQUENCES_MAX_SEQUENCES` 200 (the gene limit is also capped by the sequence limit); when the transcript rule can keep several per gene the sequences are counted from the GFF slices before any NCBI call (`413 too_many_sequences`), with a second guard inside the export; identical request in progress: `409 export_running`; deadline 120 s; nginx read timeout 180 s for `/sequences` and `/sequence-plans`. Removed: 202, `Location`, `GET /sequence-jobs/{id}`, `SequenceJob`, `start_job` and its thread, `SEQUENCES_SYNC_MAX_GENES`, estimate fields `mode` and `sync_max_genes` (added `max_sequences`). Kept: estimates, plans, stored results with manifest, per-IP limits. Tests: 379 api (including the openapi test, fixed by regenerating the file) and 221 gene_corpus pass. Not measured yet: a full 200-sequence request on the real stack (needs NCBI and the real GFF files). The genes page still handles a `202` and polls `/sequence-jobs`; that code in `annotrieve-genes-ui` is now dead and can be deleted.

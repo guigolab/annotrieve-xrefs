@@ -18,7 +18,7 @@ from helpers.client_ip import client_ip, owner_key
 from helpers.concurrency import BusyError, sequences_slot
 from helpers.cursor import QueryError
 from helpers.errors import error_detail
-from services.seq_export import run_export
+from services.seq_export import count_sequences, run_export
 from services.seq_request import SeqRequest, parse_request
 from services.seq_resolve import GeneResolver, SeqError
 from services.seq_results import (
@@ -27,7 +27,6 @@ from services.seq_results import (
     purge_expired,
     read_status,
     result_dir,
-    start_job,
     valid_id,
     write_status,
 )
@@ -49,11 +48,9 @@ SEQUENCES_RESPONSES = {
     200: {"description": "FASTA (`text/x-fasta`). Headers: result id, counts, manifest link.",
           "headers": _FASTA_HEADERS,
           "content": {"text/x-fasta": {"schema": {"type": "string"}}}},
-    202: {"description": "More genes than `SEQUENCES_SYNC_MAX_GENES`: a job started. Poll "
-                         "`status_url`, then fetch `result_url` and `manifest_url`.",
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SequenceJob"}}}},
     404: {**_ERR, "description": "`no_genes_matched`, or a pinned/unknown locus (loci mode, on_error=fail)"},
-    413: {**_ERR, "description": "`too_many_genes` (over `max_genes`)"},
+    409: {**_ERR, "description": "`export_running`: an identical request is being produced; retry shortly"},
+    413: {**_ERR, "description": "`too_many_genes` or `too_many_sequences` (over the limit of one request)"},
     422: {**_ERR, "description": "Invalid request (`validation_error`, `exactly_one_source`, "
                                  "`unknown_rank_key`, `invalid_locus_ref`, ...)"},
     429: {**_ERR, "description": "`too_many_active_exports` or `export_rate_limited` for this client "
@@ -62,22 +59,6 @@ SEQUENCES_RESPONSES = {
                                  "`locus_ref_index_unavailable`, `gffread_unavailable`"},
     504: {**_ERR, "description": "`sequences_timeout`"},
 }
-
-
-class SequenceJob(BaseModel):
-    job_id: str
-    result_id: str
-    status_url: str
-    result_url: str
-    manifest_url: str
-    state: str = Field(description="queued | running | done | failed")
-    done: int | None = None
-    total: int | None = None
-    n_ok: int | None = None
-    n_skipped: int | None = None
-    n_sequences: int | None = None
-    reasons: dict[str, int] | None = None
-    error: dict[str, Any] | None = None
 
 
 logger = logging.getLogger(__name__)
@@ -94,8 +75,7 @@ class SequenceEstimate(BaseModel):
     est_bp_upper_bound: int = Field(description="Sum of gene lengths: bound of the bases to fetch")
     max_genes: int
     over_limit: bool
-    mode: str = Field(description="sync (FASTA in the response) | job (202 + polling)")
-    sync_max_genes: int
+    max_sequences: int = Field(description="most sequences one request may return")
     cached: bool = Field(description="a finished result for this request exists")
     terms: list[dict[str, Any]] = Field(description="query mode: each name and whether it was found")
 
@@ -190,8 +170,7 @@ def _parse(body: SequencesBody, *, default_action: str | None = None) -> SeqRequ
 
 def _urls(request: Request, rid: str) -> dict[str, str]:
     base = (settings.PUBLIC_BASE_URL or str(request.base_url)).rstrip("/")
-    return {"status_url": f"{base}/sequence-jobs/{rid}",
-            "result_url": f"{base}/sequences/results/{rid}",
+    return {"result_url": f"{base}/sequences/results/{rid}",
             "manifest_url": f"{base}/sequences/results/{rid}/manifest.tsv"}
 
 
@@ -223,12 +202,6 @@ def _fasta_response(request: Request, rid: str, status: dict) -> FileResponse:
                  "Cache-Control": "no-store"})
 
 
-def _job_payload(request: Request, rid: str, status: dict) -> dict:
-    return {"job_id": rid, "result_id": rid, **_urls(request, rid),
-            **{k: status.get(k) for k in ("state", "done", "total", "n_ok", "n_skipped",
-                                          "n_sequences", "reasons", "error")}}
-
-
 def _summary(result, data_version: str) -> dict:
     return {"n_sequences": result.n_sequences, "n_genes": result.n_genes,
             "n_skipped": result.n_skipped, "reasons": result.reasons,
@@ -247,17 +220,29 @@ def post_sequences(body: SequencesBody, request: Request):
         if status and status["state"] == "done" and (result_dir(rid) / "result.fa").is_file():
             return _fasta_response(request, rid, status)
         if status and status["state"] in ("queued", "running"):
-            return JSONResponse(_job_payload(request, rid, status), status_code=202,
-                                headers={"Location": _urls(request, rid)["status_url"]})
+            raise HTTPException(
+                status_code=409, headers={"Retry-After": "5"},
+                detail=error_detail("export_running", "an identical request is being produced; "
+                                    "retry in a few seconds (it will then be served from the store)"))
 
         counted = _count(src, req)
         if not counted.complete:
             raise HTTPException(status_code=413, detail=error_detail(
                 "too_many_genes", f"the request matches more than {req.max_genes} genes; narrow "
-                "it or raise max_genes", n_genes_at_least=counted.n_genes, max_genes=req.max_genes))
+                "it or lower max_genes", n_genes_at_least=counted.n_genes, max_genes=req.max_genes))
         if counted.n_genes == 0:
             raise HTTPException(status_code=404, detail=error_detail(
                 "no_genes_matched", "no gene matches the request", terms=src.terms()))
+        if req.can_give_several_per_gene:
+            # One gene can give several sequences: count them (local GFF reads, no network) and
+            # refuse before the first NCBI call.
+            limit = int(settings.SEQUENCES_MAX_SEQUENCES)
+            n_seq = count_sequences(req, src.items(), limit)
+            if n_seq > limit:
+                raise HTTPException(status_code=413, detail=error_detail(
+                    "too_many_sequences", f"the request gives more than {limit} sequences; narrow it "
+                    "or choose one transcript per gene", n_sequences_at_least=n_seq,
+                    max_sequences=limit))
         data_version = src.data_version
 
         owner = owner_key(client_ip(request))
@@ -268,51 +253,32 @@ def post_sequences(body: SequencesBody, request: Request):
                 status_code=exc.status, detail=error_detail(exc.code, str(exc), **exc.extra),
                 headers={"Retry-After": str(exc.retry_after)}) from exc
 
-        if counted.n_genes <= int(settings.SEQUENCES_SYNC_MAX_GENES):
-            try:
-                with sequences_slot():
-                    write_status(rid, state="running", done=0, total=counted.n_genes,
-                                 created=time.time(), owner=owner)
-                    t0 = time.monotonic()
-                    try:
-                        result = run_export(req, src.items(), out_dir=result_dir(rid),
-                                            total=counted.n_genes)
-                    except SeqError as exc:
-                        shutil.rmtree(result_dir(rid), ignore_errors=True)
-                        raise _http(exc) from exc
-                    except QueryError as exc:
-                        shutil.rmtree(result_dir(rid), ignore_errors=True)
-                        raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
-                    except BaseException:
-                        # Never leave a "running" status behind: equal requests would be told
-                        # to wait for a job that does not exist.
-                        shutil.rmtree(result_dir(rid), ignore_errors=True)
-                        raise
-                    status = write_status(rid, state="done", **_summary(result, data_version))
-                    logger.info("POST /sequences sync genes=%d seqs=%d skipped=%d wall_s=%.2f",
-                                result.n_genes, result.n_sequences, result.n_skipped,
-                                time.monotonic() - t0)
-            except BusyError:
-                return _busy()
-            return _fasta_response(request, rid, status)
-
-        # Larger request: a job. It opens its own connections (this request's close below).
-        total = counted.n_genes
-
-        def work(out_dir, progress):
-            job_src = Source(req)
-            try:
-                with sequences_slot(blocking=True):
-                    result = run_export(req, job_src.items(), out_dir=out_dir, total=total,
-                                        progress=progress)
-                return _summary(result, job_src.data_version)
-            finally:
-                job_src.close()
-
-        start_job(rid, work, owner=owner)
-        status = read_status(rid) or {"state": "queued"}
-        return JSONResponse(_job_payload(request, rid, status), status_code=202,
-                            headers={"Location": _urls(request, rid)["status_url"]})
+        try:
+            with sequences_slot():
+                write_status(rid, state="running", done=0, total=counted.n_genes,
+                             created=time.time(), owner=owner)
+                t0 = time.monotonic()
+                try:
+                    result = run_export(req, src.items(), out_dir=result_dir(rid),
+                                        total=counted.n_genes)
+                except SeqError as exc:
+                    shutil.rmtree(result_dir(rid), ignore_errors=True)
+                    raise _http(exc) from exc
+                except QueryError as exc:
+                    shutil.rmtree(result_dir(rid), ignore_errors=True)
+                    raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
+                except BaseException:
+                    # Never leave a "running" status behind: equal requests would be told
+                    # to wait for an export that does not exist.
+                    shutil.rmtree(result_dir(rid), ignore_errors=True)
+                    raise
+                status = write_status(rid, state="done", **_summary(result, data_version))
+                logger.info("POST /sequences genes=%d seqs=%d skipped=%d wall_s=%.2f",
+                            result.n_genes, result.n_sequences, result.n_skipped,
+                            time.monotonic() - t0)
+        except BusyError:
+            return _busy()
+        return _fasta_response(request, rid, status)
     finally:
         src.close()
 
@@ -333,8 +299,7 @@ def create_sequence_estimate(body: SequencesBody, request: Request):
             "n_genes_at_least": counted.n_genes, "complete": counted.complete,
             "est_bp_upper_bound": counted.bp_upper_bound, "max_genes": req.max_genes,
             "over_limit": not counted.complete,
-            "mode": "sync" if counted.n_genes <= int(settings.SEQUENCES_SYNC_MAX_GENES) else "job",
-            "sync_max_genes": int(settings.SEQUENCES_SYNC_MAX_GENES),
+            "max_sequences": int(settings.SEQUENCES_MAX_SEQUENCES),
             "cached": bool(status and status["state"] == "done"),
             "terms": src.terms(),
         }
@@ -402,16 +367,6 @@ def _count_cap(src: Source, cap: int):
         return src.count(cap)
     except QueryError as exc:
         raise HTTPException(status_code=422, detail=exc.as_detail()) from exc
-
-
-@router.get("/sequence-jobs/{result_id}", response_model=SequenceJob, summary="Job status", responses={404: _ERR})
-def get_sequence_job(result_id: str, request: Request):
-    status = read_status(result_id) if valid_id(result_id) else None
-    if status is None:
-        raise HTTPException(status_code=404, detail=error_detail(
-            "job_not_found", "no such job (results expire after a while)"))
-    return JSONResponse(_job_payload(request, result_id, status),
-                        headers={"Cache-Control": "no-store"})
 
 
 def _ready(result_id: str) -> tuple[dict, Any]:

@@ -90,8 +90,10 @@ class Settings:
     # Public base of this API (scheme, host and path prefix) used in job/result links, because
     # the app sits behind a path-rewriting proxy and cannot see its public URL.
     PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "")
-    SEQUENCES_MAX_GENES: int = _env_int("SEQUENCES_MAX_GENES", 2000)
-    SEQUENCES_SYNC_MAX_GENES: int = _env_int("SEQUENCES_SYNC_MAX_GENES", 50)
+    # One request is answered in the response and holds at most this many genes and this many
+    # sequences (a gene gives one sequence unless the transcript rule keeps several).
+    SEQUENCES_MAX_GENES: int = _env_int("SEQUENCES_MAX_GENES", 200)
+    SEQUENCES_MAX_SEQUENCES: int = _env_int("SEQUENCES_MAX_SEQUENCES", 200)
     SEQUENCES_PLAN_MAX_GENES: int = _env_int("SEQUENCES_PLAN_MAX_GENES", 200)
     SEQUENCES_BATCH_GENES: int = _env_int("SEQUENCES_BATCH_GENES", 25)
     SEQUENCES_RESULTS_DIR: str = os.getenv("SEQUENCES_RESULTS_DIR", "")
@@ -113,7 +115,7 @@ class Settings:
     SEQUENCES_COALESCE_GAP_BP: int = _env_int("SEQUENCES_COALESCE_GAP_BP", 10_000)
     SEQUENCES_CACHE_MB: int = _env_int("SEQUENCES_CACHE_MB", 32)
     SEQUENCES_MAX_INFLIGHT: int = _env_int("SEQUENCES_MAX_INFLIGHT", 1)
-    SEQUENCES_DEADLINE_S: float = _env_float("SEQUENCES_DEADLINE_S", 800.0)
+    SEQUENCES_DEADLINE_S: float = _env_float("SEQUENCES_DEADLINE_S", 120.0)
     # Data-size limit (MB) of each gffread child; it is also the first process the kernel kills when
     # the container runs out of memory. 0 = no limit.
     GFFREAD_MAX_DATA_MB: int = _env_int("GFFREAD_MAX_DATA_MB", 128)

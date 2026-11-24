@@ -1,4 +1,4 @@
-"""On-disk results and job status of /sequences, keyed by ``result_id``.
+"""On-disk results and run status of /sequences, keyed by ``result_id``.
 
 Layout: ``<root>/<result_id>/{result.fa, manifest.tsv, status.json}``. Files are written
 atomically, so any API worker can serve a result or report progress, and an equal request reuses
@@ -11,17 +11,17 @@ import os
 import re
 import shutil
 import tempfile
-import threading
 import time
-from collections.abc import Callable
 from pathlib import Path
 
 from settings import settings
 
 _ID = re.compile(r"^[0-9a-f]{20}$")
-_LIVE: set[str] = set()                    # jobs running in THIS process
-_LOCK = threading.Lock()
-STALE_AFTER_S = 600
+
+
+def stale_after_s() -> float:
+    """A run that has not updated its status for this long (deadline plus a margin) is lost."""
+    return float(settings.SEQUENCES_DEADLINE_S) + 60.0
 
 
 def results_root() -> Path:
@@ -62,9 +62,9 @@ def read_status(result_id: str, *, _raw: bool = False) -> dict | None:
     except (OSError, ValueError):
         return None
     if (not _raw and status.get("state") in ("queued", "running")
-            and result_id not in _LIVE and time.time() - status.get("updated", 0) > STALE_AFTER_S):
+            and time.time() - status.get("updated", 0) > stale_after_s()):
         status["state"] = "failed"
-        status["error"] = {"code": "job_lost", "message": "the worker running this job stopped",
+        status["error"] = {"code": "job_lost", "message": "the worker running this export stopped",
                            "status": 500}
     return status
 
@@ -73,7 +73,7 @@ def purge_expired() -> int:
     cutoff = time.time() - int(settings.SEQUENCES_RESULT_TTL_S)
     removed = 0
     for d in results_root().iterdir():
-        if d.is_dir() and valid_id(d.name) and d.name not in _LIVE:
+        if d.is_dir() and valid_id(d.name):
             try:
                 if d.stat().st_mtime < cutoff:
                     shutil.rmtree(d, ignore_errors=True)
@@ -131,40 +131,10 @@ def admit(owner: str) -> None:
     cap = int(settings.SEQUENCES_MAX_RESULTS)
     if cap > 0 and len(entries) >= cap:
         finished = sorted((d for d, st in entries
-                           if d.name not in _LIVE and (st is None or st.get("state") in ("done", "failed"))),
+                           if st is None or st.get("state") in ("done", "failed")),
                           key=lambda d: d.stat().st_mtime)
         for d in finished[: len(entries) - cap + 1]:
             shutil.rmtree(d, ignore_errors=True)
         if len(entries) - min(len(finished), len(entries) - cap + 1) >= cap:
             raise Refused(503, "sequences_capacity",
                           f"{cap} exports are running; retry shortly", retry_after=30, max_results=cap)
-
-
-def start_job(result_id: str, work: Callable[[Path, Callable[..., None]], dict], *,
-              owner: str = "") -> bool:
-    """Run ``work(out_dir, progress)`` in a background thread. False if already running here."""
-    with _LOCK:
-        if result_id in _LIVE:
-            return False
-        _LIVE.add(result_id)
-    write_status(result_id, state="queued", done=0, error=None, created=time.time(), owner=owner)
-
-    def progress(done, total, counts) -> None:
-        write_status(result_id, state="running", done=done, total=total,
-                     n_ok=counts.get("ok", 0), n_skipped=counts.get("skipped", 0))
-
-    def run() -> None:
-        try:
-            write_status(result_id, state="running")
-            summary = work(result_dir(result_id), progress)
-            write_status(result_id, state="done", **summary)
-        except Exception as exc:                                    # noqa: BLE001
-            code = getattr(exc, "code", "job_failed")
-            write_status(result_id, state="failed", error={
-                "code": code, "message": str(exc), "status": getattr(exc, "status", 500)})
-        finally:
-            with _LOCK:
-                _LIVE.discard(result_id)
-
-    threading.Thread(target=run, name=f"sequences-{result_id}", daemon=True).start()
-    return True

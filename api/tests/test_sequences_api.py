@@ -102,12 +102,12 @@ def seq_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     s = settings_mod.settings
     saved = {k: getattr(s, k) for k in ("PRESENCE_DIR", "ANNOTATIONS_DIR", "SEQUENCES_RESULTS_DIR",
-                                        "SEQUENCES_SYNC_MAX_GENES", "SEQUENCES_BATCH_GENES",
+                                        "SEQUENCES_MAX_SEQUENCES", "SEQUENCES_BATCH_GENES",
                                         "NCBI_WORKERS", "SEQUENCES_DEADLINE_S")}
     s.PRESENCE_DIR = str(work / "serve")
     s.ANNOTATIONS_DIR = str(ann_root)
     s.SEQUENCES_RESULTS_DIR = str(tmp_path / "results")
-    s.SEQUENCES_SYNC_MAX_GENES = 50
+    s.SEQUENCES_MAX_SEQUENCES = 200
     s.SEQUENCES_BATCH_GENES = 3
     s.NCBI_WORKERS = 1
     s.SEQUENCES_DEADLINE_S = 60.0
@@ -218,7 +218,8 @@ def test_plan_lists_candidates_and_a_postable_selection(seq_client):
 def test_estimate_and_limits(seq_client):
     client, _ = seq_client
     est = client.post("/sequence-estimates", json=TP53).json()
-    assert est["n_genes"] == 5 and est["mode"] == "sync" and not est["cached"]
+    assert est["n_genes"] == 5 and est["max_sequences"] == 200 and not est["cached"]
+    assert "mode" not in est and "sync_max_genes" not in est
     assert est["est_bp_upper_bound"] == 5 * 51 and est["terms"][0]["found"] is True
     client.post("/sequences", json=TP53)
     assert client.post("/sequence-estimates", json=TP53).json()["cached"] is True
@@ -228,26 +229,52 @@ def test_estimate_and_limits(seq_client):
     assert none.status_code == 404 and none.json()["detail"]["code"] == "no_genes_matched"
 
 
-def test_large_request_runs_as_job_then_serves_result(seq_client):
-    import settings as settings_mod
+def test_there_is_no_job_mode_only_the_response(seq_client):
     client, _ = seq_client
-    settings_mod.settings.SEQUENCES_SYNC_MAX_GENES = 2
     r = client.post("/sequences", json=TP53)
-    assert r.status_code == 202
-    job = r.json()
-    assert job["job_id"] == job["result_id"] and r.headers["Location"].endswith(job["job_id"])
-    status = {}
-    for _ in range(100):
-        status = client.get(f"/sequence-jobs/{job['job_id']}").json()
-        if status["state"] in ("done", "failed"):
-            break
-        time.sleep(0.05)
-    assert status["state"] == "done" and status["n_sequences"] == 5, status
-    res = client.get(f"/sequences/results/{job['job_id']}")
+    assert r.status_code == 200 and "Location" not in r.headers and r.headers["X-Sequence-Count"] == "5"
+    res = client.get(f"/sequences/results/{r.headers['X-Result-Id']}")
     assert res.status_code == 200 and len(headers(res.text)) == 5
-    assert client.post("/sequences", json=TP53).status_code == 200            # now cached
     assert client.get("/sequence-jobs/" + "0" * 20).status_code == 404
     assert client.get("/sequences/results/not-an-id").status_code == 404
+
+
+def test_more_sequences_than_the_limit_are_refused_before_any_fetch(seq_client, monkeypatch):
+    import settings as settings_mod
+    from routers import sequences as router_mod
+    client, _ = seq_client
+    settings_mod.settings.SEQUENCES_MAX_SEQUENCES = 3
+    # 5 genes, one sequence each: the gene count already exceeds the limit
+    r = client.post("/sequences", json=TP53)
+    assert r.status_code == 413 and r.json()["detail"]["code"] == "too_many_genes"
+    # several transcripts per gene: counted from the GFF slices, still before any fetch
+    settings_mod.settings.SEQUENCES_MAX_SEQUENCES = 200
+    many = {**TP53, "transcript": "all"}
+    n = client.post("/sequences", json=many)
+    assert n.status_code == 200
+    got = int(n.headers["X-Sequence-Count"])
+    assert got == 10                                   # 5 genes, two transcripts each in the fixture
+    settings_mod.settings.SEQUENCES_MAX_SEQUENCES = 9
+    monkeypatch.setattr(router_mod, "run_export",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("fetched")))
+    r2 = client.post("/sequences", json={**many, "max_genes": 5})
+    assert r2.status_code == 413 and r2.json()["detail"]["code"] == "too_many_sequences"
+    assert r2.json()["detail"]["n_sequences_at_least"] == 10
+
+
+def test_an_identical_request_in_progress_gets_409_not_a_second_export(seq_client):
+    from routers import sequences as router_mod
+    from services.seq_results import write_status
+    client, _ = seq_client
+    src_req = router_mod.parse_request({**TP53})
+    from services.seq_source import Source
+    src = Source(src_req)
+    rid = src_req.result_id(src.data_version)
+    src.close()
+    write_status(rid, state="running", created=time.time(), owner="someone")
+    r = client.post("/sequences", json=TP53)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "export_running"
+    assert r.headers["Retry-After"] == "5"
 
 
 @pytest.mark.parametrize("body,code", [
@@ -285,9 +312,6 @@ def test_links_use_the_public_base_url_behind_a_proxy(seq_client):
         r = client.post("/sequences", json=TP53)
         assert r.headers["X-Manifest-Url"] == (
             f"https://example.org/annotrieve-xrefs/api/v1/sequences/results/{r.headers['X-Result-Id']}/manifest.tsv")
-        job = client.get(f"/sequence-jobs/{r.headers['X-Result-Id']}")
-        assert job.headers["cache-control"] == "no-store"
-        assert job.json()["status_url"].startswith("https://example.org/annotrieve-xrefs/api/v1/sequence-jobs/")
     finally:
         settings_mod.settings.PUBLIC_BASE_URL = ""
 
