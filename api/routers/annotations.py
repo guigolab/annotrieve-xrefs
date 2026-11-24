@@ -1,8 +1,9 @@
 """Per-annotation gene and xref routes (shard-backed)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
+from helpers.concurrency import annotations_slot
 from helpers.cursor import QueryError
 from helpers.deps import annotation_shard
 from helpers.errors import error_detail, http_error
@@ -22,7 +23,7 @@ from services.annotations import (
     resolve_path_namespace,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(annotations_slot)])
 
 _MATCH_DESC = "any (union over terms, default) or all (intersection over terms)"
 

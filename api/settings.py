@@ -55,6 +55,15 @@ class Settings:
     # Seconds between checks of the published `current` link (0 = check on every request).
     PRESENCE_RECHECK_S: float = _env_float("PRESENCE_RECHECK_S", 0.0)
 
+    # Threads that run request handlers per worker (framework default 40). Each thread keeps its own
+    # read connections, so this also caps the number of open connections.
+    THREADPOOL_SIZE: int = _env_int("THREADPOOL_SIZE", 12)
+
+    # /annotations/*: concurrent requests per worker (each opens a multi-GB shard) and the longest
+    # a single request may spend reading it (seconds) before it is stopped with a 503.
+    ANNOTATIONS_MAX_INFLIGHT: int = _env_int("ANNOTATIONS_MAX_INFLIGHT", 3)
+    ANNOTATIONS_QUERY_BUDGET_S: float = _env_float("ANNOTATIONS_QUERY_BUDGET_S", 20.0)
+
     # Concurrent /hits requests per worker (each can hold tens of MB while it builds its answer).
     HITS_MAX_INFLIGHT: int = _env_int("HITS_MAX_INFLIGHT", 3)
 

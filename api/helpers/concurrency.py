@@ -16,6 +16,7 @@ _SEQUENCES_SEMAPHORE = threading.Semaphore(
 )
 
 
+_ANNOTATIONS_SEMAPHORE = threading.Semaphore(max(1, int(settings.ANNOTATIONS_MAX_INFLIGHT)))
 _LOCI_SEMAPHORE = threading.Semaphore(max(1, int(settings.LOCI_MAX_INFLIGHT)))
 
 
@@ -61,3 +62,25 @@ def acquire_loci_slot() -> None:
 
 def release_loci_slot() -> None:
     _LOCI_SEMAPHORE.release()
+
+
+def annotations_slot() -> Iterator[None]:
+    """
+    FastAPI dependency for the /annotations/* routes: at most N run at once per worker.
+
+    When all slots are taken the request is refused at once with 503 and ``Retry-After``.
+    """
+    if not _ANNOTATIONS_SEMAPHORE.acquire(blocking=False):
+        from helpers.errors import error_detail
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=503,
+            detail=error_detail("annotations_busy",
+                                "too many concurrent annotation requests; retry shortly"),
+            headers={"Retry-After": "1"},
+        )
+    try:
+        yield
+    finally:
+        _ANNOTATIONS_SEMAPHORE.release()

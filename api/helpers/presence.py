@@ -31,8 +31,6 @@ class _Reader:
     conn: sqlite3.Connection
     all_mask: int
     data_version: str
-    ann_info: dict | None = None
-    ann_paths: dict | None = None
     db_path: Path | None = None  # file actually opened (RAM copy or `path`)
     checked: float = 0.0  # monotonic time of the last check of the published link
 
@@ -226,29 +224,49 @@ def open_request_connections() -> tuple[sqlite3.Connection, sqlite3.Connection, 
     return pres, loci, reader.data_version
 
 
+_SHARED: dict[Path, dict] = {}  # version path -> {"info": ..., "paths": ...}; shared by all threads
+_SHARED_LOCK = threading.Lock()
+
+
+def _shared(reader: "_Reader") -> dict:
+    with _SHARED_LOCK:
+        entry = _SHARED.get(reader.path)
+        if entry is None:
+            while len(_SHARED) >= 2:  # current version + the one being replaced
+                _SHARED.pop(next(iter(_SHARED)))
+            entry = _SHARED[reader.path] = {}
+        return entry
+
+
 def annotation_info(reader: "_Reader") -> dict[int, tuple]:
-    """ord -> (annotation_id, organism_name, assembly_accession, source); loaded once per reader."""
-    if reader.ann_info is None:
-        reader.ann_info = {
+    """ord -> (annotation_id, organism_name, assembly_accession, source); one copy per version."""
+    entry = _shared(reader)
+    info = entry.get("info")
+    if info is None:
+        info = {
             int(r["ord"]): (r["annotation_id"], r["organism_name"], r["assembly_accession"],
                             int(r["source"]))
             for r in reader.conn.execute(
                 "SELECT ord, annotation_id, organism_name, assembly_accession, source FROM annotation")
         }
-    return reader.ann_info
+        entry["info"] = info
+    return info
 
 
 REF_FILE = "loci_ref.sqlite"
 
 
 def annotation_paths(reader: "_Reader") -> dict[int, tuple[int, str]]:
-    """ord -> (taxid, gff_path); loaded once per reader (used to find GFF files)."""
-    if reader.ann_paths is None:
-        reader.ann_paths = {
+    """ord -> (taxid, gff_path); one copy per version (used to find GFF files)."""
+    entry = _shared(reader)
+    paths = entry.get("paths")
+    if paths is None:
+        paths = {
             int(r["ord"]): (int(r["taxid"]), r["gff_path"] or "")
             for r in reader.conn.execute("SELECT ord, taxid, gff_path FROM annotation")
         }
-    return reader.ann_paths
+        entry["paths"] = paths
+    return paths
 
 
 def open_ref_connection() -> sqlite3.Connection:

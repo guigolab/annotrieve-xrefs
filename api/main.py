@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -14,6 +15,7 @@ from helpers.logging_config import configure_logging
 from helpers.ncbi_eutils import close_ncbi_client
 from helpers.session import close_reader
 from routers import api_router
+from settings import settings
 
 # Before create_app / worker serve: INFO must reach stderr for ``docker logs``.
 configure_logging()
@@ -23,6 +25,8 @@ configure_logging()
 async def lifespan(_app: FastAPI):
     # Re-run after worker boot — gunicorn may have reconfigured logging.
     configure_logging()
+    import anyio.to_thread
+    anyio.to_thread.current_default_thread_limiter().total_tokens = max(4, settings.THREADPOOL_SIZE)
     # Scratch directory on the network drive (compose sets TMPDIR/SQLITE_TMPDIR there): make sure it exists.
     for var in ("TMPDIR", "SQLITE_TMPDIR"):
         if os.getenv(var):
@@ -119,6 +123,17 @@ def create_app() -> FastAPI:
         ],
         max_age=86400,
     )
+
+    @app.exception_handler(sqlite3.OperationalError)
+    async def sqlite_error_handler(_request: Request, exc: sqlite3.OperationalError) -> JSONResponse:
+        if "interrupted" in str(exc):  # query time budget (services.annotations.open_shard)
+            return JSONResponse(
+                status_code=503,
+                content={"detail": error_detail(
+                    "query_too_slow", "the query took too long; narrow it or retry later")},
+                headers={"Retry-After": "5"},
+            )
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(

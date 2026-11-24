@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from helpers.match import (
     parse_match,
 )
 from helpers.names import parse_exact_name, parse_name_list
+from settings import settings
 from helpers.paths import per_gff_root, shard_genes_path
 from helpers.pagination import (
     DEFAULT_LIMIT,
@@ -69,6 +71,10 @@ def open_shard(
     conn.execute("PRAGMA temp_store=FILE")
     conn.execute("PRAGMA mmap_size=0")
     conn.execute("PRAGMA query_only=ON")
+    # Time budget: stop a query that runs too long (raises sqlite3.OperationalError "interrupted",
+    # which the app turns into a 503).
+    deadline = time.monotonic() + settings.ANNOTATIONS_QUERY_BUDGET_S
+    conn.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 100_000)
     return conn
 
 

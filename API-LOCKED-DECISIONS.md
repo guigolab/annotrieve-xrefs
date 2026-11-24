@@ -63,7 +63,7 @@ If a bug ever pushes the container to its limit, the container is restarted by D
 |---|---|---|
 | Python baseline | 66 MB | 132 MB |
 | Annotation list in memory (D3) | 7 MB | 14 MB |
-| Presence connections: pool of 8, 2 MiB cache each (D3) | 16 MB | 32 MB |
+| Presence connections: at most 12 threads, 2 MiB cache each (D3) | 24 MB | 48 MB |
 | `/hits`: 3 concurrent x 63 MB worst case | 189 MB | 378 MB |
 | `/loci`: 3 concurrent x (16 MiB cache + 10 MB buffers) | 78 MB | 156 MB |
 | `/annotations/*`: 3 concurrent x (16 MiB cache + 10 MB) (D6) | 78 MB | 156 MB |
@@ -86,7 +86,7 @@ Margin at the worst moment: about 200 MB (10%). Typical use is far below this: t
 | `SEQUENCES_MAX_INFLIGHT` | 2 per worker | 1 per worker |
 | `READ_CACHE_SIZE` (SQLite cache per presence connection) | 256 MiB | 2 MiB |
 | SQLite `soft_heap_limit` | 256 MiB | 64 MiB |
-| Connections | one per thread (up to 80) | fixed pool of 8 per worker |
+| Connections | one per thread (40 threads per worker) | one per thread, thread pool cut to 12 per worker (`THREADPOOL_SIZE`) |
 | Gunicorn `--max-requests` | not set | 5000 with jitter, so any slow leak is cleared |
 | `SEQUENCES_MAX_INDEX_MB` | 0 (no limit) | 256 (opening a large index can use as much memory again) |
 | Container `mem_limit` / `memswap_limit` | none | 2g / 2g |
@@ -129,8 +129,8 @@ Order matters: D1 first, then the limits that make the budget true.
 - [x] D1 index in RAM (`/dev/shm` copy, version check every few seconds)
 - [x] Compose: `mem_limit`, `memswap_limit`, `shm_size`, log rotation, `TMPDIR` and `SQLITE_TMPDIR` on NFS
 - [x] Caps: `HITS_MAX_INFLIGHT=3`, `LOCI_MAX_INFLIGHT=3`, `SEQUENCES_MAX_INFLIGHT=1`, SQLite caches, `--max-requests`, `SEQUENCES_MAX_INDEX_MB=256`
-- [ ] D3 connection pool and shared annotation list
-- [ ] D6 limits and time budgets on `/annotations/*`
+- [x] D3 connection cap (thread pool of 12 per worker) and shared annotation list
+- [x] D6 limits and time budgets on `/annotations/*`
 - [ ] D8 real health check
 - [ ] `tools/check_api_memory.py`: replay worst-case requests, assert peak memory per the table in section 4
 - [ ] D4 pre-built responses (then raise `HITS_MAX_INFLIGHT`)
@@ -141,3 +141,4 @@ Order matters: D1 first, then the limits that make the budget true.
 - 2026-11-24: decisions locked; worst-case `/hits` memory measured (section 3); budget drafted.
 - 2026-11-24: D1 done in code (`helpers/presence.py`: copy to `PRESENCE_RAM_DIR` under a file lock, fallback to disk when too large / no space, no network-drive calls between checks every `PRESENCE_RECHECK_S`), 5 new tests in `tests/test_presence_ram.py`. Compose now has `mem_limit`/`memswap_limit` 2g, `shm_size` 1g, log rotation, scratch dir on NFS. Test run: 349 pass; `test_committed_openapi_schema_matches_the_app` fails with or without this change (checked by stashing it).
 - 2026-11-24: caps done as defaults in `api/settings.py` (HITS 3, LOCI 3, SEQUENCES 1, SQLite cache 2 MiB, `SEQUENCES_MAX_INDEX_MB` 256), SQLite `soft_heap_limit` 64 MiB (presence and legacy corpus reader), gunicorn `--max-requests 5000 --max-requests-jitter 500`. Tests: 349 pass (openapi test excluded, known failure). Still open from the settings table: gate on `/annotations/*` (D6) and the connection pool (D3).
+- 2026-11-24: D3 and D6 done. `/annotations/*` has a gate (3 per worker, 503 + `Retry-After: 1` when full) and a 20 s query budget per shard (`ANNOTATIONS_QUERY_BUDGET_S`, 503 `query_too_slow`). Handler threads cut from 40 to 12 per worker, which caps open connections; the annotation list is now one copy per version instead of one per thread (was up to 40 x 7 MB per worker). Budget table adjusted (connections 24 MB per worker instead of 16). Tests: 353 pass (openapi test excluded).
