@@ -131,8 +131,8 @@ Order matters: D1 first, then the limits that make the budget true.
 - [x] Caps: `HITS_MAX_INFLIGHT=3`, `LOCI_MAX_INFLIGHT=3`, `SEQUENCES_MAX_INFLIGHT=1`, SQLite caches, `--max-requests`, `SEQUENCES_MAX_INDEX_MB=256`
 - [x] D3 connection cap (thread pool of 12 per worker) and shared annotation list
 - [x] D6 limits and time budgets on `/annotations/*`
-- [ ] D8 real health check
-- [ ] `tools/check_api_memory.py`: replay worst-case requests, assert peak memory per the table in section 4
+- [x] D8 real health check
+- [x] `tools/check_api_memory.py`: replay worst-case requests, assert peak memory per the table in section 4
 - [ ] D4 pre-built responses (then raise `HITS_MAX_INFLIGHT`)
 - [ ] D5 count tables, D7 per-name merge, D9 child limits and ETag
 
@@ -142,3 +142,4 @@ Order matters: D1 first, then the limits that make the budget true.
 - 2026-11-24: D1 done in code (`helpers/presence.py`: copy to `PRESENCE_RAM_DIR` under a file lock, fallback to disk when too large / no space, no network-drive calls between checks every `PRESENCE_RECHECK_S`), 5 new tests in `tests/test_presence_ram.py`. Compose now has `mem_limit`/`memswap_limit` 2g, `shm_size` 1g, log rotation, scratch dir on NFS. Test run: 349 pass; `test_committed_openapi_schema_matches_the_app` fails with or without this change (checked by stashing it).
 - 2026-11-24: caps done as defaults in `api/settings.py` (HITS 3, LOCI 3, SEQUENCES 1, SQLite cache 2 MiB, `SEQUENCES_MAX_INDEX_MB` 256), SQLite `soft_heap_limit` 64 MiB (presence and legacy corpus reader), gunicorn `--max-requests 5000 --max-requests-jitter 500`. Tests: 349 pass (openapi test excluded, known failure). Still open from the settings table: gate on `/annotations/*` (D6) and the connection pool (D3).
 - 2026-11-24: D3 and D6 done. `/annotations/*` has a gate (3 per worker, 503 + `Retry-After: 1` when full) and a 20 s query budget per shard (`ANNOTATIONS_QUERY_BUDGET_S`, 503 `query_too_slow`). Handler threads cut from 40 to 12 per worker, which caps open connections; the annotation list is now one copy per version instead of one per thread (was up to 40 x 7 MB per worker). Budget table adjusted (connections 24 MB per worker instead of 16). Tests: 353 pass (openapi test excluded).
+- 2026-11-24: D8 done: `/health` now opens the published index, runs a test lookup, checks `loci.sqlite` against the index version, and reports `data_version`, `index` (ram or disk), `lookup`, `loci`; returns 503 `unavailable` with a reason when nothing is published or versions differ. Without `PRESENCE_DIR` it still answers plain `ok`. `tools/check_api_memory.py` written and run: 144 worst-case requests (50 names present in 18,000 annotations, compact, records and TSV) from 24 client threads against the real app: 51 answered, 93 refused with 503 by the gates; peak RSS 203 MB for one worker (client side included) against the 486 MB limit. `/loci` is not part of this replay (needs a loci index); its memory is bounded by the 3-slot gate and 16 MiB cache. Tests: 355 pass (openapi test excluded).

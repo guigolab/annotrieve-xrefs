@@ -263,3 +263,18 @@ def test_names_sources_filter_and_no_n_loci_without_loci_index(presence_client) 
     assert body["source_filter"] == ["Ensembl"]
     assert [(r["name"], r["n_annotations"]) for r in body["results"]] == [("selenow", 1)]
     assert all("n_loci" not in r for r in body["results"])
+
+
+def test_health_reports_version_and_lookup(presence_client) -> None:
+    client, _ = presence_client
+    body = client.get("/health").json()
+    assert body["status"] == "ok" and body["data_version"] == "abc123"
+    assert body["lookup"] == "ok" and body["loci"] == "unpublished" and body["index"] == "disk"
+
+
+def test_health_fails_when_nothing_is_published(presence_client) -> None:
+    client, root = presence_client
+    (root / "current").unlink()
+    r = client.get("/health")
+    assert r.status_code == 503
+    assert r.json() == {"status": "unavailable", "reason": "presence_unavailable"}
