@@ -51,3 +51,13 @@ def test_shape_has_no_default_and_is_echoed(presence_client):  # noqa: F811
     spec = client.get("/openapi.json").json()
     shape = next(p for p in spec["paths"]["/hits"]["get"]["parameters"] if p["name"] == "shape")
     assert "default" not in shape["schema"] and shape["schema"].get("anyOf")
+
+
+def test_a_list_answer_has_rows_or_results_never_both(presence_client):  # noqa: F811
+    client, _ = presence_client
+    compact = client.get("/hits", params={"names": "tp53"}).json()
+    assert "rows" in compact and "results" not in compact and "fields" in compact
+    records = client.get("/hits", params={"names": "tp53", "shape": "records"}).json()
+    assert "results" in records and "rows" not in records
+    names = client.get("/names", params={"prefix": "tp5"}).json()
+    assert "results" in names and "rows" not in names

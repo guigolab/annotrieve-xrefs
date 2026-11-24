@@ -136,11 +136,11 @@ Each step ends with: tests, the committed `api/openapi.json` regenerated, a line
 - [ ] Check on the server why the human RefSeq annotation `a63cdc06...` answers `gff_unavailable`
 - [x] 1.5 one status-code decision (`helpers/errors.http_for_query_error`, always 422; a test fails if any route file contains `status_code=400`)
 - [x] 1.4 `shape` without default, echoed in the answer, 422 `invalid_combination` on tsv + compact
-- [ ] 1.1 `cursor` on `/annotations/*`, route text for `/hits` and `/namespaces`
-- [ ] 1.3 `sources` on `/loci`, `prefix` on the accessions route
+- [x] 1.1 `cursor` on `/annotations/*` (genes, accessions, xrefs), route text for `/hits` and `/namespaces`
+- [x] 1.3 `sources` on `/loci` (GET and POST, echoed as `source_filter`, part of the cursor key), `prefix` on the accessions route
 - [ ] 1.7 `kind` and `slug` for namespaces
 - [ ] 1.2 `/genes/{locus_ref}` routes
-- [ ] 1.6 route text for `rows` and `results`, test that every list has exactly one
+- [x] 1.6 route text for `rows` and `results`, test that every list has exactly one
 - [x] Regenerate `api/openapi.json` (the committed one was stale: its test failed before this work; regenerated inside the production image)
 
 ## 5. Progress log
@@ -148,3 +148,4 @@ Each step ends with: tests, the committed `api/openapi.json` regenerated, a line
 - 2026-11-24: plan written; live sequences timing taken (10 genes 3.0 s, 50 genes 13.4 s); the `gff_unavailable` finding recorded.
 - 2026-11-24: sequences done. One mode only: `200` with the FASTA. Limits `SEQUENCES_MAX_GENES` 200 and `SEQUENCES_MAX_SEQUENCES` 200 (the gene limit is also capped by the sequence limit); when the transcript rule can keep several per gene the sequences are counted from the GFF slices before any NCBI call (`413 too_many_sequences`), with a second guard inside the export; identical request in progress: `409 export_running`; deadline 120 s; nginx read timeout 180 s for `/sequences` and `/sequence-plans`. Removed: 202, `Location`, `GET /sequence-jobs/{id}`, `SequenceJob`, `start_job` and its thread, `SEQUENCES_SYNC_MAX_GENES`, estimate fields `mode` and `sync_max_genes` (added `max_sequences`). Kept: estimates, plans, stored results with manifest, per-IP limits. Tests: 379 api (including the openapi test, fixed by regenerating the file) and 221 gene_corpus pass. Not measured yet: a full 200-sequence request on the real stack (needs NCBI and the real GFF files). The genes page still handles a `202` and polls `/sequence-jobs`; that code in `annotrieve-genes-ui` is now dead and can be deleted.
 - 2026-11-24: 1.5 and 1.4 done. All four copies of the code table are gone; `invalid_offset` and `prefix_too_broad`-style errors that answered 400 now answer 422. `/hits` answers carry `shape`; `shape` has no default in the route list; `format=tsv` with `shape=compact` answers 422. `api/openapi.json` regenerated in the production image. Tests: 384 pass.
+- 2026-11-24: 1.1, 1.3 and 1.6 done. The `/annotations/*` lists take `cursor` and answer `next_cursor` (null on the last page and on `/namespaces`); the cursor is the encoded offset, so the depth limit (10,000 rows) is unchanged and is stated in the error; giving both `cursor` and `offset` answers 422 `invalid_combination`. `/loci` takes `sources` like `/hits` and `/names`. The accessions route takes `prefix` (same as `q`; different values: 422). Route text for `/hits` (never paged, size, `rows` versus `results`) and `/namespaces` (never paged, what `symbol` and `alias` are). `api/openapi.json` regenerated. Tests: 391 pass. Left: 1.7 namespaces `kind` and `slug`, 1.2 `/genes/{locus_ref}`.

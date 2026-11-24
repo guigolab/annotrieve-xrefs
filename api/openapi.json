@@ -266,6 +266,23 @@
             ],
             "title": "Names"
           },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sources"
+          },
           "terms": {
             "anyOf": [
               {
@@ -791,6 +808,24 @@
               "title": "Offset",
               "type": "integer"
             }
+          },
+          {
+            "description": "`next_cursor` of the previous page; use it instead of `offset`",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`next_cursor` of the previous page; use it instead of `offset`",
+              "title": "Cursor"
+            }
           }
         ],
         "responses": {
@@ -919,6 +954,24 @@
               "title": "Offset",
               "type": "integer"
             }
+          },
+          {
+            "description": "`next_cursor` of the previous page; use it instead of `offset`",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`next_cursor` of the previous page; use it instead of `offset`",
+              "title": "Cursor"
+            }
           }
         ],
         "responses": {
@@ -949,7 +1002,7 @@
     },
     "/annotations/{annotation_id}/namespaces": {
       "get": {
-        "description": "Namespaces present in this annotation's shard (all gene_xref ns).",
+        "description": "Namespaces present in this annotation's shard, with the number of distinct accessions.\n\n``results`` lists everything at once (it is never paged): ``limit`` and ``offset`` in the answer\nonly repeat ``total`` and 0, and ``next_cursor`` is always null. Namespaces are the places an\naccession can come from; use one in the accessions route below to browse it. ``symbol`` and\n``alias`` are not databases: they are the two kinds of gene name that ``/hits`` searches.",
         "operationId": "get_annotation_namespaces_annotations__annotation_id__namespaces_get",
         "parameters": [
           {
@@ -1014,7 +1067,7 @@
             }
           },
           {
-            "description": "Optional accession prefix (min 3 characters when set); omit to browse all",
+            "description": "Optional accession prefix (min 3 characters when set); omit to browse all. Alias of `prefix`.",
             "in": "query",
             "name": "q",
             "required": false,
@@ -1027,8 +1080,26 @@
                   "type": "null"
                 }
               ],
-              "description": "Optional accession prefix (min 3 characters when set); omit to browse all",
+              "description": "Optional accession prefix (min 3 characters when set); omit to browse all. Alias of `prefix`.",
               "title": "Q"
+            }
+          },
+          {
+            "description": "Optional accession prefix (min 3 characters); same as `q`",
+            "in": "query",
+            "name": "prefix",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional accession prefix (min 3 characters); same as `q`",
+              "title": "Prefix"
             }
           },
           {
@@ -1053,6 +1124,24 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "description": "`next_cursor` of the previous page; use it instead of `offset`",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`next_cursor` of the previous page; use it instead of `offset`",
+              "title": "Cursor"
             }
           }
         ],
@@ -1103,7 +1192,7 @@
     },
     "/hits": {
       "get": {
-        "description": "Presence search by exact gene symbol/synonym names.\n\n``shape=compact``: ``terms``, ``fields``/``rows`` with ``matched`` (term indices).\n``shape=records``: one object per annotation with ``n_matched``, ``n_terms``, ``missing`` and\n``download_url``. Both carry ``facets`` (annotation counts per source, before the ``sources``\nfilter is applied).",
+        "description": "Presence search by exact gene symbol/synonym names.\n\n``shape=compact``: ``terms``, ``fields``/``rows`` with ``matched`` (term indices).\n``shape=records``: one object per annotation with ``n_matched``, ``n_terms``, ``missing`` and\n``download_url``. Both carry ``facets`` (annotation counts per source, before the ``sources``\nfilter is applied).\n\nThe answer is never paged: it always lists every matching annotation (at most one row per\nannotation, so about 18,000 rows or 9 MB in the worst case). A key named ``rows`` is a list of\narrays described by ``fields``; a key named ``results`` is a list of objects. ``shape`` in the\nanswer says which one you got.",
         "operationId": "get_hits_hits_get",
         "parameters": [
           {
@@ -1377,6 +1466,24 @@
               ],
               "description": "Restrict to these annotation ids",
               "title": "Annotation Ids"
+            }
+          },
+          {
+            "description": "Comma-separated Ensembl, GenBank, RefSeq; omit for all",
+            "in": "query",
+            "name": "sources",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated Ensembl, GenBank, RefSeq; omit for all",
+              "title": "Sources"
             }
           },
           {

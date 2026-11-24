@@ -302,3 +302,33 @@ def test_a_bad_cursor_is_a_422_with_a_code(loci_client) -> None:
     client = loci_client[0]
     r = client.get("/loci", params={"names": "tp53", "cursor": "not-a-cursor"})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "invalid_cursor"
+
+
+def test_loci_sources_filter_keeps_only_those_annotations(loci_client) -> None:
+    client, _ = loci_client
+    allrows = client.get("/loci", params={"names": "tp53", "limit": 200}).json()
+    ids_all = {r["annotation_id"] for r in allrows["rows"]}
+    facets = client.get("/hits", params={"names": "tp53"}).json()["facets"]["source"]
+    seen = set()
+    for label, n in facets.items():
+        want = {r[0] for r in client.get("/hits", params={"names": "tp53", "sources": label}).json()["rows"]}
+        got = client.get("/loci", params={"names": "tp53", "sources": label, "limit": 200}).json()
+        assert got["source_filter"] == [label]
+        assert {r["annotation_id"] for r in got["rows"]} <= want
+        assert {r["annotation_id"] for r in got["rows"]} == (want & ids_all)
+        seen |= {r["annotation_id"] for r in got["rows"]}
+    assert seen == ids_all                                   # every source together = no filter
+    both = client.get("/loci", params={"names": "tp53", "sources": ",".join(facets), "limit": 200}).json()
+    assert {r["annotation_id"] for r in both["rows"]} == ids_all
+    assert client.post("/loci", json={"names": ["tp53"], "sources": ["Nowhere"]}).status_code == 422
+    bad = client.get("/loci", params={"names": "tp53", "sources": "Nowhere"})
+    assert bad.status_code == 422 and bad.json()["detail"]["code"] == "invalid_source"
+
+
+def test_a_cursor_from_one_source_filter_is_refused_under_another(loci_client) -> None:
+    client, _ = loci_client
+    first = client.get("/loci", params={"names": "tp53", "limit": 1}).json()
+    assert first["next_cursor"]
+    r = client.get("/loci", params={"names": "tp53", "limit": 1, "cursor": first["next_cursor"],
+                                    "sources": "RefSeq"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "cursor_filter_mismatch"

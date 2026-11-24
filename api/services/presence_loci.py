@@ -26,7 +26,7 @@ from helpers.postings import iter_bits, to_bitset
 from helpers.presence import scope_mask
 from helpers.source_codes import SOURCES_LEGEND
 from services.terms import parse_terms, resolve_terms
-from services.presence_hits import _chunks, parse_alias_mode
+from services.presence_hits import SOURCE_LABELS, _chunks, parse_alias_mode, parse_sources
 from settings import settings
 
 MAX_FLANK_BP = 1_000_000
@@ -41,6 +41,7 @@ class LociQuery:
     include: list[int]
     exclude: list[int]
     annotation_ids: list[str]
+    sources: list[int]                 # source codes kept (empty = all)
     terms: list[dict]
     name_ids: list[list[int]]          # per term: the index names it expands to ([] = not found)
     scope: set[int]
@@ -79,13 +80,14 @@ def parse_annotation_ids(raw) -> list[str]:
 
 def build_query(pres: sqlite3.Connection, all_mask: int, data_version: str, names=None,
                 *, terms=None, include_taxids=None, exclude_taxids=None, alias="suggest",
-                annotation_ids=None, case_sensitive=False, flank_bp=0,
+                annotation_ids=None, case_sensitive=False, flank_bp=0, sources=None,
                 max_names: int = MAX_NAMES_GET) -> LociQuery:
     mode = parse_alias_mode(alias)
     raws = parse_terms(names, terms, max_terms=max_names)
     include = parse_taxid_list(include_taxids, field="include_taxids")
     exclude = parse_taxid_list(exclude_taxids, field="exclude_taxids")
     ann_ids = parse_annotation_ids(annotation_ids)
+    source_codes = parse_sources(sources)
     flank = parse_flank(flank_bp)
 
     resolved = resolve_terms(pres, raws, mode)
@@ -100,13 +102,20 @@ def build_query(pres: sqlite3.Connection, all_mask: int, data_version: str, name
             for (o,) in pres.execute(f"SELECT ord FROM annotation WHERE annotation_id IN ({ph})", chunk):
                 allowed |= 1 << int(o)
         mask &= allowed
+    if source_codes:
+        ph = ",".join("?" for _ in source_codes)
+        keep = 0
+        for (o,) in pres.execute(f"SELECT ord FROM annotation WHERE source IN ({ph})", source_codes):
+            keep |= 1 << int(o)
+        mask &= keep
     key = hashlib.sha1(json.dumps(
-        [[[t["kind"], t["name"], t["names"]] for t in resolved], include, exclude, ann_ids, mode,
+        [[[t["kind"], t["name"], t["names"]] for t in resolved], include, exclude, ann_ids,
+         sorted(source_codes), mode,
          case_sensitive, [t["typed"] for t in resolved] if case_sensitive else None, data_version],
         sort_keys=True).encode()).hexdigest()[:12]
-    return LociQuery(mode, bool(case_sensitive), flank, include, exclude, ann_ids, resolved,
+    return LociQuery(mode, bool(case_sensitive), flank, include, exclude, ann_ids, source_codes, resolved,
                      name_ids, set(iter_bits(mask)), data_version,
-                     scoped=bool(include or exclude or ann_ids), key=key, id_name=id_name)
+                     scoped=bool(include or exclude or ann_ids or source_codes), key=key, id_name=id_name)
 
 
 def encode_cursor(q: LociQuery, ord_: int, n: int) -> str:

@@ -132,6 +132,11 @@ def get_hits(
     ``shape=records``: one object per annotation with ``n_matched``, ``n_terms``, ``missing`` and
     ``download_url``. Both carry ``facets`` (annotation counts per source, before the ``sources``
     filter is applied).
+
+    The answer is never paged: it always lists every matching annotation (at most one row per
+    annotation, so about 18,000 rows or 9 MB in the worst case). A key named ``rows`` is a list of
+    arrays described by ``fields``; a key named ``results`` is a list of objects. ``shape`` in the
+    answer says which one you got.
     """
     reject_unknown_params(request, _GET_PARAMS)
     try:

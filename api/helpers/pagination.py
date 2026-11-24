@@ -1,6 +1,10 @@
 """Shared pagination limits and OpenAPI descriptions."""
 from __future__ import annotations
 
+import base64
+import binascii
+import json
+
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 200
 MAX_OFFSET = 10_000
@@ -35,6 +39,32 @@ def clamp_offset(offset: int) -> int:
     return value
 
 
+def encode_offset_cursor(offset: int) -> str:
+    """Opaque cursor for ``/annotations/*`` lists: the position of the next page."""
+    raw = json.dumps({"o": int(offset)}, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def resolve_offset(cursor: str | None, offset: int) -> int:
+    """The offset to read from: ``cursor`` (from a previous ``next_cursor``) or ``offset``, not both."""
+    from helpers.cursor import QueryError
+
+    if cursor is None or cursor == "":
+        return offset
+    if offset:
+        raise QueryError("use either cursor or offset, not both", code="invalid_combination",
+                         cursor=cursor, offset=offset)
+    try:
+        data = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        value = int(data["o"])
+    except (ValueError, KeyError, TypeError, binascii.Error):
+        raise QueryError("invalid cursor", code="invalid_cursor") from None
+    if value < 0 or value > MAX_OFFSET:
+        raise QueryError(f"cursor is outside the pageable range (at most {MAX_OFFSET} rows deep)",
+                         code="invalid_cursor")
+    return value
+
+
 def page_envelope(
     *,
     total: int,
@@ -43,11 +73,13 @@ def page_envelope(
     results: list,
     **extras,
 ) -> dict:
-    """Standard list envelope: total / limit / offset / results (+ extras)."""
+    """Standard list envelope: total / limit / offset / next_cursor / results (+ extras)."""
+    end = int(offset) + len(results)
     out: dict = {
         "total": int(total),
         "limit": int(limit),
         "offset": int(offset),
+        "next_cursor": encode_offset_cursor(end) if end < int(total) and end <= MAX_OFFSET else None,
         "results": results,
     }
     out.update(extras)

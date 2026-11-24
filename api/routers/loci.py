@@ -17,6 +17,7 @@ from helpers.presence import (
     presence_reader,
 )
 from services.loci_formats import stream_ndjson, stream_tsv
+from services.presence_hits import SOURCE_LABELS
 from services.presence_loci import (
     build_query,
     decode_cursor,
@@ -32,7 +33,7 @@ router = APIRouter()
 FORMATS = ("json", "tsv", "ndjson")
 HARD_ROW_CEILING = 20_000_000
 _GET_PARAMS = ("names", "include_taxids", "exclude_taxids", "alias", "annotation_ids",
-               "case_sensitive", "flank_bp", "format", "dry_run", "limit", "cursor")
+               "sources", "case_sensitive", "flank_bp", "format", "dry_run", "limit", "cursor")
 _MEDIA = {"tsv": "text/tab-separated-values", "ndjson": "application/x-ndjson"}
 
 
@@ -45,6 +46,7 @@ class LociBody(BaseModel):
     exclude_taxids: list[int] | None = None
     alias: str | None = "suggest"
     annotation_ids: list[str] | None = None
+    sources: list[str] | str | None = None
     case_sensitive: bool = False
     flank_bp: int = 0
     format: str = "json"
@@ -61,8 +63,8 @@ def _busy() -> JSONResponse:
     )
 
 
-def _run(names, *, terms=None, include_taxids, exclude_taxids, alias, annotation_ids, case_sensitive,
-         flank_bp, fmt, dry_run, limit, cursor, max_names):
+def _run(names, *, terms=None, include_taxids, exclude_taxids, alias, annotation_ids, sources,
+         case_sensitive, flank_bp, fmt, dry_run, limit, cursor, max_names):
     if not presence_enabled():
         raise http_error(503, "loci_unavailable", "The presence/loci index is not enabled")
     fmt = (fmt or "json").lower()
@@ -80,12 +82,13 @@ def _run(names, *, terms=None, include_taxids, exclude_taxids, alias, annotation
         pres, loci, data_version = open_request_connections()
         q = build_query(pres, reader.all_mask, data_version, names, terms=terms,
                         include_taxids=include_taxids, exclude_taxids=exclude_taxids, alias=alias,
-                        annotation_ids=annotation_ids, case_sensitive=case_sensitive,
+                        annotation_ids=annotation_ids, sources=sources, case_sensitive=case_sensitive,
                         flank_bp=flank_bp, max_names=max_names)
         est = estimate(pres, loci, q)
         info = annotation_info(reader)
         base = {"terms": [term_echo(t) for t in q.terms], "alias": q.mode, "include_taxids": q.include,
-                "exclude_taxids": q.exclude, "data_version": data_version, **est}
+                "exclude_taxids": q.exclude,
+                "source_filter": [SOURCE_LABELS[c] for c in q.sources], "data_version": data_version, **est}
         if dry_run:
             return base
         if fmt == "json":
@@ -147,6 +150,7 @@ def get_loci(
     exclude_taxids: str | None = Query(None, description="Comma-separated NCBI taxids to exclude"),
     alias: str = Query("suggest", description="off | suggest | include; off drops alias-only genes"),
     annotation_ids: str | None = Query(None, description="Restrict to these annotation ids"),
+    sources: str | None = Query(None, description="Comma-separated Ensembl, GenBank, RefSeq; omit for all"),
     case_sensitive: bool = Query(False, description="Exact match on the gene's own spelling"),
     flank_bp: int = Query(0, description="Extra bases on each side of the gff_url slice"),
     format: str = Query("json", description="json | tsv | ndjson"),
@@ -157,8 +161,8 @@ def get_loci(
     """Gene coordinates for the matching genes, one row per gene, deterministic order."""
     reject_unknown_params(request, _GET_PARAMS)
     return _wrap(names=names, include_taxids=include_taxids, exclude_taxids=exclude_taxids,
-                 alias=alias, annotation_ids=annotation_ids, case_sensitive=case_sensitive,
-                 flank_bp=flank_bp, fmt=format, dry_run=dry_run, limit=limit, cursor=cursor,
+                 alias=alias, annotation_ids=annotation_ids, sources=sources,
+                 case_sensitive=case_sensitive, flank_bp=flank_bp, fmt=format, dry_run=dry_run, limit=limit, cursor=cursor,
                  max_names=MAX_NAMES_GET)
 
 
@@ -167,6 +171,7 @@ def post_loci(body: LociBody):
     """Same as GET /loci for longer name lists."""
     return _wrap(names=body.names, terms=body.terms, include_taxids=body.include_taxids,
                  exclude_taxids=body.exclude_taxids, alias=body.alias,
-                 annotation_ids=body.annotation_ids, case_sensitive=body.case_sensitive,
+                 annotation_ids=body.annotation_ids, sources=body.sources,
+                 case_sensitive=body.case_sensitive,
                  flank_bp=body.flank_bp, fmt=body.format, dry_run=body.dry_run, limit=body.limit,
                  cursor=body.cursor, max_names=MAX_NAMES_POST)

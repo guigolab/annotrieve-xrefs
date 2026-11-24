@@ -359,3 +359,39 @@ def test_committed_openapi_schema_matches_the_app() -> None:
     from main import app
     committed = json.loads((Path(__file__).resolve().parents[1] / "openapi.json").read_text())
     assert committed == json.loads(json.dumps(app.openapi())), "stale api/openapi.json"
+
+
+def test_annotation_genes_cursor_walks_the_same_pages_as_offset(client: TestClient) -> None:
+    first = client.get("/annotations/ann-human/genes", params={"limit": 1}).json()
+    assert first["next_cursor"] and first["offset"] == 0
+    second = client.get("/annotations/ann-human/genes",
+                        params={"limit": 1, "cursor": first["next_cursor"]}).json()
+    by_offset = client.get("/annotations/ann-human/genes", params={"limit": 1, "offset": 1}).json()
+    assert second["results"] == by_offset["results"] and second["offset"] == 1
+    assert second["next_cursor"] is None                 # 2 genes in total: this was the last page
+    whole = client.get("/annotations/ann-human/genes", params={"limit": 200}).json()
+    assert whole["next_cursor"] is None
+
+
+def test_annotation_cursor_errors_are_422(client: TestClient) -> None:
+    both = client.get("/annotations/ann-human/genes",
+                      params={"limit": 1, "offset": 1, "cursor": "eyJvIjoxfQ"})
+    assert both.status_code == 422 and both.json()["detail"]["code"] == "invalid_combination"
+    bad = client.get("/annotations/ann-human/genes", params={"cursor": "###"})
+    assert bad.status_code == 422 and bad.json()["detail"]["code"] == "invalid_cursor"
+
+
+def test_namespaces_list_has_no_next_page(client: TestClient) -> None:
+    body = client.get("/annotations/ann-human/namespaces").json()
+    assert body["next_cursor"] is None and body["limit"] == body["total"]
+
+
+def test_accessions_prefix_is_the_same_filter_as_q(client: TestClient) -> None:
+    path = "/annotations/ann-human/namespaces/refseq_transcript/accessions"
+    a = client.get(path, params={"q": "XM_"}).json()
+    b = client.get(path, params={"prefix": "XM_"}).json()
+    assert a == b and a["total"] == 1 and a["results"][0]["accession"] == "XM_015139305.2"
+    same = client.get(path, params={"q": "XM_", "prefix": "XM_"})
+    assert same.status_code == 200
+    clash = client.get(path, params={"q": "XM_0", "prefix": "XM_1"})
+    assert clash.status_code == 422 and clash.json()["detail"]["code"] == "invalid_combination"
