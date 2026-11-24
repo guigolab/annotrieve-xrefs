@@ -1,4 +1,4 @@
-"""Concurrency gate and time budget of /annotations/* (API-LOCKED-DECISIONS.md, D6)."""
+"""Concurrency gate and time budget of /annotations/*."""
 from __future__ import annotations
 
 import sqlite3

@@ -24,7 +24,7 @@ class Settings:
     # and {GENE_CORPUS_DIR}/per_gff/<id>/genes.sqlite
     GENE_CORPUS_DIR: str = os.getenv("GENE_CORPUS_DIR", "")
 
-    # Presence index (PLAN-build-tables.md): directory holding the ``current`` symlink to
+    # Presence index: directory holding the ``current`` symlink to
     # ``v<data_version>/presence.sqlite``. When set, /names and /hits read it (symbol vs
     # alias aware) instead of gene_corpus.sqlite xref_file. Empty = legacy behaviour.
     PRESENCE_DIR: str = os.getenv("PRESENCE_DIR", "")
@@ -40,10 +40,10 @@ class Settings:
     LOCI_CACHE_KIB: int = _env_int("LOCI_CACHE_KIB", 16384)
     LOCI_MAX_INFLIGHT: int = _env_int("LOCI_MAX_INFLIGHT", 3)
 
-    # Negative cache_size is KiB (2 MiB per connection; see API-LOCKED-DECISIONS.md section 4).
+    # Negative cache_size is KiB.
     READ_CACHE_SIZE: int = _env_int("READ_CACHE_SIZE", -2048)
 
-    # Search index in RAM (API-LOCKED-DECISIONS.md, D1). When set, presence.sqlite is copied from the
+    # Search index in RAM. When set, presence.sqlite is copied from the
     # (NFS) version directory into this directory, which must be on tmpfs (for example /dev/shm/...),
     # once per data version and shared by all workers. Empty = read it in place, as before.
     PRESENCE_RAM_DIR: str = os.getenv("PRESENCE_RAM_DIR", "")

@@ -1,5 +1,5 @@
 """
-Worst-case memory check of the search API (API-LOCKED-DECISIONS.md, sections 3 and 4).
+Worst-case memory check of the search API.
 
     python3 tools/check_api_memory.py --scratch /data/annotrieve-xrefs/sequences/tmp [--limit-mb 486]
 

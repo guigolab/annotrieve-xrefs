@@ -33,7 +33,7 @@ services:
     container_name: annotrieve-xrefs-api
     restart: always
     # Hard memory limit for the whole container (both workers, /dev/shm and child processes);
-    # see API-LOCKED-DECISIONS.md section 4. memswap_limit equal to mem_limit = no swap.
+    # memswap_limit equal to mem_limit = no swap.
     mem_limit: 2g
     memswap_limit: 2g
     # /dev/shm holds the search index copy (310 MB; room for two during a data-version switch).

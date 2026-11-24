@@ -1,5 +1,5 @@
 """
-Build ``loci.sqlite`` from per-annotation sidecars (PLAN-build-tables.md, /loci phase).
+Build ``loci.sqlite`` from per-annotation sidecars.
 
 One row per (name, gene): the coordinates sit in the row, rows are clustered by name, so
 a request reads one short key range per name. ``name_id`` is the id used by the matching

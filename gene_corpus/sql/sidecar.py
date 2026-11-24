@@ -1,8 +1,7 @@
 """
 Per-annotation sidecar: a small sorted file written from one shard.
 
-Layout (``<per_gff>/<annotation_id>/sidecar.tsv.gz``, gzip text, see
-``PLAN-build-tables.md`` section 3)::
+Layout (``<per_gff>/<annotation_id>/sidecar.tsv.gz``, gzip text)::
 
     #sidecar_version=1
     #annotation_id=...

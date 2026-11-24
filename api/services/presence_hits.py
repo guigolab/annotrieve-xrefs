@@ -1,4 +1,4 @@
-"""``/hits`` and ``/names`` over presence.sqlite, with alias as a suggestion (API-DESIGN 3)."""
+"""``/hits`` and ``/names`` over presence.sqlite, with alias as a suggestion."""
 from __future__ import annotations
 
 import json

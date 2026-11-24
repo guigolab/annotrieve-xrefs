@@ -1,4 +1,4 @@
-"""Presence-backed /names and /hits: alias as a suggestion (API-DESIGN section 3)."""
+"""Presence-backed /names and /hits: alias as a suggestion."""
 from __future__ import annotations
 
 import sqlite3

@@ -1,4 +1,4 @@
-"""``/loci``: where the genes are, from loci.sqlite (API-DESIGN 4.3).
+"""``/loci``: where the genes are, from loci.sqlite.
 
 Rows come out in a deterministic order (annotation ordinal, then seqid, start, end, local_id),
 one row per gene even when several terms hit it. Memory is bounded by one annotation's rows.

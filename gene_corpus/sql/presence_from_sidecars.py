@@ -1,5 +1,5 @@
 """
-Build ``presence.sqlite`` from per-annotation sidecars (PLAN-build-tables.md M4).
+Build ``presence.sqlite`` from per-annotation sidecars.
 
 Input: ``manifest.sqlite`` (which annotations, which ordinals) plus the ``#names``
 section of each sidecar. Annotations included: ``status='indexed'`` and

@@ -1,4 +1,4 @@
-"""Load replay against a running API container (see API-LOCKED-DECISIONS.md progress log, container test).
+"""Load replay against a running API container.
 
     python3 tools/load_check_container.py <seconds> <clients>   # API on 127.0.0.1:15000, index from check_api_memory.build_index
 """

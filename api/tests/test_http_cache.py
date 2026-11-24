@@ -1,4 +1,4 @@
-"""ETag/Cache-Control by data version, and the gffread child limit (API-LOCKED-DECISIONS.md, D9)."""
+"""ETag/Cache-Control by data version, and the gffread child limit."""
 from __future__ import annotations
 
 import subprocess

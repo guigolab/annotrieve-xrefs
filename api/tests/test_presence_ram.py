@@ -1,4 +1,4 @@
-"""Search index copy in RAM (API-LOCKED-DECISIONS.md, D1)."""
+"""Search index copy in RAM."""
 from __future__ import annotations
 
 import os

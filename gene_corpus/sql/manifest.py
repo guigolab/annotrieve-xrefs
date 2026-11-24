@@ -1,7 +1,7 @@
 """
 Manifest: the record of which annotations are indexed and under which ordinal.
 
-``manifest.sqlite`` (see ``PLAN-build-tables.md`` section 4). Ordinals are assigned
+``manifest.sqlite``. Ordinals are assigned
 once and never reused. This module does **not** reconcile against Annotrieve
 (decision D6, postponed): it registers the shards found on disk and stores the
 catalogue metadata loaded by ``gene_corpus.sql.catalogue``.

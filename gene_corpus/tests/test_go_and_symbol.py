@@ -78,7 +78,7 @@ def test_alias_path_rejects_organism_style() -> None:
 
 
 def test_symbol_gate_is_strict_on_purpose() -> None:
-    # Known, accepted loss (see PLAN-build-tables.md risks): copy-suffixed symbols are dropped
+    # Known, accepted loss: copy-suffixed symbols are dropped
     # so that locus / transposon IDs do not flood the index.
     for v in ("Polq_1", "selenot_1", "TE_00001670", "LMJFC_010005100", "LOC123", "gene-1"):
         assert not symbol_ok(v), v

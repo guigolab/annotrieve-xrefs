@@ -12,7 +12,7 @@ work area, not on local disk.
         --report-dir /data/annotrieve/gene_corpus/m2_report \
         --sample 200 --largest 5 --workers 4 --seed 1
 
-What it reports (see PLAN-build-tables.md section 8, M2):
+What it reports:
   * time per shard and throughput; peak memory of the writer
   * sidecar bytes (names + genes) and the ratio to shard bytes
   * projected full backfill time and total sidecar size

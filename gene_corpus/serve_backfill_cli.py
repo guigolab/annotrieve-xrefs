@@ -1,5 +1,5 @@
 """
-Sub-commands for the sidecar / manifest side of ``serve_build`` (PLAN-build-tables.md M3).
+Sub-commands for the sidecar / manifest side of ``serve_build``.
 
     python -m gene_corpus.serve_build catalogue --work-dir DIR [--api-base URL | --tsv-file F]
     python -m gene_corpus.serve_build sidecars  --work-dir DIR [--workers 2] [--force] [--sample N]

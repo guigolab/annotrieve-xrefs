@@ -204,7 +204,29 @@ Paginated xref chips for one gene (`limit` / `offset` / `total`). `annotation_id
 
 ### `/downloads` (FASTA, queued)
 
-Ask for up to **1,000** CDS, transcript or protein sequences. The work runs in **one queue for the whole service** (one download at a time, because of the NCBI request budget), so a request never waits on the connection. The body is the one described in `API-DESIGN.md` 4.4 (`query` or `loci`, `action`, `transcript`, `buffer_bp`, `on_error`, ...).
+Ask for up to **1,000** CDS, transcript or protein sequences. The work runs in **one queue for the whole service** (one download at a time, because of the NCBI request budget), so a request never waits on the connection. The body is described below.
+
+**Body** (also accepted by `POST /transcripts`). Exactly one source of genes:
+
+```json
+{"query": {"names": ["tp53"], "include_taxids": [40674], "alias": "suggest"}, "action": "cds", "transcript": "longest"}
+```
+```json
+{"loci": ["2fcd45eb...:1043", {"locus_ref": "a1b2...:77", "transcript_id": "ENST00000269305"}], "action": "protein"}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `query` | same fields as `/loci` |
+| `loci` | `locus_ref` strings (`annotation_id:local_id`), or objects with a pinned `transcript_id` (skips the rule) |
+| `action` | `cds`, `transcript` or `protein` (required) |
+| `transcript` | preset (`longest` default, `longest_spliced`, `longest_cds`, `shortest_cds`, `most_exons`, `fewest_exons`, `all`) or a rule `{"rank_by": ["coding:desc", "cds_len:desc"], "require": ["coding", "tag:basic", "biotype:protein_coding"], "keep": 1}`. Rank keys: `coding`, `cds_len`, `spliced_len`, `span`, `n_exons`, `utr_len`, each `:asc` or `:desc`. Ties go to the lowest transcript id, so a request is reproducible. |
+| `buffer_bp` | extra flank, only with `action=transcript` |
+| `include_exon_coords` | bool |
+| `on_error` | `skip` (default for `query`) or `fail` (default for `loci`); skipped genes are listed in the report |
+| `max_genes` | cap for a `query`; over the cap the request is refused, never silently cut |
+
+`POST /transcripts` (and `GET /genes/{locus_ref}/transcripts` for one gene) lists every candidate transcript with its metrics and the one the rule selects, plus a `loci` list ready to post here.
 
 | Step | Request | Answer |
 | --- | --- | --- |

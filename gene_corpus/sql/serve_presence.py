@@ -10,7 +10,7 @@ Source of truth for this build is the global ``gene_corpus.sqlite`` (tables
     name_dict    casefolded gene name -> name_id, n_sym, n_alias_only
     posting      name_id -> sym / alias posting blobs (see ``postings.py``)
 
-Semantics (see API-DESIGN.md): a *match* is a symbol hit. ``n_alias_only`` is
+Semantics: a *match* is a symbol hit. ``n_alias_only`` is
 the number of annotations where the name occurs only as an alias, which the API
 reports as a suggestion. Postings are filtered to annotations present in
 ``annotation`` (the old /hits path ignored orphan keys the same way).
