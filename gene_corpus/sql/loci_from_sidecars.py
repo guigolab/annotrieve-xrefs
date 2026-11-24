@@ -79,7 +79,9 @@ CREATE TABLE seqid (ord INTEGER NOT NULL, seqid_id INTEGER NOT NULL, seqid TEXT 
                     PRIMARY KEY (ord, seqid_id)) WITHOUT ROWID;
 CREATE TABLE dict_feature_type (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL);
 CREATE TABLE dict_biotype (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL);
-CREATE TABLE name_loci (name_id INTEGER PRIMARY KEY, n_loci INTEGER NOT NULL);
+-- n_loci: all gene rows of the name; n_sym_loci: those where the gene itself has the name as symbol.
+CREATE TABLE name_loci (name_id INTEGER PRIMARY KEY, n_loci INTEGER NOT NULL,
+                        n_sym_loci INTEGER NOT NULL);
 """
 
 
@@ -309,7 +311,7 @@ def build_loci(
         def flush() -> None:
             if locus_batch:
                 out.executemany("INSERT INTO locus VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", locus_batch)
-                out.executemany("INSERT INTO name_loci VALUES (?,?)", nl_batch)
+                out.executemany("INSERT INTO name_loci VALUES (?,?,?)", nl_batch)
                 locus_batch.clear()
                 nl_batch.clear()
 
@@ -338,7 +340,7 @@ def build_loci(
             for (ord_, local_id) in sorted(by_gene):
                 locus_batch.append((n_names, ord_, local_id, *by_gene[(ord_, local_id)]))
             n_loci += len(by_gene)
-            nl_batch.append((n_names, len(by_gene)))
+            nl_batch.append((n_names, len(by_gene), sum(1 for g in by_gene.values() if g[6] == 0)))
             if len(locus_batch) >= INSERT_BATCH:
                 flush()
             if time.time() - last_log > 30:

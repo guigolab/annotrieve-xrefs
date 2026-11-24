@@ -44,6 +44,11 @@ def test_loci_rows_match_genes_and_presence(tmp_path):
     assert all(a[2] == 1 for a in alias)
     assert c.execute("SELECT n_loci FROM name_loci WHERE name_id=?", (names["tp53"],)).fetchone()[0] \
         == 5 + 2
+    assert c.execute("SELECT n_sym_loci FROM name_loci WHERE name_id=?",
+                     (names["tp53"],)).fetchone()[0] == 5
+    for nid, n_all, n_sym in c.execute("SELECT name_id, n_loci, n_sym_loci FROM name_loci").fetchall():
+        assert (n_all, n_sym) == tuple(c.execute(
+            "SELECT COUNT(*), COALESCE(SUM(via=0), 0) FROM locus WHERE name_id=?", (nid,)).fetchone())
     n_rows = c.execute("SELECT COUNT(*) FROM locus").fetchone()[0]
     assert n_rows == int(meta["n_loci"]) == sum(r[0] for r in c.execute("SELECT n_loci FROM name_loci"))
     assert set(c.execute("SELECT name FROM dict_feature_type")) == {("gene",)}

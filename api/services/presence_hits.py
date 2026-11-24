@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -396,6 +397,12 @@ def _count_loci(loci, name_id: int, mode: str, ords: set[int] | None) -> int:
     """Gene rows of one name, optionally restricted to a set of annotation ords (streamed)."""
     sym_only = mode != "include"
     if ords is None:
+        try:  # totals written by the build: no scan of the gene rows
+            n_all, n_sym = loci.execute(
+                "SELECT n_loci, n_sym_loci FROM name_loci WHERE name_id=?", (name_id,)).fetchone()
+            return int(n_sym if sym_only else n_all)
+        except (sqlite3.OperationalError, TypeError):  # index built before n_sym_loci existed
+            pass
         sql = "SELECT COUNT(*) FROM locus WHERE name_id=?" + (" AND via=0" if sym_only else "")
         return int(loci.execute(sql, (name_id,)).fetchone()[0])
     n = 0

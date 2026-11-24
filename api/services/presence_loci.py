@@ -161,11 +161,20 @@ def _term_rows(loci: sqlite3.Connection, term_i: int, name_ids: list[int], min_o
                q: LociQuery) -> Iterator[tuple]:
     """Rows of one term, ordered by (ord, local_id). A gene hit by several of the term's names
     appears once per name; the caller merges them."""
-    ph = ",".join("?" for _ in name_ids)
-    cur = loci.execute(
-        "SELECT ord, local_id, seqid_id, start, end, strand, feature_type_id, biotype_id, via, "
-        f"gene_id, primary_name, name_id FROM locus WHERE name_id IN ({ph}) AND ord>=? "
-        "ORDER BY ord, local_id", (*name_ids, min_ord))
+    # One query per name: the key (name_id, ord, local_id) already stores each name's rows in the
+    # wanted order, so the streams are merged here instead of sorting the union in SQLite (which
+    # builds a sort buffer, and spills it to disk when the union is large).
+    def rows_of(name_id: int):
+        return loci.execute(
+            "SELECT ord, local_id, seqid_id, start, end, strand, feature_type_id, biotype_id, via, "
+            "gene_id, primary_name, name_id FROM locus WHERE name_id=? AND ord>=? "
+            "ORDER BY ord, local_id", (name_id, min_ord))
+
+    if len(name_ids) == 1:
+        cur = rows_of(name_ids[0])
+    else:
+        cur = heapq.merge(*(rows_of(n) for n in sorted(name_ids)),
+                          key=lambda r: (r["ord"], r["local_id"]))
     term = q.terms[term_i]
     typed = term["typed"]
     whole = term["kind"] == "exact" and not term.get("from_prefix")
