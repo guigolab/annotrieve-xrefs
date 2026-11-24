@@ -65,7 +65,7 @@ class Settings:
     ANNOTATIONS_QUERY_BUDGET_S: float = _env_float("ANNOTATIONS_QUERY_BUDGET_S", 20.0)
 
     # Concurrent /hits requests per worker (each can hold tens of MB while it builds its answer).
-    HITS_MAX_INFLIGHT: int = _env_int("HITS_MAX_INFLIGHT", 3)
+    HITS_MAX_INFLIGHT: int = _env_int("HITS_MAX_INFLIGHT", 5)
 
     # On-disk annotation GFFs (same host tree as Annotrieve).
     ANNOTATIONS_DIR: str = os.getenv("ANNOTATIONS_DIR", "")

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from helpers.concurrency import BusyError, hits_slot
@@ -14,7 +14,7 @@ from helpers.pagination import MAX_NAMES_GET, MAX_NAMES_POST
 from helpers.strict import reject_unknown_params
 from services.hits import list_name_hits
 from services.hits_formats import stream_hits_tsv
-from services.presence_hits import list_name_hits_presence
+from services.presence_hits import list_name_hits_presence, render_hits_json
 
 router = APIRouter()
 
@@ -102,15 +102,16 @@ def _run(*, names, terms=None, include_taxids, exclude_taxids, alias, sources, m
         return list_name_hits(corpus_conn(), names, include_taxids=include_taxids,
                               exclude_taxids=exclude_taxids, max_names=max_names)
     reader = presence_reader()
-    result = list_name_hits_presence(
-        reader, names, terms=terms, include_taxids=include_taxids, exclude_taxids=exclude_taxids, alias=alias,
-        max_names=max_names, sources=sources, min_matched=min_matched,
-        shape="records" if fmt == "tsv" else shape)
-    if fmt == "tsv":
-        return StreamingResponse(
-            stream_hits_tsv(result), media_type="text/tab-separated-values; charset=utf-8",
-            headers={"X-Data-Version": str(result["data_version"])})
-    return result
+    args = dict(include_taxids=include_taxids, exclude_taxids=exclude_taxids, alias=alias,
+                max_names=max_names, sources=sources, min_matched=min_matched)
+    if fmt != "tsv":
+        # JSON is joined from pieces written once per data version: little memory, little CPU.
+        return Response(render_hits_json(reader, names, terms=terms, shape=shape, **args),
+                        media_type="application/json")
+    result = list_name_hits_presence(reader, names, terms=terms, shape="records", **args)
+    return StreamingResponse(
+        stream_hits_tsv(result), media_type="text/tab-separated-values; charset=utf-8",
+        headers={"X-Data-Version": str(result["data_version"])})
 
 
 @router.get("/hits")

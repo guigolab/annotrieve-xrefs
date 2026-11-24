@@ -1,7 +1,10 @@
 """``/hits`` and ``/names`` over presence.sqlite, with alias as a suggestion (API-DESIGN 3)."""
 from __future__ import annotations
 
+import json
+import threading
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 
 from helpers.cursor import QueryError
 from helpers.names import (
@@ -11,7 +14,7 @@ from helpers.names import (
 from helpers.name_category import classify_name
 from helpers.pagination import MAX_NAMES_GET, MAX_PREFIX_EXPAND
 from helpers.postings import iter_bits, to_bitset
-from helpers.presence import scope_mask
+from helpers.presence import _shared, scope_mask
 from helpers.source_codes import SOURCE_NAME_TO_CODE, SOURCES_LEGEND
 from services.terms import parse_terms, resolve_terms, term_echo
 from settings import settings
@@ -110,7 +113,101 @@ def _split_by_mode(sym: int, alias: int, mode: str) -> tuple[int, int, int]:
     return sym, extra, extra
 
 
-def list_name_hits_presence(
+class AnnStore:
+    """
+    Everything /hits needs to say about each annotation, loaded once per data version.
+
+    ``rec[ord]`` is ``(annotation_id, taxid, source, release_date, assembly_name, organism_name,
+    assembly_accession, gff_path)``; ``rank[ord]`` is the position of its id in sorted order (the tie
+    breaker of the result order). The JSON text of each annotation is written once, the first time
+    it is needed, in pieces around the parts that change per request (the matched term lists), so a
+    response is mostly string joining.
+    """
+
+    def __init__(self, rows: Iterable) -> None:
+        self.rec: dict[int, tuple] = {}
+        for r in rows:
+            self.rec[int(r["ord"])] = (
+                str(r["annotation_id"]), int(r["taxid"]), int(r["source"]),
+                _optional_text(r["release_date"]), _optional_text(r["assembly_name"]),
+                _optional_text(r["organism_name"]), _optional_text(r["assembly_accession"]),
+                r["gff_path"])
+        order = sorted(self.rec, key=lambda o: self.rec[o][0])
+        self.rank = {o: i for i, o in enumerate(order)}
+        self._compact: dict[int, tuple[str, str, str]] = {}
+        self._records: dict[int, tuple[str, str]] = {}
+
+    def compact_pieces(self, o: int) -> tuple[str, str, str]:
+        pieces = self._compact.get(o)
+        if pieces is None:
+            aid, taxid, source, date, asm, org, acc, _gff = self.rec[o]
+            pieces = (f"[{_j(aid)},{taxid},{source},", f",{_j(date)},{_j(asm)},",
+                      f",{_j(org)},{_j(acc)}]")
+            self._compact[o] = pieces
+        return pieces
+
+    def record_pieces(self, o: int) -> tuple[str, str]:
+        pieces = self._records.get(o)
+        if pieces is None:
+            aid, taxid, source, date, asm, org, acc, gff = self.rec[o]
+            pieces = (
+                f'{{"annotation_id":{_j(aid)},"organism_name":{_j(org)},"taxid":{taxid},'
+                f'"assembly_accession":{_j(acc)},"assembly_name":{_j(asm)},'
+                f'"source":{_j(SOURCE_LABELS.get(source))},"release_date":{_j(date)},"n_matched":',
+                f',"download_url":{_j(download_url(gff))}}}')
+            self._records[o] = pieces
+        return pieces
+
+
+def _j(value) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+_LISTS: dict[tuple, str] = {}
+
+
+def _ints(values: Sequence[int]) -> str:
+    """JSON text of a short list of ints (memoized: most rows share the same few lists)."""
+    key = tuple(values)
+    text = _LISTS.get(key)
+    if text is None:
+        text = "[" + ",".join(map(str, key)) + "]"
+        if len(_LISTS) < 4096:
+            _LISTS[key] = text
+    return text
+
+
+_STORE_LOCK = threading.Lock()
+
+
+def ann_store(reader) -> AnnStore:
+    """The annotation store of the reader's data version (one copy for all threads)."""
+    entry = _shared(reader)
+    store = entry.get("store")
+    if store is None:
+        with _STORE_LOCK:
+            store = entry.get("store")
+            if store is None:
+                store = AnnStore(reader.conn.execute(
+                    "SELECT ord, annotation_id, taxid, organism_name, assembly_accession, "
+                    "assembly_name, source, release_date, gff_path FROM annotation"))
+                entry["store"] = store
+    return store
+
+
+@dataclass
+class _Search:
+    """Result of the term and posting work, before any output format is chosen."""
+    base: dict
+    n_terms: int
+    ann_matched: dict[int, list[int]]
+    ann_alias: dict[int, list[int]]
+    ords: list[int]          # selected annotations in answer order
+    facets: dict
+    store: AnnStore
+
+
+def _search(
     reader,
     names: str | Sequence[str] | None = None,
     *,
@@ -121,10 +218,8 @@ def list_name_hits_presence(
     max_names: int = MAX_NAMES_GET,
     sources=None,
     min_matched=None,
-    shape: str | None = "compact",
-) -> dict:
+) -> _Search:
     mode = parse_alias_mode(alias)
-    shape = parse_shape(shape)
     source_codes = parse_sources(sources)
     raws = parse_terms(names, terms, max_terms=max_names)
     include = parse_taxid_list(include_taxids, field="include_taxids")
@@ -170,12 +265,11 @@ def list_name_hits_presence(
             ann_matched.setdefault(o, []).append(i)
         for o in iter_bits(alias_only):
             ann_alias.setdefault(o, []).append(i)
-    terms = terms_out
 
-    n_terms = len(terms)
+    n_terms = len(terms_out)
     needed = parse_min_matched(min_matched, n_terms)
     base = {
-        "terms": terms, "sources": dict(HITS_SOURCES), "alias": mode,
+        "terms": terms_out, "sources": dict(HITS_SOURCES), "alias": mode,
         "include_taxids": include, "exclude_taxids": exclude,
         "source_filter": [SOURCE_LABELS[c] for c in source_codes], "min_matched": needed,
         "data_version": reader.data_version,
@@ -183,53 +277,119 @@ def list_name_hits_presence(
     ords = sorted(set(ann_matched) | set(ann_alias))
     if needed:
         ords = [o for o in ords if len(ann_matched.get(o, ())) >= needed]
-    scored: list[tuple[int, str, dict]] = []
-    for chunk in _chunks(ords):
-        ph = ",".join("?" for _ in chunk)
-        for r in conn.execute(
-            "SELECT ord, annotation_id, taxid, organism_name, assembly_accession, "
-            f"assembly_name, source, release_date, gff_path FROM annotation WHERE ord IN ({ph})",
-            chunk):
-            o = int(r["ord"])
-            matched = sorted(ann_matched.get(o, []))
-            scored.append((len(matched), str(r["annotation_id"]), {
-                "annotation_id": str(r["annotation_id"]), "taxid": int(r["taxid"]),
-                "source": int(r["source"]), "matched": matched,
-                "release_date": _optional_text(r["release_date"]),
-                "assembly_name": _optional_text(r["assembly_name"]),
-                "alias_only": sorted(ann_alias.get(o, [])),
-                "organism_name": _optional_text(r["organism_name"]),
-                "assembly_accession": _optional_text(r["assembly_accession"]),
-                "gff_path": r["gff_path"],
-            }))
+    store = ann_store(reader)
+    rec = store.rec
+    ords = [o for o in ords if o in rec]
     # Counts per source are taken before the sources filter, so a client can show the alternatives.
     facets = {"source": {SOURCE_LABELS[c]: 0 for c in sorted(SOURCE_LABELS)}}
-    for _n, _aid, rec in scored:
-        label = SOURCE_LABELS.get(rec["source"])
+    for o in ords:
+        label = SOURCE_LABELS.get(rec[o][2])
         if label:
             facets["source"][label] += 1
     if source_codes:
-        scored = [t for t in scored if t[2]["source"] in source_codes]
-    scored.sort(key=lambda t: (-t[0], t[1]))
-    recs = [t[2] for t in scored]
+        ords = [o for o in ords if rec[o][2] in source_codes]
+    rank = store.rank
+    ords.sort(key=lambda o: (-len(ann_matched.get(o, ())), rank[o]))
+    return _Search(base, n_terms, ann_matched, ann_alias, ords, facets, store)
+
+
+def list_name_hits_presence(
+    reader,
+    names: str | Sequence[str] | None = None,
+    *,
+    terms: Sequence | None = None,
+    include_taxids=None,
+    exclude_taxids=None,
+    alias: str | None = "suggest",
+    max_names: int = MAX_NAMES_GET,
+    sources=None,
+    min_matched=None,
+    shape: str | None = "compact",
+) -> dict:
+    """The answer as Python objects (used for TSV and by tests; JSON output uses ``render_hits_json``)."""
+    shape = parse_shape(shape)
+    h = _search(reader, names, terms=terms, include_taxids=include_taxids,
+                exclude_taxids=exclude_taxids, alias=alias, max_names=max_names,
+                sources=sources, min_matched=min_matched)
+    rec = h.store.rec
     if shape == "records":
         results = []
-        for rec in recs:
-            matched_set = set(rec["matched"])
+        for o in h.ords:
+            aid, taxid, source, date, asm, org, acc, gff = rec[o]
+            matched = sorted(h.ann_matched.get(o, []))
+            matched_set = set(matched)
             results.append({
-                "annotation_id": rec["annotation_id"], "organism_name": rec["organism_name"],
-                "taxid": rec["taxid"], "assembly_accession": rec["assembly_accession"],
-                "assembly_name": rec["assembly_name"], "source": SOURCE_LABELS.get(rec["source"]),
-                "release_date": rec["release_date"], "n_matched": len(rec["matched"]),
-                "n_terms": n_terms, "matched": rec["matched"], "alias_only": rec["alias_only"],
-                "missing": [i for i in range(n_terms) if i not in matched_set],
-                "download_url": download_url(rec["gff_path"]),
+                "annotation_id": aid, "organism_name": org, "taxid": taxid,
+                "assembly_accession": acc, "assembly_name": asm,
+                "source": SOURCE_LABELS.get(source), "release_date": date,
+                "n_matched": len(matched), "n_terms": h.n_terms, "matched": matched,
+                "alias_only": sorted(h.ann_alias.get(o, [])),
+                "missing": [i for i in range(h.n_terms) if i not in matched_set],
+                "download_url": download_url(gff),
             })
-        return {**base, "total": len(results), "facets": facets, "results": results}
-    rows = [[rec["annotation_id"], rec["taxid"], rec["source"], rec["matched"],
-             rec["release_date"], rec["assembly_name"], rec["alias_only"], rec["organism_name"],
-             rec["assembly_accession"]] for rec in recs]
-    return {**base, "fields": list(HITS_FIELDS), "total": len(rows), "facets": facets, "rows": rows}
+        return {**h.base, "total": len(results), "facets": h.facets, "results": results}
+    rows = []
+    for o in h.ords:
+        aid, taxid, source, date, asm, org, acc, _gff = rec[o]
+        rows.append([aid, taxid, source, sorted(h.ann_matched.get(o, [])), date, asm,
+                     sorted(h.ann_alias.get(o, [])), org, acc])
+    return {**h.base, "fields": list(HITS_FIELDS), "total": len(rows), "facets": h.facets,
+            "rows": rows}
+
+
+def render_hits_json(
+    reader,
+    names: str | Sequence[str] | None = None,
+    *,
+    terms: Sequence | None = None,
+    include_taxids=None,
+    exclude_taxids=None,
+    alias: str | None = "suggest",
+    max_names: int = MAX_NAMES_GET,
+    sources=None,
+    min_matched=None,
+    shape: str | None = "compact",
+) -> bytes:
+    """Same answer as ``list_name_hits_presence`` as compact JSON bytes, joined from stored pieces."""
+    shape = parse_shape(shape)
+    h = _search(reader, names, terms=terms, include_taxids=include_taxids,
+                exclude_taxids=exclude_taxids, alias=alias, max_names=max_names,
+                sources=sources, min_matched=min_matched)
+    store, am, aa, n_terms = h.store, h.ann_matched, h.ann_alias, h.n_terms
+    total = len(h.ords)
+    head: dict = dict(h.base)
+    if shape == "records":
+        head["total"] = total
+        head["facets"] = h.facets
+        key = "results"
+        parts = []
+        for o in h.ords:
+            first, last = store.record_pieces(o)
+            m = am.get(o, ())
+            m_sorted = m if len(m) < 2 else sorted(m)
+            if len(m_sorted) == n_terms:
+                missing = "[]"
+            else:
+                have = set(m_sorted)
+                missing = _ints([i for i in range(n_terms) if i not in have])
+            a = aa.get(o, ())
+            parts.append(f'{first}{len(m_sorted)},"n_terms":{n_terms},"matched":{_ints(m_sorted)},'
+                         f'"alias_only":{_ints(a if len(a) < 2 else sorted(a))},'
+                         f'"missing":{missing}{last}')
+    else:
+        head["fields"] = list(HITS_FIELDS)
+        head["total"] = total
+        head["facets"] = h.facets
+        key = "rows"
+        parts = []
+        for o in h.ords:
+            first, middle, last = store.compact_pieces(o)
+            m = am.get(o, ())
+            a = aa.get(o, ())
+            parts.append(f"{first}{_ints(m if len(m) < 2 else sorted(m))}{middle}"
+                         f"{_ints(a if len(a) < 2 else sorted(a))}{last}")
+    prefix = json.dumps(head, ensure_ascii=False, separators=(",", ":"))[:-1]
+    return f'{prefix},"{key}":[{",".join(parts)}]}}'.encode("utf-8")
 
 
 def _count_loci(loci, name_id: int, mode: str, ords: set[int] | None) -> int:

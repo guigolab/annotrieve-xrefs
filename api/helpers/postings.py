@@ -12,12 +12,19 @@ TAG_VARINT = 0x01
 TAG_BITSET = 0x02
 
 
+_BYTE_BITS = tuple(tuple(k for k in range(8) if b >> k & 1) for b in range(256))
+
+
 def iter_bits(mask: int) -> Iterator[int]:
-    """Yield the set bit positions of a non-negative int, ascending."""
-    while mask:
-        low = mask & -mask
-        yield low.bit_length() - 1
-        mask ^= low
+    """Yield the set bit positions of a non-negative int, ascending (one pass over its bytes)."""
+    if not mask:
+        return
+    base = 0
+    for byte in mask.to_bytes((mask.bit_length() + 7) // 8, "little"):
+        if byte:
+            for k in _BYTE_BITS[byte]:
+                yield base + k
+        base += 8
 
 
 def to_bitset(blob: bytes | None) -> int:

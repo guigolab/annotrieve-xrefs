@@ -64,7 +64,7 @@ If a bug ever pushes the container to its limit, the container is restarted by D
 | Python baseline | 66 MB | 132 MB |
 | Annotation list in memory (D3) | 7 MB | 14 MB |
 | Presence connections: at most 12 threads, 2 MiB cache each (D3) | 24 MB | 48 MB |
-| `/hits`: 3 concurrent x 63 MB worst case | 189 MB | 378 MB |
+| `/hits`: 5 concurrent x 37 MB worst case (after D4) | 185 MB | 370 MB |
 | `/loci`: 3 concurrent x (16 MiB cache + 10 MB buffers) | 78 MB | 156 MB |
 | `/annotations/*`: 3 concurrent x (16 MiB cache + 10 MB) (D6) | 78 MB | 156 MB |
 | `/sequences`, Python side: 32 MB cache + 1 job x 20 MB | 52 MB | 104 MB |
@@ -80,7 +80,7 @@ Margin at the worst moment: about 200 MB (10%). Typical use is far below this: t
 
 | Setting | Today | Locked value |
 |---|---|---|
-| `HITS_MAX_INFLIGHT` | 16 per worker | 3 per worker (raise after D4) |
+| `HITS_MAX_INFLIGHT` | 16 per worker | 5 per worker (3 before D4; worst request now 37 MB instead of 63 MB) |
 | `LOCI_MAX_INFLIGHT` | 4 per worker | 3 per worker |
 | `/annotations/*` concurrency gate | none | 3 per worker |
 | `SEQUENCES_MAX_INFLIGHT` | 2 per worker | 1 per worker |
@@ -133,7 +133,7 @@ Order matters: D1 first, then the limits that make the budget true.
 - [x] D6 limits and time budgets on `/annotations/*`
 - [x] D8 real health check
 - [x] `tools/check_api_memory.py`: replay worst-case requests, assert peak memory per the table in section 4
-- [ ] D4 pre-built responses (then raise `HITS_MAX_INFLIGHT`)
+- [x] D4 pre-built responses (then raise `HITS_MAX_INFLIGHT`)
 - [ ] D5 count tables, D7 per-name merge, D9 child limits and ETag
 
 ## 8. Progress log
@@ -143,3 +143,4 @@ Order matters: D1 first, then the limits that make the budget true.
 - 2026-11-24: caps done as defaults in `api/settings.py` (HITS 3, LOCI 3, SEQUENCES 1, SQLite cache 2 MiB, `SEQUENCES_MAX_INDEX_MB` 256), SQLite `soft_heap_limit` 64 MiB (presence and legacy corpus reader), gunicorn `--max-requests 5000 --max-requests-jitter 500`. Tests: 349 pass (openapi test excluded, known failure). Still open from the settings table: gate on `/annotations/*` (D6) and the connection pool (D3).
 - 2026-11-24: D3 and D6 done. `/annotations/*` has a gate (3 per worker, 503 + `Retry-After: 1` when full) and a 20 s query budget per shard (`ANNOTATIONS_QUERY_BUDGET_S`, 503 `query_too_slow`). Handler threads cut from 40 to 12 per worker, which caps open connections; the annotation list is now one copy per version instead of one per thread (was up to 40 x 7 MB per worker). Budget table adjusted (connections 24 MB per worker instead of 16). Tests: 353 pass (openapi test excluded).
 - 2026-11-24: D8 done: `/health` now opens the published index, runs a test lookup, checks `loci.sqlite` against the index version, and reports `data_version`, `index` (ram or disk), `lookup`, `loci`; returns 503 `unavailable` with a reason when nothing is published or versions differ. Without `PRESENCE_DIR` it still answers plain `ok`. `tools/check_api_memory.py` written and run: 144 worst-case requests (50 names present in 18,000 annotations, compact, records and TSV) from 24 client threads against the real app: 51 answered, 93 refused with 503 by the gates; peak RSS 203 MB for one worker (client side included) against the 486 MB limit. `/loci` is not part of this replay (needs a loci index); its memory is bounded by the 3-slot gate and 16 MiB cache. Tests: 355 pass (openapi test excluded).
+- 2026-11-24: D4 done. `/hits` JSON is joined from per-annotation text pieces written once per data version (`AnnStore` in `services/presence_hits.py`, built on first use, shared by all threads); the per-request annotation SQL (20 queries of 900 ids) is gone. TSV and the Python-object answer share the same search code. `iter_bits` rewritten to one pass over bytes (it was quadratic in the index size). Measured on the 18,000-annotation synthetic index, warm: 1 name compact 11 ms (was 23), 1 name records 18 ms (was 33), 50 names 73-80 ms (was 677-699 ms); worst request memory: 9.9 / 22.8 / 24.3 / 37.4 MB (was 21 / 44 / 40 / 63). `HITS_MAX_INFLIGHT` raised 3 to 5. Replay check: peak 247 MB for one worker (limit 486). `tests/test_hits_render.py` checks the new JSON equals the plain answer for 14 option combinations. Tests: 370 pass (openapi test excluded).
