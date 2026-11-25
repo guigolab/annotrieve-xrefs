@@ -720,3 +720,53 @@ def test_transcripts_of_one_gene_by_locus_ref(seq_client):
     bad = client.get(f"/genes/{aid}:1/transcripts", params={"action": "dna"})
     assert bad.status_code == 422
     assert client.get("/genes/no-colon/transcripts").json()["detail"]["code"] == "invalid_locus_ref"
+
+
+def test_equal_requests_arriving_together_are_queued_and_charged_once(seq_client, limits):
+    from concurrent.futures import ThreadPoolExecutor
+    from services.seq_runner import stop_runner
+    client, _ = seq_client
+    stop_runner()
+    limits.DOWNLOADS_PER_DAY = 5
+    limits.SEQUENCES_IP_MAX_ACTIVE = 0
+    with ThreadPoolExecutor(8) as pool:
+        replies = list(pool.map(lambda _: client.post("/downloads", json=TP53), range(8)))
+    assert {r.status_code for r in replies} == {202}
+    assert len({r.json()["id"] for r in replies}) == 1
+    assert client.get("/downloads/quota").json()["used"] == 1
+
+
+def test_status_writers_do_not_share_a_temp_file(seq_client):
+    """The runner's progress, a fetch's ``downloaded_at`` and a new request all write status.json."""
+    import json
+    from concurrent.futures import ThreadPoolExecutor
+    from services.seq_results import read_status, result_dir, write_status
+    rid = "0" * 20
+    write_status(rid, state="done")
+    try:
+        def hammer(k):
+            for i in range(60):
+                write_status(rid, **{f"w{k}": i})
+        with ThreadPoolExecutor(8) as pool:
+            list(pool.map(hammer, range(8)))                 # any exception fails the test
+        json.loads((result_dir(rid) / "status.json").read_text())
+        assert read_status(rid)["state"] == "done"
+        assert not list(result_dir(rid).glob("*.tmp"))
+    finally:
+        import shutil
+        shutil.rmtree(result_dir(rid), ignore_errors=True)
+
+
+def test_gff_reading_routes_refuse_at_once_when_all_slots_are_taken(seq_client, monkeypatch):
+    import threading
+    from helpers import concurrency
+    client, _ = seq_client
+    taken = threading.Semaphore(1)
+    taken.acquire()
+    monkeypatch.setattr(concurrency, "_PLAN_SEMAPHORE", taken)
+    for r in (client.post("/transcripts", json=TP53),
+              client.post("/downloads", json={**TP53, "transcript": "all"})):
+        assert r.status_code == 503 and r.json()["detail"]["code"] == "plan_busy", r.text
+        assert r.headers["retry-after"] == "2"
+    taken.release()
+    assert client.post("/transcripts", json=TP53).status_code == 200

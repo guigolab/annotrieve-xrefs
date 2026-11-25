@@ -17,6 +17,21 @@ for path in (str(API_ROOT), str(REPO_ROOT)):
         sys.path.insert(0, path)
 
 
+@pytest.fixture(autouse=True)
+def _no_address_space_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the corpus builder from capping this process.
+
+    ``serve_backfill_cli`` limits the address space (768 MiB) of the process that runs one worker
+    inline; the cap stays for the rest of the session and a capped process cannot start more than a
+    handful of threads, which concurrency tests need.
+    """
+    try:
+        from gene_corpus import serve_backfill_cli
+    except ImportError:
+        return
+    monkeypatch.setattr(serve_backfill_cli, "_init_worker", lambda max_mib: None)
+
+
 def _init_shard(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))

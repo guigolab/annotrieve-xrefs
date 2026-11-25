@@ -99,8 +99,10 @@ def run_download(rid: str) -> None:
         _drop_files(d)
     except Exception as exc:                                        # noqa: BLE001
         logger.exception("download %s failed", rid)
+        # The cause stays in the log: the status is shown to whoever holds the download id.
         write_status(rid, state="failed", error={
-            "code": "download_failed", "message": str(exc) or exc.__class__.__name__, "status": 500})
+            "code": "download_failed", "status": 500,
+            "message": "the download failed unexpectedly; ask for it again, or narrow the request"})
         _drop_files(d)
 
 

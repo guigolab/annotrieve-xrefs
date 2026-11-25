@@ -8,6 +8,7 @@ download that exists instead of making a second one.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -16,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from helpers.client_ip import client_ip, owner_key
+from helpers.concurrency import plan_slot
 from helpers.cursor import QueryError
 from helpers.errors import error_detail, http_for_query_error
 from services.seq_export import count_sequences, run_export
@@ -24,6 +26,7 @@ from services.seq_resolve import GeneResolver, SeqError
 from services.seq_results import (
     entries,
     Refused,
+    admission_lock,
     admit,
     enqueue,
     fasta_path,
@@ -61,7 +64,8 @@ POST_RESPONSES = {
     429: {**_ERR, "description": "`too_many_active_downloads` or `daily_quota_exceeded` for this "
                                  "client IP (see `Retry-After` and GET /downloads/quota)"},
     503: {**_ERR, "description": "`downloads_queue_full`, `downloads_capacity`, "
-                                 "`annotations_unavailable`, `locus_ref_index_unavailable`"},
+                                 "`annotations_unavailable`, `locus_ref_index_unavailable`, "
+                                 "`plan_busy` (too many GFF-reading requests at once; see Retry-After)"},
 }
 
 
@@ -261,7 +265,8 @@ def create_download(body: DownloadBody, request: Request,
             # One gene can give several sequences: count them (local GFF reads, no network) and
             # refuse before queueing.
             limit = int(settings.SEQUENCES_MAX_SEQUENCES)
-            n_seq = count_sequences(req, src.items(), limit)
+            with plan_slot():
+                n_seq = count_sequences(req, src.items(), limit)
             if n_seq > limit:
                 raise HTTPException(status_code=413, detail=error_detail(
                     "too_many_sequences", f"the request gives more than {limit} sequences; narrow it "
@@ -269,14 +274,22 @@ def create_download(body: DownloadBody, request: Request,
                     max_sequences=limit))
 
         owner = owner_key(client_ip(request))
-        try:
-            admit(owner)
-        except Refused as exc:
-            raise HTTPException(
-                status_code=exc.status, detail=error_detail(exc.code, str(exc), **exc.extra),
-                headers={"Retry-After": str(exc.retry_after)}) from exc
-        stored = enqueue(rid, body.model_dump(exclude_none=True) | {"action": req.action.value},
-                         owner=owner, total=counted.n_genes, data_version=src.data_version)
+        with admission_lock():
+            # Look again now that no other request can change the state: an equal request that
+            # arrived while this one was counting must not be queued twice or charged twice.
+            status = read_status(rid)
+            if status and status["state"] == "done" and _stored_file(rid):
+                return _reply(request, rid, status, 200)
+            if status and status["state"] in ("queued", "running"):
+                return _reply(request, rid, status, 202)
+            try:
+                admit(owner)
+            except Refused as exc:
+                raise HTTPException(
+                    status_code=exc.status, detail=error_detail(exc.code, str(exc), **exc.extra),
+                    headers={"Retry-After": str(exc.retry_after)}) from exc
+            stored = enqueue(rid, body.model_dump(exclude_none=True) | {"action": req.action.value},
+                             owner=owner, total=counted.n_genes, data_version=src.data_version)
         return _reply(request, rid, stored, 202)
     finally:
         src.close()
@@ -328,7 +341,8 @@ def list_transcripts(body: DownloadBody):
     req = _parse(body)
     src = _open_source(req)
     try:
-        return _build_plan(req, src, cap=min(req.max_genes, int(settings.SEQUENCES_PLAN_MAX_GENES)))
+        with plan_slot():
+            return _build_plan(req, src, cap=min(req.max_genes, int(settings.SEQUENCES_PLAN_MAX_GENES)))
     finally:
         src.close()
 
@@ -352,7 +366,8 @@ def get_gene_transcripts(
         raise http_for_query_error(exc) from exc
     src = _open_source(req)
     try:
-        gene = _build_plan(req, src, cap=1)["genes"][0]
+        with plan_slot():
+            gene = _build_plan(req, src, cap=1)["genes"][0]
     finally:
         src.close()
     if gene["status"] == "skipped" and gene["reason"] in ("annotation_not_found", "locus_not_found"):
@@ -411,9 +426,9 @@ def _ready(rid: str) -> dict:
     return st
 
 
-def _stream(rid: str) -> Iterator[bytes]:
-    """The file in blocks; once all of it has been sent the short keep-time starts."""
-    with open(fasta_path(rid), "rb") as fh:
+def _stream(fh, rid: str) -> Iterator[bytes]:
+    """The open file in blocks; once all of it has been sent the short keep-time starts."""
+    with fh:
         while block := fh.read(1024 * 1024):
             yield block
     mark_downloaded(rid)
@@ -428,9 +443,14 @@ def _stream(rid: str) -> Iterator[bytes]:
                        404: _ERR, 409: {**_ERR, "description": "`download_not_ready`"}})
 def get_download_fasta(download_id: str):
     st = _ready(download_id)
-    size = fasta_path(download_id).stat().st_size
+    try:
+        fh = open(fasta_path(download_id), "rb")        # opened now: a purge cannot unlink it half-way
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=error_detail(
+            "download_not_found", "this download has been removed; ask for it again")) from None
+    size = os.fstat(fh.fileno()).st_size
     return StreamingResponse(
-        _stream(download_id), media_type="application/gzip",
+        _stream(fh, download_id), media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="annotrieve-{download_id[:8]}.fa.gz"',
                  "Content-Length": str(size), "Cache-Control": "no-store",
                  "X-Sequence-Count": str(st.get("n_sequences", 0)),
@@ -444,7 +464,11 @@ def get_download_fasta(download_id: str):
                 "schema": {"type": "string"}}}}, 404: _ERR, 409: _ERR})
 def get_download_report(download_id: str):
     _ready(download_id)
-    return FileResponse(result_dir(download_id) / "manifest.tsv",
+    manifest = result_dir(download_id) / "manifest.tsv"
+    if not manifest.is_file():
+        raise HTTPException(status_code=404, detail=error_detail(
+            "download_not_found", "this download has been removed; ask for it again"))
+    return FileResponse(manifest,
                         media_type="text/tab-separated-values",
                         filename=f"annotrieve-{download_id[:8]}-report.tsv",
                         headers={"Cache-Control": "no-store"})

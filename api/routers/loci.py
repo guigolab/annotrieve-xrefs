@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
-from helpers.concurrency import BusyError, acquire_loci_slot, release_loci_slot
+from helpers.concurrency import BusyError, GuardedBody, acquire_loci_slot, release_loci_slot
 from helpers.cursor import QueryError
 from helpers.errors import error_detail, http_error, http_for_query_error
 from helpers.pagination import MAX_NAMES_GET, MAX_NAMES_POST, clamp_limit
@@ -116,16 +116,15 @@ def _run(names, *, terms=None, include_taxids, exclude_taxids, alias, annotation
         writer = {"tsv": stream_tsv, "ndjson": stream_ndjson}[fmt]
         rows_iter = iter_loci(pres, loci, q, None, info)
 
-        def body():
-            try:
-                yield from writer(q, rows_iter, cap)
-            finally:
-                pres.close()
-                loci.close()
-                release_loci_slot()
+        def cleanup() -> None:
+            pres.close()
+            loci.close()
+            release_loci_slot()
+
+        body = GuardedBody(writer(q, rows_iter, cap), cleanup)
 
         handed_off = True
-        return StreamingResponse(body(), media_type=_MEDIA[fmt],
+        return StreamingResponse(body, media_type=_MEDIA[fmt],
                                  headers={"X-Accel-Buffering": "no", "X-Data-Version": data_version})
     finally:
         if not handed_off:

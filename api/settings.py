@@ -91,6 +91,8 @@ class Settings:
     SEQUENCES_MAX_GENES: int = _env_int("SEQUENCES_MAX_GENES", 1000)
     SEQUENCES_MAX_SEQUENCES: int = _env_int("SEQUENCES_MAX_SEQUENCES", 1000)
     SEQUENCES_PLAN_MAX_GENES: int = _env_int("SEQUENCES_PLAN_MAX_GENES", 200)
+    # Concurrent GFF-reading requests (/transcripts, the sequence count of POST /downloads) per worker.
+    SEQUENCES_PLAN_MAX_INFLIGHT: int = _env_int("SEQUENCES_PLAN_MAX_INFLIGHT", 3)
     SEQUENCES_BATCH_GENES: int = _env_int("SEQUENCES_BATCH_GENES", 25)
     # Downloads (requests, status, gzipped FASTA, quota ledger) live here, shared by all workers.
     SEQUENCES_RESULTS_DIR: str = os.getenv("SEQUENCES_RESULTS_DIR", "")

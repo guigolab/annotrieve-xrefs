@@ -1143,7 +1143,7 @@
             "description": "`too_many_active_downloads` or `daily_quota_exceeded` for this client IP (see `Retry-After` and GET /downloads/quota)"
           },
           "503": {
-            "description": "`downloads_queue_full`, `downloads_capacity`, `annotations_unavailable`, `locus_ref_index_unavailable`"
+            "description": "`downloads_queue_full`, `downloads_capacity`, `annotations_unavailable`, `locus_ref_index_unavailable`, `plan_busy` (too many GFF-reading requests at once; see Retry-After)"
           }
         },
         "summary": "Ask for a FASTA download",

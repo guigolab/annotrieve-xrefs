@@ -11,12 +11,16 @@ How long files stay: ``DOWNLOAD_KEEP_AFTER_FETCH_S`` after the first complete do
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
 import shutil
 import tempfile
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from settings import settings
@@ -47,15 +51,23 @@ def result_dir(result_id: str) -> Path:
     return results_root() / result_id
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    """Write ``path`` through a temp file of its own (two writers never share one) and rename it."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_text(text)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def write_status(result_id: str, **fields) -> dict:
     d = result_dir(result_id)
     d.mkdir(parents=True, exist_ok=True)
     cur = read_status(result_id, _raw=True) or {}
     cur.update(fields)
     cur["updated"] = time.time()
-    tmp = d / "status.json.tmp"
-    tmp.write_text(json.dumps(cur))
-    os.replace(tmp, d / "status.json")
+    _write_atomic(d / "status.json", json.dumps(cur))
     return cur
 
 
@@ -118,10 +130,7 @@ def quota_status(owner: str) -> dict:
 def _quota_take(owner: str) -> None:
     now = time.time()
     times = _quota_times(owner, now) + [now]
-    f = _quota_file(owner)
-    tmp = f.with_suffix(".tmp")
-    tmp.write_text(json.dumps(times))
-    os.replace(tmp, f)
+    _write_atomic(_quota_file(owner), json.dumps(times))
 
 
 # --- clean-up, capacity and admission ----------------------------------------------------------------
@@ -183,11 +192,31 @@ def queue_position(result_id: str) -> int | None:
     return ahead + 1
 
 
+@contextmanager
+def admission_lock() -> Iterator[None]:
+    """One admission at a time for the whole container (every worker).
+
+    The per-client limits and the queue size are counted from the files on disk, so two requests
+    that are checked at the same moment would both pass. The lock file is on the container's own
+    disk, next to the runner's lock (``flock`` is unreliable on the network drive).
+    """
+    raw = (settings.DOWNLOADS_LOCK_FILE or "").strip()
+    base = Path(raw) if raw else Path(tempfile.gettempdir()) / "annotrieve-downloads.lock"
+    path = base.with_name(base.name + ".admit")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def admit(owner: str) -> None:
     """Check the client's limits and the capacity before a new download; raises :class:`Refused`.
 
-    A download that is admitted uses one place of the client's daily quota. The check is soft: two
-    simultaneous requests can both pass it.
+    A download that is admitted uses one place of the client's daily quota. Call it under
+    :func:`admission_lock`, together with :func:`enqueue`, so the counts it reads stay true.
     """
     purge_expired()
     ents = entries()
@@ -226,9 +255,7 @@ def enqueue(result_id: str, body: dict, *, owner: str, total: int, data_version:
     """Store the request and put the download at the end of the queue."""
     d = result_dir(result_id)
     d.mkdir(parents=True, exist_ok=True)
-    tmp = d / "request.json.tmp"
-    tmp.write_text(json.dumps(body))
-    os.replace(tmp, d / "request.json")
+    _write_atomic(d / "request.json", json.dumps(body))
     return write_status(result_id, state="queued", seq=time.time_ns(), created=time.time(),
                         owner=owner, done=0, total=total, data_version=data_version, error=None,
                         downloaded_at=None)
