@@ -23,6 +23,30 @@ def test_etag_cache_control_and_304(presence_client):  # noqa: F811
     assert other.status_code == 200
 
 
+def test_revalidation_notices_a_newly_published_version(presence_client, monkeypatch):  # noqa: F811
+    """A worker that only gets ``If-None-Match`` requests must not keep answering 304 forever."""
+    import os
+    import shutil
+    import sqlite3
+
+    client, root = presence_client
+    monkeypatch.setattr(settings_mod.settings, "PRESENCE_RECHECK_S", 3600.0)
+    first = client.get("/hits", params={"names": "tp53"})
+    assert first.headers["etag"] == 'W/"abc123"'
+    (root / "v2").mkdir()
+    shutil.copy(root / "v1" / "presence.sqlite", root / "v2" / "presence.sqlite")
+    conn = sqlite3.connect(root / "v2" / "presence.sqlite")
+    conn.execute("UPDATE meta SET value='def456' WHERE key='data_version'")
+    conn.commit()
+    conn.close()
+    (root / "next").symlink_to("v2")
+    os.replace(root / "next", root / "current")            # atomic switch, as the publisher does
+    presence_mod._VERSION_CHECKED = 0.0                    # the periodic look is due
+    again = client.get("/hits", params={"names": "tp53"}, headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 200
+    assert again.headers["etag"] == 'W/"def456"' and again.json()["data_version"] == "def456"
+
+
 def test_no_cache_headers_on_errors_health_and_other_methods(presence_client):  # noqa: F811
     client, _ = presence_client
     bad = client.get("/hits", params={"names": "tp53", "shape": "nope"})

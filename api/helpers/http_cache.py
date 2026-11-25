@@ -1,7 +1,9 @@
 """ETag and Cache-Control for answers that depend only on the published data version."""
 from __future__ import annotations
 
-from helpers.presence import current_data_version
+from starlette.concurrency import run_in_threadpool
+
+from helpers.presence import current_data_version, data_version_check_due, refresh_data_version
 from settings import settings
 
 # Routes whose answer is a pure function of the URL and the data version.
@@ -26,6 +28,9 @@ class DataVersionCache:
         if (scope["type"] != "http" or scope["method"] not in ("GET", "HEAD")
                 or not scope["path"].startswith(_PREFIXES)):
             return await self.app(scope, receive, send)
+        if data_version_check_due():
+            # File access (network drive): off the event loop, and only every few seconds.
+            await run_in_threadpool(refresh_data_version)
         version = current_data_version()
         if not version:
             return await self.app(scope, receive, send)

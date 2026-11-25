@@ -41,6 +41,53 @@ def current_data_version() -> str | None:
     return _LAST_VERSION
 
 
+VERSION_REFRESH_S = 2.0
+_VERSION_CHECKED = 0.0                      # monotonic time of the last look at the published link
+_VERSION_LOCK = threading.Lock()
+_PEEKED: dict[Path, str] = {}               # version directory -> its data_version (immutable files)
+
+
+def data_version_check_due() -> bool:
+    return time.monotonic() - _VERSION_CHECKED >= VERSION_REFRESH_S
+
+
+def refresh_data_version() -> None:
+    """Look at where ``current`` points now and update the version ``current_data_version`` reports.
+
+    Without this a worker that only gets revalidation requests (``If-None-Match``) never opens the
+    index, so it keeps answering ``304`` for a version that is no longer published. Does file
+    access: call it from a thread, not from the event loop. At most one caller works at a time.
+    """
+    global _LAST_VERSION, _VERSION_CHECKED
+    if not _VERSION_LOCK.acquire(blocking=False):
+        return
+    try:
+        _VERSION_CHECKED = time.monotonic()
+        db = presence_db_path()
+        if db is None:
+            return
+        try:
+            resolved = db.resolve(strict=True)
+            version = _PEEKED.get(resolved)
+            if version is None:
+                conn = sqlite3.connect(f"file:{resolved}?mode=ro&immutable=1", uri=True)
+                try:
+                    row = conn.execute("SELECT value FROM meta WHERE key='data_version'").fetchone()
+                finally:
+                    conn.close()
+                version = str(row[0]) if row else ""
+                if len(_PEEKED) >= 4:
+                    _PEEKED.clear()
+                _PEEKED[resolved] = version
+        except (OSError, sqlite3.Error) as exc:   # not published (yet) or being switched
+            _LOG.debug("data version refresh failed: %s", exc)
+            return
+        if version:
+            _LAST_VERSION = version
+    finally:
+        _VERSION_LOCK.release()
+
+
 def presence_enabled() -> bool:
     return presence_dir() is not None
 
@@ -150,8 +197,9 @@ def presence_reader() -> _Reader:
     """This thread's reader; reopens when ``current`` points at a new version."""
     state: _Reader | None = getattr(_LOCAL, "reader", None)
     recheck = settings.PRESENCE_RECHECK_S
-    if state is not None and recheck > 0 and time.monotonic() - state.checked < recheck:
-        return state  # no network-drive calls between checks
+    if (state is not None and recheck > 0 and time.monotonic() - state.checked < recheck
+            and state.data_version == (_LAST_VERSION or state.data_version)):
+        return state  # no network-drive calls between checks (unless a newer version is known)
     db = presence_db_path()
     if db is None or not db.is_file():
         raise http_error(503, "presence_unavailable", "Presence index is not published")
@@ -218,16 +266,18 @@ def open_request_connections() -> tuple[sqlite3.Connection, sqlite3.Connection, 
         conn.execute("PRAGMA query_only=ON")
         return conn
 
-    pres = connect(reader.db_path or reader.path)
-    loci = connect(loci_path)
+    pres = loci = None
     try:
+        pres = connect(reader.db_path or reader.path)
+        loci = connect(loci_path)
         v = loci.execute("SELECT value FROM meta WHERE key='data_version'").fetchone()
         if v is None or v[0] != reader.data_version:
             raise http_error(503, "loci_version_mismatch",
                              "loci.sqlite was built for a different presence version")
     except Exception:
-        pres.close()
-        loci.close()
+        for conn in (pres, loci):
+            if conn is not None:
+                conn.close()
         raise
     return pres, loci, reader.data_version
 
@@ -289,11 +339,14 @@ def open_ref_connection() -> sqlite3.Connection:
         raise http_error(503, "locus_ref_index_unavailable",
                          "locus_ref lookup index is not published (run `serve_build loci-ref`)")
     conn = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only=ON")
-    row = conn.execute("SELECT value FROM meta WHERE key='data_version'").fetchone()
-    if row is None or row[0] != reader.data_version:
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only=ON")
+        row = conn.execute("SELECT value FROM meta WHERE key='data_version'").fetchone()
+        if row is None or row[0] != reader.data_version:
+            raise http_error(503, "loci_version_mismatch",
+                             "loci_ref.sqlite was built for a different presence version")
+    except Exception:
         conn.close()
-        raise http_error(503, "loci_version_mismatch",
-                         "loci_ref.sqlite was built for a different presence version")
+        raise
     return conn
