@@ -290,6 +290,8 @@ def test_a_download_is_queued_polled_and_fetched(seq_client):
     f = client.get(done["links"]["fasta"].replace("http://testserver", ""))
     assert f.status_code == 200 and f.headers["x-sequence-count"] == "5"
     assert f.content[:2] == b"\x1f\x8b" and len(headers(gzip.decompress(f.content).decode())) == 5
+    # The gzip header names no file and carries no time: `gunzip -N` must not produce "result.fa.gz.part".
+    assert f.content[3] & 0x08 == 0 and f.content[4:8] == b"\x00\x00\x00\x00"
     assert client.get("/downloads/" + "0" * 20).status_code == 404
     assert client.get("/downloads/not-an-id").status_code == 404
     stored = client.post("/downloads", json=TP53)                   # finished: 200, no new work

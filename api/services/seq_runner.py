@@ -79,7 +79,10 @@ def _gzip_fasta(d: Path) -> int:
     """result.fa -> result.fa.gz in blocks (memory flat); returns the compressed size."""
     src, dst = d / "result.fa", d / "result.fa.gz"
     tmp = d / "result.fa.gz.part"
-    with open(src, "rb") as fin, gzip.open(tmp, "wb", compresslevel=6) as fout:
+    # No name and no time in the gzip header: `gunzip -N` and desktop unzip tools would otherwise
+    # name the output after the temp file ("result.fa.gz.part") instead of after the download.
+    with open(src, "rb") as fin, open(tmp, "wb") as raw, \
+            gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=6, mtime=0) as fout:
         shutil.copyfileobj(fin, fout, 1024 * 1024)
     os.replace(tmp, dst)
     src.unlink()
