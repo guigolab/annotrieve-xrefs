@@ -7,7 +7,7 @@ from helpers.presence import current_data_version, data_version_check_due, refre
 from settings import settings
 
 # Routes whose answer is a pure function of the URL and the data version.
-_PREFIXES = ("/hits", "/names", "/loci", "/annotations", "/genes")
+_PREFIXES = ("/hits", "/names", "/loci", "/distributions", "/annotations", "/genes")
 
 
 class DataVersionCache:

@@ -1,6 +1,172 @@
 {
   "components": {
     "schemas": {
+      "DistributionColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "taxids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taxids"
+          }
+        },
+        "title": "DistributionColumn",
+        "type": "object"
+      },
+      "DistributionsBody": {
+        "additionalProperties": false,
+        "description": "Names (or prefix terms), the clades to group by, and the usual filters.",
+        "properties": {
+          "alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "suggest",
+            "title": "Alias"
+          },
+          "annotation_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annotation Ids"
+          },
+          "columns": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DistributionColumn"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Columns"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "exclude_taxids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclude Taxids"
+          },
+          "include_taxids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Taxids"
+          },
+          "names": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Names"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sources"
+          },
+          "terms": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terms"
+          }
+        },
+        "title": "DistributionsBody",
+        "type": "object"
+      },
       "DownloadBody": {
         "additionalProperties": false,
         "description": "Exactly one of ``query``, ``loci`` or ``items`` selects the genes.",
@@ -636,7 +802,7 @@
     }
   },
   "info": {
-    "description": "From gene names to annotations, gene coordinates and sequences.\n\n- **search**: `/names` (prefix discovery), `/hits` (which annotations contain these exact gene names).\n- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv or ndjson).\n- **downloads**: `/downloads` (queue a CDS, transcript or protein FASTA for up to 1,000 genes, poll it, fetch the gzipped file; `?dry_run=true` estimates), `/downloads/quota`, and `/transcripts` and `/genes/{locus_ref}/transcripts` (which transcripts a request would pick).\n- **annotations**: per-annotation genes and cross-references (legacy shard-backed).",
+    "description": "From gene names to annotations, gene coordinates and sequences.\n\n- **search**: `/names` (prefix discovery), `/hits` (which annotations contain these exact gene names).\n- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv or ndjson).\n- **distributions**: `POST /distributions` (gene length per clade) and `GET /distributions/{taxid}/points` (one dot per annotation).\n- **downloads**: `/downloads` (queue a CDS, transcript or protein FASTA for up to 1,000 genes, poll it, fetch the gzipped file; `?dry_run=true` estimates), `/downloads/quota`, and `/transcripts` and `/genes/{locus_ref}/transcripts` (which transcripts a request would pick).\n- **annotations**: per-annotation genes and cross-references (legacy shard-backed).",
     "title": "Annotrieve xrefs",
     "version": "1.1.0"
   },
@@ -1087,6 +1253,149 @@
         "summary": "Get Annotation Namespace Accessions",
         "tags": [
           "annotations"
+        ]
+      }
+    },
+    "/distributions": {
+      "post": {
+        "description": "Length of each gene (end - start + 1) across annotations, grouped into the clades you give.\n\n``columns`` is a list of ``{id, taxids}``; each column holds the annotations under any of its\ntaxids (no columns: one column with everything). The answer is a compact table like `/hits`:\n``fields`` names the positions of each row, and a row is one (name, column) cell with the\nnumber of annotations that have the gene, how many of them have several copies, the exact\nmean / min / quartiles / max of the per-annotation length, and a 40-bucket histogram over the\nfixed log scale in ``bins``. Cells without the gene are left out; ``columns[].n_annotations``\nis the denominator.\n\nWhen an annotation has several matching genes, its value is their mean length and it is\ncounted in ``n_multi_copy``. Genes that only carry the name as an alias are used only when\nthe annotation has no symbol gene, and never with ``alias=off``.",
+        "operationId": "post_distributions_distributions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DistributionsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Gene length per annotation, summarised by clade",
+        "tags": [
+          "distributions"
+        ]
+      }
+    },
+    "/distributions/{taxid}/points": {
+      "get": {
+        "description": "One row per annotation under ``taxid`` that has the gene: ``[annotation_id, taxid, length,\ncopies, via]``. ``length`` is the mean when there are several copies (``copies`` > 1); ``via`` is\n0 for symbol genes and 1 when only an alias matched. Same envelope as ``POST /distributions``,\nso a client can draw a clade's cell and its dots from the same fields. Organism, assembly and\nsource are not repeated: join them on ``annotation_id`` from ``/hits``.",
+        "operationId": "get_distribution_points_distributions__taxid__points_get",
+        "parameters": [
+          {
+            "description": "NCBI taxid of the clade",
+            "in": "path",
+            "name": "taxid",
+            "required": true,
+            "schema": {
+              "description": "NCBI taxid of the clade",
+              "minimum": 1,
+              "title": "Taxid",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "One exact gene name",
+            "in": "query",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "One exact gene name",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "off | suggest | include; off drops alias-only genes",
+            "in": "query",
+            "name": "alias",
+            "required": false,
+            "schema": {
+              "default": "suggest",
+              "description": "off | suggest | include; off drops alias-only genes",
+              "title": "Alias",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated Ensembl, GenBank, RefSeq",
+            "in": "query",
+            "name": "sources",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated Ensembl, GenBank, RefSeq",
+              "title": "Sources"
+            }
+          },
+          {
+            "description": "Restrict to these annotation ids",
+            "in": "query",
+            "name": "annotation_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict to these annotation ids",
+              "title": "Annotation Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Gene length of every annotation of one clade",
+        "tags": [
+          "distributions"
         ]
       }
     },
@@ -2211,6 +2520,10 @@
     {
       "description": "Gene coordinates.",
       "name": "loci"
+    },
+    {
+      "description": "Gene length per annotation, by clade.",
+      "name": "distributions"
     },
     {
       "description": "Queued FASTA downloads, quota and transcript plans.",

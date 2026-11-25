@@ -90,6 +90,8 @@ def create_app() -> FastAPI:
             "these exact gene names).\n"
             "- **loci**: `/loci` (where those genes are: one row per gene, as json, tsv "
             "or ndjson).\n"
+            "- **distributions**: `POST /distributions` (gene length per clade) and "
+            "`GET /distributions/{taxid}/points` (one dot per annotation).\n"
             "- **downloads**: `/downloads` (queue a CDS, transcript or protein FASTA for up to "
             "1,000 genes, poll it, fetch the gzipped file; `?dry_run=true` estimates), "
             "`/downloads/quota`, and `/transcripts` and `/genes/{locus_ref}/transcripts` (which transcripts a request would pick).\n"
@@ -99,6 +101,7 @@ def create_app() -> FastAPI:
             {"name": "system", "description": "Liveness."},
             {"name": "search", "description": "Gene-name discovery and annotation presence."},
             {"name": "loci", "description": "Gene coordinates."},
+            {"name": "distributions", "description": "Gene length per annotation, by clade."},
             {"name": "downloads", "description": "Queued FASTA downloads, quota and transcript plans."},
             {"name": "annotations", "description": "Per-annotation genes and xrefs (legacy)."},
         ],

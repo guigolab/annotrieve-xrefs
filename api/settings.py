@@ -36,6 +36,8 @@ class Settings:
     ANNOTRIEVE_FILES_BASE: str = os.getenv(
         "ANNOTRIEVE_FILES_BASE", "https://genome.crg.es/annotrieve/files")
     LOCI_MAX_ROWS: int = _env_int("LOCI_MAX_ROWS", 2_000_000)
+    # /distributions: refuse a request that would read more gene rows than this (0 = no limit).
+    DISTRIBUTIONS_MAX_LOCI: int = _env_int("DISTRIBUTIONS_MAX_LOCI", 5_000_000)
     LOCI_CACHE_KIB: int = _env_int("LOCI_CACHE_KIB", 16384)
     LOCI_MAX_INFLIGHT: int = _env_int("LOCI_MAX_INFLIGHT", 3)
 

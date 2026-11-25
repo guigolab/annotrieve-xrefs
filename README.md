@@ -204,6 +204,41 @@ One gene card (coordinates, name, prose). No `annotation_id` field (path-scoped)
 
 Paginated xref chips for one gene (`limit` / `offset` / `total`). `annotation_id` and `local_id` are path-only (not repeated in the JSON).
 
+### `POST /distributions` and `GET /distributions/{taxid}/points` (gene length by clade)
+
+How long a gene is in each annotation, grouped by clade. Length is the gene span, `end - start + 1`.
+An annotation counts once per name: if several genes match (copies), its value is their mean length
+and `copies` tells how many. Genes that only carry the name as an alias are used only when the
+annotation has no symbol gene, and never with `alias=off`. Both routes answer in the compact-table
+form of `/hits` (`fields` names the position of each value in a row).
+
+**`POST /distributions`** summarises. Body: `names` (or `terms`; `tp5*` prefix terms expand as in
+`/loci`), `columns` (up to 50 of `{id, taxids: [...]}`, each column holds the annotations under any
+of its taxids, columns may overlap, none means one column `all`), and the usual `include_taxids`,
+`exclude_taxids`, `alias`, `annotation_ids`, `sources`. `dry_run: true` returns the counts only.
+
+```json
+{"names": ["brca1"], "columns": [{"id": "mammals", "taxids": [40674]}, {"id": "birds", "taxids": [8782]}]}
+```
+
+The reply has `names` (what the terms expanded to), `columns` (with `n_annotations`, the denominator),
+`bins` (the fixed log-size buckets: 40 from 100 bp to 10 Mb), and `rows`. A row is one cell:
+`[name, column, n_with_gene, n_multi_copy, mean, min, p25, median, p75, max, hist]`, where `name` and
+`column` are positions in `names` and `columns`, the statistics are exact and `hist` holds 40
+counts. Cells without the gene are left out. Because every cell uses the same buckets, a client can
+add histograms to merge clades.
+
+**`GET /distributions/{taxid}/points?name=brca1`** gives the dots of one clade: one row per
+annotation under `taxid` that has the gene, `[annotation_id, taxid, length, copies, via]`
+(`via` 0 = symbol gene, 1 = alias only). One exact name per call (a prefix or a list is a 422);
+organism, assembly and source are not repeated, join them on `annotation_id` from `/hits`. About
+50 bytes a row, so one name over all annotations stays well under 1 MB. It is cached by data
+version like `/hits`.
+
+A request that would read more than `DISTRIBUTIONS_MAX_LOCI` gene rows (default 5,000,000) is
+refused with 413; use `dry_run` to see the size first. Measured on synthetic data, 200 names in 30
+columns (1,000,000 gene rows) took about 1.3 s and 30 MB of RAM, and a 1.2 MB reply.
+
 ### `/downloads` (FASTA, queued)
 
 Ask for up to **1,000** CDS, transcript or protein sequences. The work runs in **one queue for the whole service** (one download at a time, because of the NCBI request budget), so a request never waits on the connection. The body is described below.
@@ -245,7 +280,7 @@ Limits per client IP: 10 new downloads per rolling 24 hours (`429 daily_quota_ex
 **Ops / env** (see `.env.example`; never put the NCBI key in compose):
 
 - `ANNOTATIONS_DIR` — mount of Annotrieve’s annotation files (prod: `/data/annotations`).
-- `PRESENCE_DIR` — directory with the `current` symlink to `v<version>/presence.sqlite` (built by `serve_build build`). Required: `/names`, `/hits` and `/loci` read it, and they support `alias=off|suggest|include` (default `suggest`: symbol hits are matches, alias-only annotations are listed as `alias_only`, `n_alias_extra` per term/name). `/loci` also needs `loci.sqlite` in the same version directory; related settings: `ANNOTRIEVE_API_BASE` (for `gff_url`), `LOCI_MAX_ROWS`, `LOCI_CACHE_KIB`, `LOCI_MAX_INFLIGHT`. `/downloads` also needs `ANNOTATIONS_DIR` (GFF files), `gffread` and, for `loci` lists, `loci_ref.sqlite` in the version directory (`serve_build loci-ref`); settings: `SEQUENCES_MAX_GENES` (1000) and `SEQUENCES_MAX_SEQUENCES` (1000): the most one download holds (over it: `413 too_many_genes` or `413 too_many_sequences`, before queueing), `SEQUENCES_DEADLINE_S` (1800: longest a download may run), `SEQUENCES_PLAN_MAX_GENES` (200), `SEQUENCES_PLAN_MAX_INFLIGHT` (3 GFF-reading requests at once per worker: `/transcripts` and the sequence count of `POST /downloads`; over it `503 plan_busy` with `Retry-After`), `SEQUENCES_BATCH_GENES` (25), `SEQUENCES_RESULTS_DIR` (downloads, quota ledger and scratch, shared by all workers; in compose the host folder `/data/annotrieve-xrefs/sequences` mounted at `/data/results`, which must be writable by uid 1000), `DOWNLOADS_PER_DAY` (10 new downloads per client IP per rolling 24 h; equal requests are free; 0 disables), `SEQUENCES_IP_MAX_ACTIVE` (2 waiting or running per client IP), `DOWNLOADS_MAX_QUEUED` (50), `SEQUENCES_MAX_RESULTS` (100 stored; nothing is removed to make room, new downloads get 503), `DOWNLOAD_KEEP_AFTER_FETCH_S` (600), `DOWNLOAD_KEEP_UNFETCHED_S` (7200), `DOWNLOAD_KEEP_FAILED_S` (3600), `DOWNLOADS_LOCK_FILE` (the one-runner lock, local disk: `/tmp/annotrieve-downloads.lock`), `DOWNLOADS_POLL_S` (2), `TRUSTED_PROXY_HOPS` (1: the client IP is the last `X-Forwarded-For` entry, so the nginx template must keep passing that header); `NCBI_RATE_STATE_FILE` (all API processes share one NCBI budget, 2.5 req/s or 9 with `NCBI_API_KEY`, through a lock file; default `<SEQUENCES_RESULTS_DIR>/.ncbi-rate`; a 429 from NCBI slows every process; if the file cannot be opened each process limits itself to rate / `NCBI_PROCESSES`, set that to the gunicorn worker count); `PUBLIC_BASE_URL` (public scheme, host and path prefix, e.g. `https://genome.crg.es/annotrieve-xrefs/api/v1`) so `Location` and the links are correct behind the proxy.
+- `PRESENCE_DIR` — directory with the `current` symlink to `v<version>/presence.sqlite` (built by `serve_build build`). Required: `/names`, `/hits` and `/loci` read it, and they support `alias=off|suggest|include` (default `suggest`: symbol hits are matches, alias-only annotations are listed as `alias_only`, `n_alias_extra` per term/name). `/loci` and `/distributions` also need `loci.sqlite` in the same version directory; related settings: `DISTRIBUTIONS_MAX_LOCI` (5,000,000 gene rows a `/distributions` request may read), `ANNOTRIEVE_API_BASE` (for `gff_url`), `LOCI_MAX_ROWS`, `LOCI_CACHE_KIB`, `LOCI_MAX_INFLIGHT`. `/downloads` also needs `ANNOTATIONS_DIR` (GFF files), `gffread` and, for `loci` lists, `loci_ref.sqlite` in the version directory (`serve_build loci-ref`); settings: `SEQUENCES_MAX_GENES` (1000) and `SEQUENCES_MAX_SEQUENCES` (1000): the most one download holds (over it: `413 too_many_genes` or `413 too_many_sequences`, before queueing), `SEQUENCES_DEADLINE_S` (1800: longest a download may run), `SEQUENCES_PLAN_MAX_GENES` (200), `SEQUENCES_PLAN_MAX_INFLIGHT` (3 GFF-reading requests at once per worker: `/transcripts` and the sequence count of `POST /downloads`; over it `503 plan_busy` with `Retry-After`), `SEQUENCES_BATCH_GENES` (25), `SEQUENCES_RESULTS_DIR` (downloads, quota ledger and scratch, shared by all workers; in compose the host folder `/data/annotrieve-xrefs/sequences` mounted at `/data/results`, which must be writable by uid 1000), `DOWNLOADS_PER_DAY` (10 new downloads per client IP per rolling 24 h; equal requests are free; 0 disables), `SEQUENCES_IP_MAX_ACTIVE` (2 waiting or running per client IP), `DOWNLOADS_MAX_QUEUED` (50), `SEQUENCES_MAX_RESULTS` (100 stored; nothing is removed to make room, new downloads get 503), `DOWNLOAD_KEEP_AFTER_FETCH_S` (600), `DOWNLOAD_KEEP_UNFETCHED_S` (7200), `DOWNLOAD_KEEP_FAILED_S` (3600), `DOWNLOADS_LOCK_FILE` (the one-runner lock, local disk: `/tmp/annotrieve-downloads.lock`), `DOWNLOADS_POLL_S` (2), `TRUSTED_PROXY_HOPS` (1: the client IP is the last `X-Forwarded-For` entry, so the nginx template must keep passing that header); `NCBI_RATE_STATE_FILE` (all API processes share one NCBI budget, 2.5 req/s or 9 with `NCBI_API_KEY`, through a lock file; default `<SEQUENCES_RESULTS_DIR>/.ncbi-rate`; a 429 from NCBI slows every process; if the file cannot be opened each process limits itself to rate / `NCBI_PROCESSES`, set that to the gunicorn worker count); `PUBLIC_BASE_URL` (public scheme, host and path prefix, e.g. `https://genome.crg.es/annotrieve-xrefs/api/v1`) so `Location` and the links are correct behind the proxy.
 - `ANNOTATIONS_GFF_PATH_PREFIX` — optional harvest `--files-root` to rebase `annotation.gff_path`.
 - `NCBI_API_KEY` — optional; with key ~9 req/s, without ~2.5 req/s (one shared token bucket per API process).
 - `NCBI_WORKERS` — fetch thread-pool size only (does not divide the rate).
