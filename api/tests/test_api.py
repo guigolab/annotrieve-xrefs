@@ -423,3 +423,25 @@ def test_locus_ref_with_unicode_digits_or_a_huge_id_is_422_not_500(client) -> No
     for ref in ("ann-human:\u00b2", "ann-human:99999999999999999999999", "ann-human:-1", "nocolon"):
         r = client.get(f"/genes/{ref}")
         assert r.status_code == 422 and r.json()["detail"]["code"] == "invalid_locus_ref", ref
+
+
+def test_a_name_shared_by_more_genes_than_sqlite_can_bind_still_pages(client, corpus_dir) -> None:
+    import sqlite3
+
+    n = 260_000                          # above SQLITE_MAX_VARIABLE_NUMBER (250000 in the image)
+    conn = sqlite3.connect(corpus_dir / "per_gff" / "ann-human" / "genes.sqlite")
+    conn.executemany(
+        "INSERT INTO gene (local_id, source_gene_id, feature_type, seqid, start, end, strand) "
+        "VALUES (?, ?, 'gene', 'chr1', ?, ?, 1)", [(1000 + i, f"g{i}", i, i + 5) for i in range(n)])
+    conn.executemany("INSERT INTO gene_xref VALUES (?, 'alias', 'bigname', NULL, 'attr', 0)",
+                     [(1000 + i,) for i in range(n)])
+    conn.commit()
+    conn.close()
+    first = client.get("/annotations/ann-human/genes", params={"names": "bigname", "limit": 200})
+    assert first.status_code == 200 and first.json()["total"] == n
+    assert [g["local_id"] for g in first.json()["results"]][:2] == [1000, 1001]
+    assert first.json()["next_cursor"]
+    last = client.get("/annotations/ann-human/genes",
+                      params={"names": "bigname", "limit": 200, "offset": 10_000}).json()
+    assert last["total"] == n and len(last["results"]) == 200
+    assert last["results"][0]["matches"][0]["name"] == "bigname"

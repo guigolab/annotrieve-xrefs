@@ -585,38 +585,35 @@ def list_annotation_genes(
         if not local_ids:
             return empty
 
-    params: list = []
-    where_parts: list[str] = ["1=1"]
-
     if local_ids is not None:
-        placeholders = ",".join("?" for _ in local_ids)
-        params.extend(sorted(local_ids))
-        where_parts.append(f"g.local_id IN ({placeholders})")
-
-    where_sql = " AND ".join(where_parts)
-
-    total = int(
-        conn.execute(
+        # The filter can match thousands of genes (a common alias or xref), more than SQLite binds
+        # in one statement: page over the sorted ids here and read only this page's rows.
+        ordered = sorted(local_ids)
+        total = len(ordered)
+        page_ids = ordered[offset:offset + limit]
+        rows = []
+        if page_ids:
+            placeholders = ",".join("?" for _ in page_ids)
+            rows = conn.execute(
+                f"""
+                SELECT {_GENE_COLS}
+                FROM gene
+                WHERE local_id IN ({placeholders})
+                ORDER BY local_id ASC
+                """,
+                page_ids,
+            ).fetchall()
+    else:
+        total = int(conn.execute("SELECT COUNT(*) FROM gene").fetchone()[0])
+        rows = conn.execute(
             f"""
-            SELECT COUNT(*) FROM gene g
-            WHERE {where_sql}
+            SELECT {_GENE_COLS}
+            FROM gene
+            ORDER BY local_id ASC
+            LIMIT ? OFFSET ?
             """,
-            params,
-        ).fetchone()[0]
-    )
-
-    rows = conn.execute(
-        f"""
-        SELECT g.local_id, g.source_gene_id, g.feature_type, g.seqid,
-               g.start, g.end, g.strand, g.biotype, g.primary_name,
-               g.prose, g.prose_kind
-        FROM gene g
-        WHERE {where_sql}
-        ORDER BY g.local_id ASC
-        LIMIT ? OFFSET ?
-        """,
-        [*params, limit, offset],
-    ).fetchall()
+            (limit, offset),
+        ).fetchall()
 
     results = [_gene_card(row, annotation_id) for row in rows]
     if results and name_terms:
