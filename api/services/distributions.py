@@ -37,8 +37,10 @@ _LOG_SPAN = math.log10(BIN_MAX_BP) - _LOG_MIN
 
 BINS = {"scale": "log10", "min_bp": BIN_MIN_BP, "max_bp": BIN_MAX_BP, "n": BIN_COUNT}
 
+# ``p5`` and ``p95`` come after ``hist`` so clients written for the first version keep working;
+# they are the whiskers of a box plot that outliers do not stretch.
 SUMMARY_FIELDS = ("name", "column", "n_with_gene", "n_multi_copy", "mean", "min", "p25", "median",
-                  "p75", "max", "hist")
+                  "p75", "max", "hist", "p5", "p95")
 POINT_FIELDS = ("annotation_id", "taxid", "length", "copies", "via")
 
 
@@ -140,7 +142,7 @@ def column_masks(pres: sqlite3.Connection, all_mask: int, columns: list[dict],
 
 def summarise(loci: sqlite3.Connection, q: LociQuery, names: list[dict],
               col_sets: list[set[int]]) -> list[list]:
-    """Rows ``[name_i, column_i, n_with_gene, n_multi_copy, mean, min, p25, median, p75, max, hist]``.
+    """Rows ``[name_i, column_i, n_with_gene, n_multi_copy, mean, min, p25, median, p75, max, hist, p5, p95]``.
 
     Cells without the gene are left out. Columns may overlap; an annotation counts in each column
     that holds it.
@@ -167,7 +169,8 @@ def summarise(loci: sqlite3.Connection, q: LociQuery, names: list[dict],
             rows.append([ni, ci, len(vals), multi[ci], round(sum(vals) / len(vals), 1),
                          round(vals[0], 1), round(quantile(vals, 0.25), 1),
                          round(quantile(vals, 0.5), 1), round(quantile(vals, 0.75), 1),
-                         round(vals[-1], 1), hist[ci]])
+                         round(vals[-1], 1), hist[ci], round(quantile(vals, 0.05), 1),
+                         round(quantile(vals, 0.95), 1)])
     return rows
 
 

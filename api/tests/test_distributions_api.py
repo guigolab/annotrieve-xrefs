@@ -75,7 +75,7 @@ def cells(body: dict) -> dict[tuple[str, str], dict]:
 def test_summary_per_clade_with_exact_stats(dist_client) -> None:
     body = dist_client.post("/distributions", json={"names": ["tp53"], "columns": COLUMNS}).json()
     assert body["fields"] == ["name", "column", "n_with_gene", "n_multi_copy", "mean", "min", "p25",
-                              "median", "p75", "max", "hist"]
+                              "median", "p75", "max", "hist", "p5", "p95"]
     assert [c["n_annotations"] for c in body["columns"]] == [3, 2]
     got = cells(body)
     m, b = got[("tp53", "mammals")], got[("tp53", "birds")]
@@ -83,6 +83,9 @@ def test_summary_per_clade_with_exact_stats(dist_client) -> None:
     assert (m["n_with_gene"], m["n_multi_copy"]) == (3, 1)
     assert (m["min"], m["median"], m["max"]) == (500.0, 1000.0, 3000.0)
     assert m["mean"] == 1500.0 and m["p25"] == 750.0 and m["p75"] == 2000.0
+    # whiskers: type-7 quantiles of [500, 1000, 3000]; one value gives itself
+    assert m["p5"] == 550.0 and m["p95"] == 2800.0
+    assert b["p5"] == b["p95"] == 10000.0
     assert (b["n_with_gene"], b["n_multi_copy"], b["median"]) == (1, 0, 10000.0)
     assert body["bins"] == {"scale": "log10", "min_bp": 100, "max_bp": 10_000_000, "n": 40}
     assert sum(m["hist"]) == 3 and len(m["hist"]) == 40 and sum(b["hist"]) == 1

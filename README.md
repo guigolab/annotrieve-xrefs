@@ -223,9 +223,10 @@ of its taxids, columns may overlap, none means one column `all`), and the usual 
 
 The reply has `names` (what the terms expanded to), `columns` (with `n_annotations`, the denominator),
 `bins` (the fixed log-size buckets: 40 from 100 bp to 10 Mb), and `rows`. A row is one cell:
-`[name, column, n_with_gene, n_multi_copy, mean, min, p25, median, p75, max, hist]`, where `name` and
-`column` are positions in `names` and `columns`, the statistics are exact and `hist` holds 40
-counts. Cells without the gene are left out. Because every cell uses the same buckets, a client can
+`[name, column, n_with_gene, n_multi_copy, mean, min, p25, median, p75, max, hist, p5, p95]`, where
+`name` and `column` are positions in `names` and `columns`, the statistics are exact and `hist` holds
+40 counts. `p5` and `p95` are the whiskers of a box plot that a few mis-annotated genes do not
+stretch; read positions from `fields`, as new values may be appended. Cells without the gene are left out. Because every cell uses the same buckets, a client can
 add histograms to merge clades.
 
 **`GET /distributions/{taxid}/points?name=brca1`** gives the dots of one clade: one row per
