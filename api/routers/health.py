@@ -16,6 +16,24 @@ from helpers.presence import (
 router = APIRouter()
 
 
+def _corpus_counts(conn: sqlite3.Connection) -> dict | None:
+    """How many indexed annotations carry gene names, from the build's ``meta`` table.
+
+    Older builds do not record it; then the key is left out rather than guessed.
+    """
+    rows = dict(conn.execute(
+        "SELECT key, value FROM meta WHERE key IN ('n_annotations', 'n_annotations_with_names')"
+    ).fetchall())
+    try:
+        total = int(rows["n_annotations"])
+        named = int(rows["n_annotations_with_names"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if total <= 0 or named < 0 or named > total:
+        return None
+    return {"n_annotations": total, "n_annotations_with_names": named}
+
+
 def _check_presence() -> dict:
     """Open the published index, run a test lookup, and check loci.sqlite matches it."""
     out: dict = {}
@@ -24,6 +42,9 @@ def _check_presence() -> dict:
     out["index"] = "ram" if reader.db_path != reader.path else "disk"
     row = reader.conn.execute("SELECT name FROM name_dict LIMIT 1").fetchone()
     out["lookup"] = "ok" if row is not None else "empty"
+    corpus = _corpus_counts(reader.conn)
+    if corpus is not None:
+        out["corpus"] = corpus
     if not (reader.path.parent / LOCI_FILE).is_file():
         out["loci"] = "unpublished"
         return out

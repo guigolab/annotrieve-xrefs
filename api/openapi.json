@@ -150,7 +150,6 @@
                       "type": "string"
                     },
                     {
-                      "additionalProperties": true,
                       "type": "object"
                     }
                   ]
@@ -245,7 +244,6 @@
           "query": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -261,7 +259,6 @@
                 "type": "string"
               },
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -409,7 +406,6 @@
                       "type": "string"
                     },
                     {
-                      "additionalProperties": true,
                       "type": "object"
                     }
                   ]
@@ -566,7 +562,6 @@
                       "type": "string"
                     },
                     {
-                      "additionalProperties": true,
                       "type": "object"
                     }
                   ]
@@ -761,13 +756,6 @@
       },
       "ValidationError": {
         "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
           "loc": {
             "items": {
               "anyOf": [

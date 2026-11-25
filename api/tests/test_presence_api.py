@@ -44,7 +44,8 @@ def build_presence(path: Path) -> None:
             i, encode_postings(sym, MAX_ORD) if sym else None,
             encode_postings(alias, MAX_ORD) if alias else None))
     conn.executemany("INSERT INTO meta VALUES (?,?)",
-                     [("data_version", "abc123"), ("schema_version", "1")])
+                     [("data_version", "abc123"), ("schema_version", "1"),
+                      ("n_annotations", "4"), ("n_annotations_with_names", "3")])
     conn.commit()
     conn.close()
 
@@ -270,6 +271,7 @@ def test_health_reports_version_and_lookup(presence_client) -> None:
     body = client.get("/health").json()
     assert body["status"] == "ok" and body["data_version"] == "abc123"
     assert body["lookup"] == "ok" and body["loci"] == "unpublished" and body["index"] == "disk"
+    assert body["corpus"] == {"n_annotations": 4, "n_annotations_with_names": 3}
 
 
 def test_health_fails_when_nothing_is_published(presence_client) -> None:

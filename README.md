@@ -291,6 +291,10 @@ Limits per client IP: 10 new downloads per rolling 24 hours (`429 daily_quota_ex
 
 
 
+### `GET /health`
+
+Readiness of the published index: `status`, `data_version`, `index` (`ram` or `disk`), `lookup`, `loci`. When the build recorded them, `corpus` gives `n_annotations` and `n_annotations_with_names` (annotations whose GFF carries at least one gene name), so a client can say how much of the corpus a name search can reach. `503` with `status: unavailable` when nothing is published.
+
 ## Building the served files
 
 The API reads files built from the per-annotation shards (`<work-dir>/per_gff/<annotation_id>/genes.sqlite`). Run from the repository root:
