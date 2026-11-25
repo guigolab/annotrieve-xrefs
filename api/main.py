@@ -1,6 +1,7 @@
 """Annotrieve-xrefs FastAPI application."""
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from contextlib import asynccontextmanager
@@ -16,6 +17,9 @@ from helpers.logging_config import configure_logging
 from helpers.ncbi_eutils import close_ncbi_client
 from routers import api_router
 from settings import settings
+
+_LOG = logging.getLogger(__name__)
+_TRANSIENT_SQLITE = ("disk i/o error", "unable to open database file", "database is locked")
 
 # Before create_app / worker serve: INFO must reach stderr for ``docker logs``.
 configure_logging()
@@ -136,16 +140,37 @@ def create_app() -> FastAPI:
         max_age=86400,
     )
 
-    @app.exception_handler(sqlite3.OperationalError)
-    async def sqlite_error_handler(_request: Request, exc: sqlite3.OperationalError) -> JSONResponse:
-        if "interrupted" in str(exc):  # query time budget (services.annotations.open_shard)
+    @app.exception_handler(sqlite3.DatabaseError)
+    async def sqlite_error_handler(request: Request, exc: sqlite3.DatabaseError) -> JSONResponse:
+        text = str(exc)
+        if "interrupted" in text:  # query time budget (services.annotations.open_shard)
             return JSONResponse(
                 status_code=503,
                 content={"detail": error_detail(
                     "query_too_slow", "the query took too long; narrow it or retry later")},
                 headers={"Retry-After": "5"},
             )
-        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+        _LOG.error("sqlite error on %s %s: %s", request.method, request.url.path, text, exc_info=exc)
+        if any(marker in text.lower() for marker in _TRANSIENT_SQLITE):
+            # The index sits on a network drive: a hiccup there is worth a retry, not a bug report.
+            return JSONResponse(
+                status_code=503,
+                content={"detail": error_detail("index_unavailable",
+                                                "the index could not be read; retry shortly")},
+                headers={"Retry-After": "5"},
+            )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": error_detail("internal_error", "Internal Server Error")})
+
+    @app.exception_handler(Exception)
+    async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Answers with the documented error shape; the server error middleware still logs the
+        # traceback after this handler has run.
+        _LOG.error("unhandled %s on %s %s", type(exc).__name__, request.method, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": error_detail("internal_error", "Internal Server Error")})
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(
