@@ -12,6 +12,9 @@ from helpers.pagination import (
 )
 
 
+MAX_SQLITE_INT = 2**63 - 1      # larger values cannot be bound to a SQLite INTEGER
+
+
 def normalize_name_token(raw: str) -> str:
     """Strip wrapping quotes and casefold (symbol/alias accession form)."""
     text = (raw or "").strip()
@@ -99,16 +102,15 @@ def parse_taxid_list(
                 text = part.strip()
                 if not text:
                     continue
-                try:
-                    taxid = int(text)
-                except ValueError as exc:
+                if not (text.isascii() and text.isdigit()):
                     raise QueryError(
                         f"{field} values must be positive integers",
                         code="invalid_taxid",
                         field=field,
                         value=text,
-                    ) from exc
-            if taxid < 1:
+                    )
+                taxid = int(text)
+            if taxid < 1 or taxid > MAX_SQLITE_INT:
                 raise QueryError(
                     f"{field} values must be positive integers",
                     code="invalid_taxid",

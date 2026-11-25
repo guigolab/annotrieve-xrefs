@@ -278,3 +278,12 @@ def test_health_fails_when_nothing_is_published(presence_client) -> None:
     r = client.get("/health")
     assert r.status_code == 503
     assert r.json() == {"status": "unavailable", "reason": "presence_unavailable"}
+
+
+@pytest.mark.parametrize("value", ["99999999999999999999", "\u00b2", "-1", "1_0", "x"])
+def test_taxid_values_that_are_not_plain_positive_integers_are_422(presence_client, value) -> None:
+    client, _ = presence_client
+    for route in ("/hits", "/names"):
+        params = {"names" if route == "/hits" else "prefix": "tp53", "include_taxids": value}
+        r = client.get(route, params=params)
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "invalid_taxid", (route, value)

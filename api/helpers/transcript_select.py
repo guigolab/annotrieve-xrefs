@@ -233,6 +233,9 @@ def parse_rule(spec: object, action: str) -> Rule:
     unknown = set(spec) - {"rank_by", "require", "keep"}
     if unknown:
         raise RuleError("invalid_transcript_rule", f"unknown transcript rule fields {sorted(unknown)}")
+    for field_name in ("rank_by", "require"):
+        if spec.get(field_name) is not None and not isinstance(spec[field_name], list):
+            raise RuleError("invalid_transcript_rule", f"{field_name} must be a list")
     rank = tuple(_parse_rank(i) for i in spec.get("rank_by") or [])
     require = tuple(_check_require(i) for i in spec.get("require") or [])
     keep = spec.get("keep", 1)

@@ -417,3 +417,9 @@ def test_genes_by_locus_ref(client: TestClient) -> None:
         r = client.get(f"/genes/{bad}")
         assert r.status_code == 422, bad
         assert r.json()["detail"]["code"] == "invalid_locus_ref"
+
+
+def test_locus_ref_with_unicode_digits_or_a_huge_id_is_422_not_500(client) -> None:
+    for ref in ("ann-human:\u00b2", "ann-human:99999999999999999999999", "ann-human:-1", "nocolon"):
+        r = client.get(f"/genes/{ref}")
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "invalid_locus_ref", ref

@@ -527,6 +527,13 @@ FUZZ_BODIES = [
     {"action": "cds", "loci": ["a:1"], "typo_field": True},
     {"action": ["cds"], "loci": ["a:1"]},
     {"action": "cds", "loci": ["a:99999999999999999999"]},
+    {"action": "cds", "loci": ["ann1:99999999999999999999"]},
+    {"action": "cds", "loci": ["ann1:\u00b2"]},
+    {"action": "cds", "items": [{"annotation_id": "ann1", "local_id": 10**30}]},
+    {"action": "cds", "query": {"names": ["tp53"], "include_taxids": ["99999999999999999999"]}},
+    {"action": "cds", "query": {"names": ["tp53"], "include_taxids": ["\u00b2"]}},
+    {"action": "cds", "query": {"names": ["tp53"]}, "transcript": {"rank_by": 5}},
+    {"action": "cds", "query": {"names": ["tp53"]}, "transcript": {"require": 5}},
     [],
     "text",
 ]

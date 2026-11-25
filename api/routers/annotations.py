@@ -235,7 +235,7 @@ def get_annotation_gene(
 
 def _split_locus_ref(locus_ref: str) -> tuple[str, int]:
     annotation_id, _, local = locus_ref.rpartition(":")
-    if not annotation_id or not local.isdigit() or int(local) > 2**63 - 1:
+    if not annotation_id or not (local.isascii() and local.isdigit()) or int(local) > 2**63 - 1:
         raise http_for_query_error(QueryError(
             "locus_ref must look like 'annotation_id:local_id'", code="invalid_locus_ref",
             value=locus_ref))

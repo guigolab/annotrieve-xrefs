@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from helpers.cursor import QueryError
+from helpers.names import MAX_SQLITE_INT
 from helpers.gffread_runner import SequenceAction
 from helpers.pagination import MAX_SEQUENCES_BUFFER_BP, MAX_SEQUENCES_ID_CHARS
 from helpers.transcript_select import Rule, RuleError, parse_rule
@@ -101,13 +102,12 @@ def parse_ref(ref: Any, index: int) -> tuple[str, int]:
     if not sep or not annotation_id:
         raise _bad("locus_ref must look like 'annotation_id:local_id'", "invalid_locus_ref",
                    index=index, value=text)
-    try:
-        local_id = int(local)
-    except ValueError:
+    if not (local.isascii() and local.isdigit()):
         raise _bad("locus_ref must end with an integer local_id", "invalid_locus_ref",
-                   index=index, value=text) from None
-    if local_id < 0:
-        raise _bad("local_id must be >= 0", "invalid_locus_ref", index=index, value=text)
+                   index=index, value=text)
+    local_id = int(local)
+    if local_id > MAX_SQLITE_INT:
+        raise _bad("local_id is too large", "invalid_locus_ref", index=index, value=text)
     return annotation_id, local_id
 
 
@@ -126,12 +126,14 @@ def _entries(raw: Any, field: str) -> tuple[LociEntry, ...]:
         elif isinstance(item, dict):
             if field == "items":
                 annotation_id = _text(item.get("annotation_id"), "annotation_id")
-                try:
-                    local_id = int(item.get("local_id"))
-                except (TypeError, ValueError):
-                    raise _bad("local_id must be an integer", "validation_error", index=i) from None
-                if local_id < 0:
-                    raise _bad("local_id must be >= 0", "validation_error", index=i)
+                raw_id = item.get("local_id")
+                if isinstance(raw_id, bool) or not (
+                        isinstance(raw_id, int)
+                        or (isinstance(raw_id, str) and raw_id.isascii() and raw_id.isdigit())):
+                    raise _bad("local_id must be an integer >= 0", "validation_error", index=i)
+                local_id = int(raw_id)
+                if not 0 <= local_id <= MAX_SQLITE_INT:
+                    raise _bad("local_id must be an integer >= 0", "validation_error", index=i)
             else:
                 annotation_id, local_id = parse_ref(item.get("locus_ref"), i)
             if item.get("transcript_id") not in (None, ""):
@@ -153,9 +155,14 @@ def _int_list(raw: Any, field: str) -> list[int]:
         raise _bad(f"query.{field} must be a list of integers", "validation_error", field=field)
     out = []
     for v in raw:
-        if isinstance(v, bool) or not (isinstance(v, int) or (isinstance(v, str) and v.strip().isdigit())):
+        text = v.strip() if isinstance(v, str) else v
+        if isinstance(v, bool) or not (
+                isinstance(v, int) or (isinstance(text, str) and text.isascii() and text.isdigit())):
             raise _bad(f"query.{field} must contain integers", "invalid_taxid", field=field, value=v)
-        out.append(int(v))
+        if not 1 <= int(text) <= MAX_SQLITE_INT:
+            raise _bad(f"query.{field} must contain positive integers", "invalid_taxid",
+                       field=field, value=v)
+        out.append(int(text))
     return sorted(set(out))
 
 
