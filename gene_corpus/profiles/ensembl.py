@@ -1,7 +1,7 @@
 """
 Ensembl corpus profile — owns Ensembl-specific parse decisions.
 
-Grounded in GENE_ATTRIBUTE_SOURCE_MAP.md / GENE_CORPUS_SQL_ARCHITECTURE.md.
+Decides which GFF attributes are kept for this source.
 Profiles own the col-9 keep-maps (gene / transcript / CDS).
 
 Keep-map roles:

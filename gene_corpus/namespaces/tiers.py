@@ -1,7 +1,7 @@
 """
 Tier A / B namespace sets for gene_corpus dry-run v1.
 
-Restates decisions from GENE_SEARCH_V1_NAMESPACES.md (gene discovery focus).
+Gene-discovery focus: only namespaces useful for finding genes are kept.
 Independent of server.helpers.gene_search — do not import from server.
 Specimen / taxonomy noise is filtered via ``NOISE_DBXREF_DBS`` / ``is_noise_db``.
 """

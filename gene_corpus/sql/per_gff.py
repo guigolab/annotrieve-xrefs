@@ -4,7 +4,7 @@ Per-annotation SQLite schema (write-once shard).
 Tables: gene, gene_xref, tier_a_counts, meta.
 Shards are replaced wholesale on rebuild / schema change.
 
-See GENE_CORPUS_SQL_ARCHITECTURE.md §6.
+
 """
 from __future__ import annotations
 
