@@ -19,7 +19,7 @@ import shutil
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -258,13 +258,30 @@ def enqueue(result_id: str, body: dict, *, owner: str, total: int, data_version:
     _write_atomic(d / "request.json", json.dumps(body))
     return write_status(result_id, state="queued", seq=time.time_ns(), created=time.time(),
                         owner=owner, done=0, total=total, data_version=data_version, error=None,
-                        downloaded_at=None)
+                        downloaded_at=None, attempts=0)
 
 
-def oldest_queued() -> str | None:
+def running_ids() -> list[str]:
+    """Downloads whose status says ``running``, as written (not the ``download_lost`` view).
+
+    Only the runner holding the downloads lock may call this to find orphans: while it holds the
+    lock, no other process runs a download, so a ``running`` status is the leftover of a worker
+    that stopped.
+    """
+    out = []
+    for d in results_root().iterdir():
+        if d.is_dir() and valid_id(d.name):
+            st = read_status(d.name, _raw=True)
+            if st and st.get("state") == "running":
+                out.append(d.name)
+    return out
+
+
+def oldest_queued(exclude: Collection[str] = ()) -> str | None:
+    """The queued download with the lowest ``seq``, skipping the ids in ``exclude``."""
     best: tuple[int, str] | None = None
     for d, st in entries():
-        if st and st.get("state") == "queued":
+        if st and st.get("state") == "queued" and d.name not in exclude:
             key = (int(st.get("seq", 0)), d.name)
             if best is None or key < best:
                 best = key

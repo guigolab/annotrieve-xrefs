@@ -770,3 +770,121 @@ def test_gff_reading_routes_refuse_at_once_when_all_slots_are_taken(seq_client, 
         assert r.headers["retry-after"] == "2"
     taken.release()
     assert client.post("/transcripts", json=TP53).status_code == 200
+
+
+# --- runner: shutdown, orphans, unrecordable failures --------------------------------------------
+
+def _queued(client, body=None) -> str:
+    from services.seq_runner import stop_runner
+    stop_runner()
+    return client.post("/downloads", json=body or TP53).json()["id"]
+
+
+def test_a_stopping_worker_puts_its_download_back_in_the_queue(seq_client, monkeypatch):
+    from collections import Counter
+    from services import seq_runner
+    from services.seq_results import read_status
+    client, _ = seq_client
+    rid = _queued(client)
+    seq = read_status(rid)["seq"]
+
+    def export_then_stop(req, items, *, out_dir, total, progress):
+        (out_dir / "result.fa.part").write_text(">partial\n")
+        seq_runner._stop.set()                              # the worker is told to stop mid-run
+        progress(1, total, Counter())
+        raise AssertionError("progress should have interrupted the export")
+
+    monkeypatch.setattr(seq_runner, "run_export", export_then_stop)
+    seq_runner.run_pending_once(stoppable=True)
+    st = read_status(rid)
+    assert st["state"] == "queued" and st["seq"] == seq and st["attempts"] == 0
+    assert st["done"] == 0 and st["error"] is None
+    assert not (seq_runner.result_dir(rid) / "result.fa.part").exists()
+    monkeypatch.undo()
+    assert seq_runner.run_pending_once() == 1                # the next runner finishes it
+    assert read_status(rid)["state"] == "done"
+
+
+def test_a_download_left_running_by_a_dead_worker_is_queued_again_at_once(seq_client):
+    from services.seq_results import read_status, write_status
+    from services.seq_runner import run_pending_once
+    client, _ = seq_client
+    rid = _queued(client)
+    write_status(rid, state="running", attempts=1, done=3)   # the worker died here, just now
+    assert read_status(rid)["state"] == "running"            # looks alive for ~30 min otherwise
+    assert run_pending_once() == 1
+    st = read_status(rid)
+    assert st["state"] == "done" and st["attempts"] == 2
+
+
+def test_a_download_that_keeps_killing_its_worker_is_failed(seq_client):
+    from services import seq_runner
+    from services.seq_results import read_status, write_status
+    client, _ = seq_client
+    rid = _queued(client)
+    write_status(rid, state="running", attempts=seq_runner.MAX_ATTEMPTS)
+    assert seq_runner.run_pending_once() == 0
+    st = read_status(rid)
+    assert st["state"] == "failed" and st["error"]["code"] == "download_lost"
+
+
+def test_an_orphan_that_was_cancelled_is_removed(seq_client):
+    from services import seq_runner
+    from services.seq_results import read_status, write_status
+    client, _ = seq_client
+    rid = _queued(client)
+    write_status(rid, state="running", attempts=1)
+    (seq_runner.result_dir(rid) / "cancel").touch()
+    assert seq_runner.run_pending_once() == 0
+    assert read_status(rid) is None
+
+
+def test_a_download_whose_status_cannot_be_written_is_not_retried_forever(seq_client, monkeypatch):
+    from services import seq_runner
+    from services.seq_results import read_status
+    client, _ = seq_client
+    rid = _queued(client)
+    other = _queued(client, {**TP53, "transcript": "all"})   # must still run: not blocked
+    real = seq_runner.write_status
+    calls = {"n": 0}
+
+    def disk_full(r, **fields):
+        if r == rid and fields.get("state") != "queued":
+            calls["n"] += 1
+            raise OSError(28, "No space left on device")
+        return real(r, **fields)
+
+    monkeypatch.setattr(seq_runner, "write_status", disk_full)
+    seen = []
+    for _ in range(seq_runner.MAX_STRIKES + 2):
+        seq_runner.run_pending_once()
+        seen.append(calls["n"])
+        # the hold keeps it out of the next pass until its wait is over
+        for k in list(seq_runner._held_until):
+            seq_runner._held_until[k] = 0.0
+    assert read_status(other)["state"] == "done"             # the queue goes on
+    assert read_status(rid) is None                          # removed after MAX_STRIKES
+    assert seq_runner._held_until == {} and seq_runner._strikes == {}
+    assert seen[-1] == seen[seq_runner.MAX_STRIKES - 1]      # no more attempts after removal
+
+
+def test_a_download_with_a_strike_waits_before_the_next_try(seq_client, monkeypatch):
+    from services import seq_runner
+    client, _ = seq_client
+    rid = _queued(client)
+    real = seq_runner.write_status
+    calls = {"n": 0}
+
+    def disk_full(r, **fields):
+        calls["n"] += 1
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(seq_runner, "write_status", disk_full)
+    seq_runner.run_pending_once()
+    first = calls["n"]
+    assert first >= 1 and rid in seq_runner._held_until
+    seq_runner.run_pending_once()                            # still held: not tried again
+    assert calls["n"] == first
+    monkeypatch.setattr(seq_runner, "write_status", real)
+    seq_runner._held_until.clear()
+    seq_runner._strikes.clear()
