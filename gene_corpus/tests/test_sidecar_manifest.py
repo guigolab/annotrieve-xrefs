@@ -14,7 +14,8 @@ from gene_corpus.sql.manifest import (
     STATUS_INDEXED,
     STATUS_SKIPPED_COMMUNITY,
     classify_source,
-    index_shard,
+    record_result,
+    work_shard,
     open_manifest,
 )
 from gene_corpus.sql.sidecar import (
@@ -30,6 +31,12 @@ from gene_corpus.sql.sidecar import (
 
 BUILT_AT = "2026-01-01T00:00:00Z"
 
+
+def index_shard(conn, per_gff_root, annotation_dir, *, force=False):
+    """Test helper: inspect one shard, record the result, commit."""
+    status = record_result(conn, work_shard(per_gff_root, annotation_dir, force))
+    conn.commit()
+    return status
 
 def make_shard(root: Path, annotation_id: str, *, source="RefSeq", genes=None, xrefs=None) -> Path:
     """Create ``root/<id>/genes.sqlite`` with the real per-annotation schema."""

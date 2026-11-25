@@ -58,12 +58,6 @@ def _go_accessions(raw: str, *, allow_bare: bool = False) -> list[str]:
     return out
 
 
-def normalize_go_token(raw: str, *, allow_bare: bool = False) -> str | None:
-    """Return the first valid GO accession in *raw*, or None."""
-    found = _go_accessions(raw, allow_bare=allow_bare)
-    return found[0] if found else None
-
-
 def emit_go_values(
     values: list[str], *, allow_bare: bool = False
 ) -> list[tuple[str, str]]:

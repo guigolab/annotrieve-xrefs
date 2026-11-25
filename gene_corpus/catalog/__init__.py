@@ -6,7 +6,6 @@ from gene_corpus.catalog.report import (
     ReportRow,
     load_report_rows,
 )
-from gene_corpus.catalog.sample import sample_rows_round_robin
 
 __all__ = [
     "DEFAULT_API_BASE",
@@ -14,5 +13,4 @@ __all__ = [
     "ParseGate",
     "ReportRow",
     "load_report_rows",
-    "sample_rows_round_robin",
 ]

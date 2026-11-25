@@ -20,13 +20,12 @@ def _env_float(name: str, default: float) -> float:
 
 
 class Settings:
-    # Published gene_corpus work-dir: {GENE_CORPUS_DIR}/gene_corpus.sqlite
-    # and {GENE_CORPUS_DIR}/per_gff/<id>/genes.sqlite
+    # Corpus work-dir: per_gff/<id>/genes.sqlite and serve/ (published index versions).
     GENE_CORPUS_DIR: str = os.getenv("GENE_CORPUS_DIR", "")
 
     # Presence index: directory holding the ``current`` symlink to
-    # ``v<data_version>/presence.sqlite``. When set, /names and /hits read it (symbol vs
-    # alias aware) instead of gene_corpus.sqlite xref_file. Empty = legacy behaviour.
+    # ``v<data_version>/presence.sqlite``. /names and /hits read it (symbol vs
+    # alias aware); without it they answer 503.
     PRESENCE_DIR: str = os.getenv("PRESENCE_DIR", "")
 
     # /loci: base URL of the Annotrieve API (used to build ready-made GFF slice links),

@@ -13,9 +13,9 @@ from gene_corpus.sql.catalogue import (
     load_catalogue,
     report_url,
 )
-from gene_corpus.sql.manifest import index_shard, open_manifest
+from gene_corpus.sql.manifest import open_manifest
 from gene_corpus.sql.sidecar import sidecar_path_for
-from gene_corpus.tests.test_sidecar_manifest import make_shard
+from gene_corpus.tests.test_sidecar_manifest import index_shard, make_shard
 
 HEADER = ("annotation_id\tassembly_accession\tassembly_name\torganism_name\ttaxid\tdatabase\t"
           "provider\tsource_url\tbgzip_path\tcsi_path\trelease_date\ttaxon_lineage")

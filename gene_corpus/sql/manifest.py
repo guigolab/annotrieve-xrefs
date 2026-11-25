@@ -241,16 +241,3 @@ def record_result(conn: sqlite3.Connection, result: Mapping) -> str:
         (result["status"], result.get("error"), ord_),
     )
     return result["status"]
-
-
-def index_shard(
-    conn: sqlite3.Connection,
-    per_gff_root: Path,
-    annotation_dir: str,
-    *,
-    force: bool = False,
-) -> str:
-    """Serial convenience: ``work_shard`` then ``record_result``, committing after each shard."""
-    status = record_result(conn, work_shard(per_gff_root, annotation_dir, force))
-    conn.commit()
-    return status

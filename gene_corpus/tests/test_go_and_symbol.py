@@ -5,13 +5,11 @@ from gene_corpus.profiles.genbank import GenBankProfile
 from gene_corpus.stream.emit_util import (
     emit_ensembl_description,
     emit_go_values,
-    normalize_go_token,
 )
 from gene_corpus.stream.symbol_gate import alias_ok, symbol_ok
 
 
 def test_go_prefixed_and_bare_star() -> None:
-    assert normalize_go_token("junk GO:0008150") == "GO:0008150"
     assert emit_go_values(
         ["catalytic activity |3824; cofactor binding |48037|"],
         allow_bare=True,
