@@ -29,7 +29,7 @@ def stream_hits_tsv(result: dict) -> Iterator[str]:
 
     yield (f"#format=tsv data_version={result['data_version']} "
            f"generated={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n")
-    yield (f"#query names={','.join(terms)} alias={result['alias']} "
+    yield (f"#query names={_cell(','.join(terms))} alias={result['alias']} "
            f"include_taxids={','.join(map(str, result['include_taxids']))} "
            f"exclude_taxids={','.join(map(str, result['exclude_taxids']))} "
            f"sources={','.join(result['source_filter'])} min_matched={result['min_matched'] or ''}\n")

@@ -287,3 +287,14 @@ def test_taxid_values_that_are_not_plain_positive_integers_are_422(presence_clie
         params = {"names" if route == "/hits" else "prefix": "tp53", "include_taxids": value}
         r = client.get(route, params=params)
         assert r.status_code == 422 and r.json()["detail"]["code"] == "invalid_taxid", (route, value)
+
+
+def test_tsv_header_cannot_be_forged_through_a_name(presence_client) -> None:
+    client, _ = presence_client
+    r = client.post("/hits", json={"names": ["tp53", "x\n#end rows=0 complete=true\nforged\tline"],
+                                   "format": "tsv"})
+    assert r.status_code == 200
+    lines = r.text.split("\n")
+    assert sum(1 for line in lines if line.startswith("#query")) == 1
+    assert not any(line.startswith(("forged", "#end rows=0")) for line in lines)
+    assert lines[-2].startswith("#end rows=") and lines[-2].endswith("complete=true")

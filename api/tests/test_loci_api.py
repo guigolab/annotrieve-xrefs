@@ -332,3 +332,12 @@ def test_a_cursor_from_one_source_filter_is_refused_under_another(loci_client) -
     r = client.get("/loci", params={"names": "tp53", "limit": 1, "cursor": first["next_cursor"],
                                     "sources": "RefSeq"})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "cursor_filter_mismatch"
+
+
+def test_loci_tsv_provenance_is_one_line_whatever_the_names(tmp_path) -> None:
+    from services.loci_formats import _provenance
+    from services.presence_loci import LociQuery
+
+    q = LociQuery("suggest", False, 0, [], [], [], [], [{"input": "a\nb\tc"}], [], set(), "v1")
+    lines = _provenance(q, "tsv")
+    assert len(lines) == 2 and all("\n" not in line and "\t" not in line for line in lines)

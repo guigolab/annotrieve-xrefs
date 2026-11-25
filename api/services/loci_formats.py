@@ -24,7 +24,7 @@ def _cell(v) -> str:
 def _provenance(q: LociQuery, fmt: str) -> list[str]:
     return [
         f"#format={fmt} data_version={q.data_version} generated={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
-        f"#query names={','.join(t['input'] for t in q.terms)} alias={q.mode} "
+        f"#query names={_cell(','.join(t['input'] for t in q.terms))} alias={q.mode} "
         f"include_taxids={','.join(map(str, q.include))} exclude_taxids={','.join(map(str, q.exclude))} "
         f"case_sensitive={str(q.case_sensitive).lower()} flank_bp={q.flank_bp}",
     ]
