@@ -123,5 +123,14 @@ def test_nothing_is_followed_through_symlinks(tree, tmp_path):
     assert (outside / "keep.txt").exists()
 
 
+def test_nfs_silly_rename_files_are_skipped(tree):
+    work, results = tree
+    _file(results / "tmp" / ".nfs00000000000a9bcd00000015", 0, age_s=3 * 3600)
+    _file(results / "tmp" / "old.part", 10, age_s=3 * 3600)
+    items = free_disk.find_downloads(results, time.time(), 7200, 3600, 7200)
+    assert ("downloads", "old.part") in names(items)
+    assert not any(i.path.name.startswith(".nfs") for i in items)
+
+
 def test_missing_work_dir_is_an_error(tmp_path):
     assert free_disk.main(["--work-dir", str(tmp_path / "nope")]) == 2

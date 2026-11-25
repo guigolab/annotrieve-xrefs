@@ -146,6 +146,8 @@ def find_downloads(results: Path, now: float, keep_done_s: float, keep_failed_s:
     scratch = results / "tmp"
     if scratch.is_dir() and not scratch.is_symlink():
         for p in scratch.iterdir():
+            if p.name.startswith(".nfs"):
+                continue    # NFS silly-rename of a file still open elsewhere: cannot be removed
             if _age_s(p, now) > HOUR:
                 items.append(Item("downloads", p, size_of(p), "old scratch file"))
     return items
