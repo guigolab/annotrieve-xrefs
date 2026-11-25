@@ -1,7 +1,10 @@
-fastapi
-uvicorn[standard]
-gunicorn
-httpx
-pysam
-pytest
-pytest-asyncio
+# Runtime dependencies of the image, pinned to the versions the test suite and the committed
+# api/openapi.json were verified with (an unpinned build picks up whatever is newest that day).
+# To upgrade: change the versions, run the tests, regenerate api/openapi.json (tools/export_openapi.py).
+fastapi==0.165.0
+starlette==1.10.0
+pydantic==2.14.4
+uvicorn[standard]==0.54.0
+gunicorn==27.0.1
+httpx==0.28.1
+pysam==0.23.0

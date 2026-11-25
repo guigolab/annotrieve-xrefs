@@ -66,4 +66,9 @@ USER appuser
 
 EXPOSE 5000
 
+# /health answers 503 when the published index cannot be opened, so an unhealthy container is
+# visible to `docker ps` and to the orchestrator.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=8)" || exit 1
+
 CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "900", "--max-requests", "5000", "--max-requests-jitter", "500", "--log-level", "info", "--access-logfile", "-", "--error-logfile", "-", "--capture-output", "main:app"]
