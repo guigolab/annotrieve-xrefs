@@ -315,6 +315,8 @@ PYTHONPATH=. python -m gene_corpus.serve_build loci      --work-dir /data/gene_c
 PYTHONPATH=. python -m gene_corpus.serve_build loci-ref  --work-dir /data/gene_corpus   # loci_ref.sqlite
 ```
 
+`data_version` hashes the indexed data and the files' schema version (`SCHEMA_VERSION` in `gene_corpus/sql/serve_presence.py`), so a schema change publishes as a new `v<data_version>/` even when the data did not change. `loci` and `loci-ref` carry the presence build's `data_version` and the API refuses a mismatch: after `build`, always run both again.
+
 `serve_build status` shows the manifest counts and `serve_build missing` lists catalogue annotations without a shard. Every command streams its input and keeps memory small (see `CLAUDE.md`); older `v<data_version>` directories stay in place until you remove them (`tools/free_disk.py`).
 
 ---

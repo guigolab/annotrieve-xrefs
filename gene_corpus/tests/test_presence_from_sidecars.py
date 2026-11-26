@@ -112,3 +112,12 @@ def test_prefix_trial_and_cli_publish(tmp_path, capsys):
     assert serve_build_main(["build", "--work-dir", str(work)]) == 0
     assert (work / "serve" / "current" / "presence.sqlite").is_file()
     assert not any((work / "serve" / "tmp").iterdir())          # runs are cleaned
+
+
+def test_a_new_schema_is_a_new_data_version(tmp_path, monkeypatch):
+    from gene_corpus.sql import presence_from_sidecars as mod
+    work = corpus(tmp_path)
+    v_now = build(work, tmp_path, batch=256)["data_version"]
+    monkeypatch.setattr(mod, "SCHEMA_VERSION", mod.SCHEMA_VERSION + 1)
+    v_next = build(work, tmp_path, batch=256)["data_version"]
+    assert v_now != v_next

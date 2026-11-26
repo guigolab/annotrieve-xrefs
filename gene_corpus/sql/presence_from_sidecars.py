@@ -263,6 +263,8 @@ def build_from_sidecars(
                     f"postings sym={got_sym:,} alias={got_alias:,}")
 
             sha.update(f"{n_names}:{pairs_sym}:{pairs_alias}:{prefix}:{limit_annotations}".encode())
+            # The schema is part of the version: the same data in a new shape is a new version.
+            sha.update(f"schema:{SCHEMA_VERSION}".encode())
             data_version = sha.hexdigest()[:16]
             meta = {
                 "schema_version": str(SCHEMA_VERSION),

@@ -8,6 +8,7 @@ files; this module holds what they share.
     meta         key/value (data_version, schema_version, counts, partial flag)
     annotation   one row per annotation, keyed by ``ord``
     lineage      (taxid, ord)
+    named        ords of the annotations whose GFF carries at least one gene name (schema 2)
     name_dict    casefolded gene name -> name_id, n_sym, n_alias_only
     posting      name_id -> sym / alias posting blobs (see ``postings.py``)
 
@@ -21,7 +22,10 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+#: Bumped when the served files change shape. It is part of ``data_version``, so a build with a
+#: new schema always publishes as a new version instead of overwriting the current one in place.
+#: 2: the ``named`` table (``/coverage``).
+SCHEMA_VERSION = 2
 PAGE_SIZE = 16384
 
 # Must match api/helpers/source_codes.py (1/2/3, else 0).

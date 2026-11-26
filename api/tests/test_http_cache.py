@@ -23,6 +23,16 @@ def test_etag_cache_control_and_304(presence_client):  # noqa: F811
     assert other.status_code == 200
 
 
+def test_coverage_is_cached_by_data_version(presence_client):  # noqa: F811
+    client, _ = presence_client
+    r = client.get("/coverage", params={"taxids": "40674"})
+    assert r.status_code == 200
+    assert r.headers["etag"] == 'W/"abc123"'
+    assert r.headers["cache-control"] == "public, max-age=300"
+    again = client.get("/coverage", params={"taxids": "40674"}, headers={"If-None-Match": 'W/"abc123"'})
+    assert again.status_code == 304
+
+
 def test_revalidation_notices_a_newly_published_version(presence_client, monkeypatch):  # noqa: F811
     """A worker that only gets ``If-None-Match`` requests must not keep answering 304 forever."""
     import os
