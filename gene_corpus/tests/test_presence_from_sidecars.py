@@ -58,6 +58,8 @@ def test_build_postings_and_filters(tmp_path, batch):
     ords = dict(c.execute("SELECT annotation_id, ord FROM annotation"))
     assert set(ords) == {f"ann{i}" for i in range(5)} | {"nonames"}      # stale shard excluded
     assert stats["n_annotations_with_names"] == 5
+    named = {o for (o,) in c.execute("SELECT ord FROM named")}
+    assert named == {ords[f"ann{i}"] for i in range(5)}                  # "nonames" left out
     sym, alias = postings(out, "tp53")
     assert sym == sorted(ords[f"ann{i}"] for i in range(5))
     assert alias == sorted(ords[f"ann{i}"] for i in range(5) if i % 2)   # odd ones alias tp53 too

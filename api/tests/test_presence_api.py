@@ -35,6 +35,7 @@ def build_presence(path: Path) -> None:
           "/data/annotrieve/files/10090/GCF_2/RefSeq_b.gff.gz"),
          (3, "ann-fish", 7955, "Danio rerio", "GCF_3", "GRCz11", 1, "2023-03-03",
           "/data/annotrieve/files/7955/GCF_3/Ensembl_c.gff.gz")])
+    conn.executemany("INSERT INTO named VALUES (?)", [(1,), (3,)])
     conn.executemany("INSERT INTO lineage VALUES (?,?)",
                      [(9606, 1), (40674, 1), (10090, 2), (40674, 2), (7955, 3)])
     for i, (name, (sym, alias)) in enumerate(sorted(NAMES.items()), 1):
@@ -300,3 +301,36 @@ def test_tsv_header_cannot_be_forged_through_a_name(presence_client) -> None:
     assert sum(1 for line in lines if line.startswith("#query")) == 1
     assert not any(line.startswith(("forged", "#end rows=0")) for line in lines)
     assert lines[-2].startswith("#end rows=") and lines[-2].endswith("complete=true")
+
+
+def test_coverage_counts_annotations_with_names_per_clade(presence_client) -> None:
+    client, _ = presence_client
+    body = client.get("/coverage?taxids=40674,7955,9999").json()
+    assert body["available"] is True
+    by = {r["taxid"]: r for r in body["results"]}
+    # Mammals: human (named) and mouse (not named); two organisms, one with names.
+    assert by[40674] == {"taxid": 40674, "n_annotations": 2, "n_annotations_with_names": 1,
+                         "n_organisms": 2, "n_organisms_with_names": 1}
+    assert by[7955]["n_annotations_with_names"] == 1
+    assert by[9999]["n_annotations"] == 0
+    assert [r["taxid"] for r in body["results"]] == [40674, 7955, 9999]
+
+
+def test_coverage_is_unavailable_on_older_builds(presence_client) -> None:
+    client, root = presence_client
+    import sqlite3 as _sqlite3
+    from helpers import presence as presence_mod
+    db = root / "v1" / "presence.sqlite"
+    conn = _sqlite3.connect(db)
+    conn.execute("DROP TABLE named")
+    conn.commit()
+    conn.close()
+    presence_mod.close_presence()
+    body = client.get("/coverage?taxids=40674").json()
+    assert body == {"available": False, "data_version": "abc123", "results": []}
+
+
+def test_coverage_rejects_bad_taxids(presence_client) -> None:
+    client, _ = presence_client
+    assert client.get("/coverage?taxids=x").status_code == 422
+    assert client.get("/coverage").status_code == 422

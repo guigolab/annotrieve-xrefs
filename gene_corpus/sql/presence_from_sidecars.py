@@ -198,6 +198,7 @@ def build_from_sidecars(
                 "VALUES (?,?,?,?,?,?,?,?,?)",
                 [(r[0], r[1], int(r[2]), r[3], r[4], r[5], _source_code(r[6]), r[7], r[8])
                  for r in rows])
+            out.executemany("INSERT INTO named (ord) VALUES (?)", [(r[0],) for r in named])
             lineage_rows = 0
             batch_l: list[tuple[int, int]] = []
             wanted = {r[0] for r in rows}

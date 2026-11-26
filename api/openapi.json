@@ -1244,6 +1244,49 @@
         ]
       }
     },
+    "/coverage": {
+      "get": {
+        "description": "For each taxid: annotations in the index under that clade, those whose GFF carries at least\none gene name, and the same two counts in distinct organisms. Older index builds do not\nrecord which annotations carry names: then ``available`` is false and ``results`` is empty.",
+        "operationId": "get_coverage_coverage_get",
+        "parameters": [
+          {
+            "description": "Comma-separated NCBI taxids (at most 500)",
+            "in": "query",
+            "name": "taxids",
+            "required": true,
+            "schema": {
+              "description": "Comma-separated NCBI taxids (at most 500)",
+              "title": "Taxids",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Annotations and organisms per clade, and how many carry gene names",
+        "tags": [
+          "search"
+        ]
+      }
+    },
     "/distributions": {
       "post": {
         "description": "Length of each gene (end - start + 1) across annotations, grouped into the clades you give.\n\n``columns`` is a list of ``{id, taxids}``; each column holds the annotations under any of its\ntaxids (no columns: one column with everything). The answer is a compact table like `/hits`:\n``fields`` names the positions of each row, and a row is one (name, column) cell with the\nnumber of annotations that have the gene, how many of them have several copies, the exact\nmean / min / quartiles / max of the per-annotation length, and a 40-bucket histogram over the\nfixed log scale in ``bins``. Cells without the gene are left out; ``columns[].n_annotations``\nis the denominator.\n\nWhen an annotation has several matching genes, its value is their mean length and it is\ncounted in ``n_multi_copy``. Genes that only carry the name as an alias are used only when\nthe annotation has no symbol gene, and never with ``alias=off``.",

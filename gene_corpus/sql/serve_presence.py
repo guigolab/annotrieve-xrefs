@@ -48,6 +48,11 @@ CREATE TABLE lineage (
     PRIMARY KEY (taxid, ord)
 ) WITHOUT ROWID;
 
+-- Annotations whose GFF carries at least one gene name (the ones a name search can reach).
+CREATE TABLE named (
+    ord INTEGER PRIMARY KEY
+);
+
 CREATE TABLE name_dict (
     name TEXT PRIMARY KEY,
     name_id INTEGER NOT NULL UNIQUE,

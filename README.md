@@ -291,6 +291,10 @@ Limits per client IP: 10 new downloads per rolling 24 hours (`429 daily_quota_ex
 
 
 
+### `GET /coverage?taxids=…`
+
+How much of each clade a name search can reach: per taxid (at most 500), `n_annotations` and `n_organisms` in the index under that clade, and `n_annotations_with_names` / `n_organisms_with_names`, those whose GFF carries at least one gene name. A clade where the second pair is 0 cannot be searched by name at all, so "not found" there says nothing. Builds made before the `named` table existed answer `available: false` with no results.
+
 ### `GET /health`
 
 Readiness of the published index: `status`, `data_version`, `index` (`ram` or `disk`), `lookup`, `loci`. When the build recorded them, `corpus` gives `n_annotations` and `n_annotations_with_names` (annotations whose GFF carries at least one gene name), so a client can say how much of the corpus a name search can reach. `503` with `status: unavailable` when nothing is published.
